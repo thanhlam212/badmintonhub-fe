@@ -969,16 +969,14 @@ export default function AdminBookings() {
         if (!court) return
         const timeParts = booking.time.split(" - ")
         await bookingApi.create({
-          court_id: court.id,
-          booking_date: booking.date,
-          time_start: timeParts[0]?.trim() || "",
-          time_end: timeParts[1]?.trim() || "",
-          slots: booking.people,
-          customer_name: booking.customer.name,
-          customer_phone: booking.customer.phone,
-          amount: booking.amount,
-          payment_method: booking.paymentMethod,
-          note: booking.note || "",
+          courtId:       court.id,
+          bookingDate:   booking.date,
+          timeStart:     timeParts[0]?.trim() || "",
+          timeEnd:       timeParts[1]?.trim() || "",
+          people:        booking.people,
+          customerName:  booking.customer.name,
+          customerPhone: booking.customer.phone,
+          paymentMethod: booking.paymentMethod,
         })
       }
       await refreshData()

@@ -13,8 +13,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
-import { Star, Heart, ShoppingCart, Search, Minus, Plus, ChevronDown, ChevronRight, Package, X, SlidersHorizontal, Grid3X3, LayoutList, Filter, Eye, Truck, Shield, RotateCcw } from "lucide-react"
-import { useState, useMemo, useEffect } from "react"
+import { Star, Heart, ShoppingCart, Search, Minus, Plus, ChevronDown, ChevronRight, Package, X, SlidersHorizontal, Grid3X3, LayoutList, Filter, Eye, Truck, Shield, RotateCcw, Check } from "lucide-react"
+import { useState, useMemo, useEffect, useRef } from "react"
 import { useCart } from "@/lib/cart-context"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
@@ -56,12 +56,12 @@ function FilterSidebar({
   const [localFilters, setLocalFilters] = useState<ShopFilterState>(filters)
 
   const toggleBrand = (brand: string) => {
-    setLocalFilters(prev => ({
-      ...prev,
-      selectedBrands: prev.selectedBrands.includes(brand)
-        ? prev.selectedBrands.filter(b => b !== brand)
-        : [...prev.selectedBrands, brand],
-    }))
+    const next = localFilters.selectedBrands.includes(brand)
+      ? localFilters.selectedBrands.filter(b => b !== brand)
+      : [...localFilters.selectedBrands, brand]
+    const updated = { ...localFilters, selectedBrands: next }
+    setLocalFilters(updated)
+    onFiltersChange(updated)   // ← apply ngay
   }
 
   const handleApply = () => {
@@ -128,7 +128,11 @@ function FilterSidebar({
         <h4 className="font-semibold text-sm mb-3">Giá (VND)</h4>
         <Slider
           value={localFilters.priceRange}
-          onValueChange={(v) => setLocalFilters(prev => ({ ...prev, priceRange: v as [number, number] }))}
+          onValueChange={(v) => {
+            const updated = { ...localFilters, priceRange: v as [number, number] }
+            setLocalFilters(updated)
+            onFiltersChange(updated)   // ← apply ngay
+          }}
           min={0}
           max={10000000}
           step={100000}
@@ -145,7 +149,7 @@ function FilterSidebar({
         <h4 className="font-semibold text-sm mb-3">Đánh giá</h4>
         <RadioGroup
           value={localFilters.minRating.toString()}
-          onValueChange={(v) => setLocalFilters(prev => ({ ...prev, minRating: parseInt(v) }))}
+          onValueChange={(v) => { const u = { ...localFilters, minRating: parseInt(v) }; setLocalFilters(u); onFiltersChange(u) }}
           className="flex flex-col gap-2"
         >
           <label className="flex items-center gap-2 text-sm cursor-pointer">
@@ -177,62 +181,105 @@ function FilterSidebar({
   )
 }
 
-function ProductCard({ product, onAddToCart, onViewDetail, wishlist, onToggleWishlist }: {
+function ProductCard({ product, onAddToCart, onViewDetail, wishlist, onToggleWishlist, index = 0 }: {
   product: ApiProduct
   onAddToCart: () => void
   onViewDetail: () => void
   wishlist: boolean
   onToggleWishlist: () => void
+  index?: number
 }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [visible, setVisible] = useState(false)
+  const [added, setAdded] = useState(false)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) { setVisible(true); obs.disconnect() } },
+      { threshold: 0.1 }
+    )
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [])
+
+  const handleAddToCart = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onAddToCart()
+    setAdded(true)
+    setTimeout(() => setAdded(false), 1200)
+  }
+
   return (
-    <Card className="group overflow-hidden hover:-translate-y-0.5 transition-all duration-200 hover:shadow-lg cursor-pointer" onClick={onViewDetail}>
-      <div className="relative aspect-square bg-gradient-to-br from-muted to-background flex items-center justify-center overflow-hidden">
-        <span className="text-5xl text-muted-foreground/15 font-serif font-bold group-hover:scale-105 transition-transform duration-300">{product.brand[0]}</span>
-        {/* Badges */}
-        <div className="absolute top-2 left-2 flex flex-col gap-1">
-          {product.badges.map(b => (
-            <span key={b} className={cn(
-              "text-xs font-semibold px-2 py-0.5 rounded",
-              b === 'Bán chạy' ? 'bg-primary text-primary-foreground' :
-                b === 'Mới' ? 'bg-secondary text-secondary-foreground' :
-                  'bg-red-500 text-white'
-            )}>{b}</span>
-          ))}
+    <div
+      ref={ref}
+      className="transition-all duration-500"
+      style={{
+        opacity: visible ? 1 : 0,
+        transform: visible ? "translateY(0)" : "translateY(28px)",
+        transitionDelay: `${(index % 3) * 80}ms`,
+      }}
+    >
+      <Card className="group overflow-hidden hover:-translate-y-1.5 transition-all duration-300 hover:shadow-xl cursor-pointer" onClick={onViewDetail}>
+        <div className="relative aspect-square bg-gradient-to-br from-muted to-background flex items-center justify-center overflow-hidden">
+          <span className="text-5xl text-muted-foreground/15 font-serif font-bold group-hover:scale-110 transition-transform duration-500">{product.brand[0]}</span>
+          {/* Badges */}
+          <div className="absolute top-2 left-2 flex flex-col gap-1">
+            {product.badges.map(b => (
+              <span key={b} className={cn(
+                "text-xs font-semibold px-2 py-0.5 rounded-full",
+                b === 'Bán chạy' ? 'bg-primary text-primary-foreground' :
+                  b === 'Mới' ? 'bg-secondary text-secondary-foreground' :
+                    'bg-red-500 text-white'
+              )}>{b}</span>
+            ))}
+          </div>
+          {/* Wishlist */}
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggleWishlist() }}
+            className="absolute top-2 right-2 p-1.5 rounded-full bg-card/80 hover:bg-card transition-all duration-200 hover:scale-110"
+          >
+            <Heart className={cn("h-4 w-4 transition-all duration-200", wishlist ? "fill-red-500 text-red-500 scale-110" : "text-muted-foreground")} />
+          </button>
+          {/* Hover overlay */}
+          <div className="absolute inset-x-0 bottom-0 translate-y-full group-hover:translate-y-0 transition-transform duration-250 flex">
+            <Button onClick={(e) => { e.stopPropagation(); onViewDetail() }} variant="secondary" className="flex-1 rounded-none font-semibold gap-1 h-10">
+              <Eye className="h-4 w-4" /> Xem chi tiết
+            </Button>
+            <Button
+              onClick={handleAddToCart}
+              className={cn(
+                "flex-1 rounded-none font-semibold gap-1 h-10 transition-all duration-200",
+                added ? "bg-green-600 hover:bg-green-600" : "bg-primary text-primary-foreground hover:bg-primary/90"
+              )}
+            >
+              {added ? (
+                <><Check className="h-4 w-4" /> Đã thêm!</>
+              ) : (
+                <><ShoppingCart className="h-4 w-4" /> Thêm vào giỏ</>
+              )}
+            </Button>
+          </div>
         </div>
-        {/* Wishlist */}
-        <button
-          onClick={(e) => { e.stopPropagation(); onToggleWishlist() }}
-          className="absolute top-2 right-2 p-1.5 rounded-full bg-card/80 hover:bg-card transition-colors"
-        >
-          <Heart className={cn("h-4 w-4", wishlist ? "fill-red-500 text-red-500" : "text-muted-foreground")} />
-        </button>
-        {/* Hover overlay */}
-        <div className="absolute inset-x-0 bottom-0 translate-y-full group-hover:translate-y-0 transition-transform duration-200 flex">
-          <Button onClick={(e) => { e.stopPropagation(); onViewDetail() }} variant="secondary" className="flex-1 rounded-none font-semibold gap-1">
-            <Eye className="h-4 w-4" /> Xem chi tiết
-          </Button>
-          <Button onClick={(e) => { e.stopPropagation(); onAddToCart() }} className="flex-1 rounded-none bg-primary text-primary-foreground hover:bg-primary/90 font-semibold gap-1">
-            <ShoppingCart className="h-4 w-4" /> Thêm vào giỏ
-          </Button>
-        </div>
-      </div>
-      <CardContent className="p-3">
-        <p className="text-xs text-muted-foreground">{product.brand}</p>
-        <h3 className="text-sm font-semibold text-foreground line-clamp-2 mt-0.5">{product.name}</h3>
-        <div className="flex items-center gap-1 mt-1">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <Star key={i} className={cn("h-3 w-3", i < Math.floor(product.rating) ? "fill-amber-400 text-amber-400" : "text-muted")} />
-          ))}
-          <span className="text-xs text-muted-foreground ml-1">({product.reviews})</span>
-        </div>
-        <div className="mt-2 flex items-center gap-2">
-          <span className="font-serif font-bold text-primary">{formatVND(product.price)}</span>
-          {product.originalPrice && (
-            <span className="text-xs text-muted-foreground line-through">{formatVND(product.originalPrice)}</span>
-          )}
-        </div>
-      </CardContent>
-    </Card>
+        <CardContent className="p-3">
+          <p className="text-xs text-muted-foreground font-medium">{product.brand}</p>
+          <h3 className="text-sm font-semibold text-foreground line-clamp-2 mt-0.5 leading-snug">{product.name}</h3>
+          <div className="flex items-center gap-1 mt-1.5">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Star key={i} className={cn("h-3 w-3", i < Math.floor(product.rating) ? "fill-amber-400 text-amber-400" : "text-muted")} />
+            ))}
+            <span className="text-xs text-muted-foreground ml-1">({product.reviews})</span>
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <span className="font-serif font-bold text-primary">{formatVND(product.price)}</span>
+            {product.originalPrice && (
+              <span className="text-xs text-muted-foreground line-through">{formatVND(product.originalPrice)}</span>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   )
 }
 
@@ -460,14 +507,16 @@ export default function ShopPage() {
   const [products, setProducts] = useState<ApiProduct[]>([])
   const [categoryNames, setCategoryNames] = useState<string[]>(["Tất cả"])
   const [allBrands, setAllBrands] = useState<string[]>([])
+  const [loading, setLoading] = useState(true)
   useEffect(() => {
     const loadProducts = async () => {
       try {
         const res = await productApi.getAll({ limit: 200 })
-        console.log('[SHOP] Products loaded:', res.products?.length)
         setProducts(res.products || [])
       } catch (err) {
         console.error('[SHOP] Product load error:', err)
+      } finally {
+        setLoading(false)
       }
     }
     loadProducts()
@@ -486,11 +535,11 @@ export default function ShopPage() {
 
     // Brand filter
     if (filters.selectedBrands.length > 0) {
-      result = result.filter(p => filters.selectedBrands.includes(p.brand))
+      result = result.filter(p => filters.selectedBrands.includes(p.brand?.trim()))
     }
 
-    // Price filter
-    result = result.filter(p => p.price >= filters.priceRange[0] && p.price <= filters.priceRange[1])
+    // Price filter — Number() để chắc chắn là số
+    result = result.filter(p => Number(p.price) >= filters.priceRange[0] && Number(p.price) <= filters.priceRange[1])
 
     // Rating filter
     if (filters.minRating > 0) {
@@ -631,6 +680,24 @@ export default function ShopPage() {
             </Select>
           </div>
 
+          {/* Category quick-filter tabs */}
+          <div className="flex gap-2 overflow-x-auto pb-2 mb-6 scrollbar-hide">
+            {categoryNames.map(cat => (
+              <button
+                key={cat}
+                onClick={() => { handleFiltersChange({ ...filters, category: cat }); setCurrentPage(1) }}
+                className={cn(
+                  "shrink-0 px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200",
+                  filters.category === cat
+                    ? "bg-primary text-primary-foreground shadow-sm shadow-primary/25 scale-[1.04]"
+                    : "bg-muted text-muted-foreground hover:bg-muted/70 hover:scale-[1.02]"
+                )}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
+
           <div className="flex gap-8">
             {/* Filter overlay for mobile */}
             {filterOpen && (
@@ -650,18 +717,34 @@ export default function ShopPage() {
               {/* Results count */}
               <div className="flex items-center justify-between mb-4">
                 <p className="text-sm text-muted-foreground">
-                  Hiển thị <strong className="text-foreground">{(safePage - 1) * SHOP_PAGE_SIZE + 1}–{Math.min(safePage * SHOP_PAGE_SIZE, filteredProducts.length)}</strong> / <strong className="text-foreground">{filteredProducts.length}</strong> sản phẩm
-                  {filters.category !== "Tất cả" && <> trong <strong className="text-foreground">{filters.category}</strong></>}
+                  {loading ? "Đang tải sản phẩm..." : (
+                    <>Hiển thị <strong className="text-foreground">{(safePage - 1) * SHOP_PAGE_SIZE + 1}–{Math.min(safePage * SHOP_PAGE_SIZE, filteredProducts.length)}</strong> / <strong className="text-foreground">{filteredProducts.length}</strong> sản phẩm
+                    {filters.category !== "Tất cả" && <> trong <strong className="text-foreground">{filters.category}</strong></>}</>
+                  )}
                 </p>
               </div>
 
-              {filteredProducts.length === 0 ? (
+              {loading ? (
+                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <div key={i} className="rounded-xl border bg-card overflow-hidden animate-pulse" style={{ animationDelay: `${i * 60}ms` }}>
+                      <div className="aspect-square bg-muted" />
+                      <div className="p-3 space-y-2">
+                        <div className="h-3 bg-muted rounded w-1/3" />
+                        <div className="h-4 bg-muted rounded w-4/5" />
+                        <div className="h-3 bg-muted rounded w-1/2" />
+                        <div className="h-4 bg-muted rounded w-2/5" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : filteredProducts.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-center">
-                  <div className="h-20 w-20 rounded-full bg-gray-100 flex items-center justify-center mb-4">
-                    <Search className="h-8 w-8 text-gray-300" />
+                  <div className="h-20 w-20 rounded-full bg-muted flex items-center justify-center mb-4">
+                    <Search className="h-8 w-8 text-muted-foreground/40" />
                   </div>
-                  <h3 className="font-semibold text-lg text-gray-700">Không tìm thấy sản phẩm</h3>
-                  <p className="text-muted-foreground mt-1 max-w-sm">
+                  <h3 className="font-serif font-bold text-lg">Không tìm thấy sản phẩm</h3>
+                  <p className="text-muted-foreground mt-1 max-w-sm text-sm">
                     Thử thay đổi bộ lọc hoặc tìm kiếm với từ khóa khác
                   </p>
                   <Button
@@ -675,10 +758,11 @@ export default function ShopPage() {
               ) : (
                 <>
                   <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                    {paginatedProducts.map(p => (
+                    {paginatedProducts.map((p, i) => (
                       <ProductCard
                         key={p.id}
                         product={p}
+                        index={i}
                         onAddToCart={() => addToCart(p)}
                         onViewDetail={() => router.push(`/shop/${p.id}`)}
                         wishlist={wishlistIds.includes(p.id)}

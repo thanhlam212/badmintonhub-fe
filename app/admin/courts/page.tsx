@@ -11,15 +11,17 @@ import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from "@/components/ui/dialog"
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
-import { formatVND, generateTimeSlots, getWeekDays } from "@/lib/utils"
+import { formatVND, generateTimeSlots, getWeekDays, isSlotPast } from "@/lib/utils"
 import { branchApi, courtApi, bookingApi, ApiBooking, type ApiCourt } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { toast } from "sonner"
 import {
   Eye, Edit2, MapPin, Star,
   CheckCircle2, XCircle, Building2, DollarSign,
   ChevronLeft, ChevronRight, Check, Clock,
-  CalendarDays, Users, Lock,
+  CalendarDays, Users, Lock, Trash2,
 } from "lucide-react"
 
 /* ─── Court type ─── */
@@ -48,6 +50,8 @@ export default function AdminCourtsPage() {
   const [adminAction, setAdminAction] = useState<"booked" | "hold" | "remove">("booked")
   const [bookingsVersion, setBookingsVersion] = useState(0)
   const [branchesList, setBranchesList] = useState<{id: number; name: string; address: string; lat: number; lng: number}[]>([])
+  const [slotConfirm, setSlotConfirm] = useState<{bookingId: string; courtId: number; dateLabel: string; time: string; status: string; bookedBy?: string; bookingCode?: string} | null>(null)
+  const [slotLoading, setSlotLoading] = useState(false)
 
   useEffect(() => {
     const init = async () => {
@@ -99,18 +103,31 @@ export default function AdminCourtsPage() {
   const weekKey = weekDays.map(d => d.label).join(",")
 
   // Build availability from API bookings
-  const [allBookings, setAllBookings] = useState<{courtId: number; dateLabel: string; time: string; status: string; bookedBy?: string; phone?: string}[]>([])
+  const [allBookings, setAllBookings] = useState<{bookingId: string; courtId: number; dateLabel: string; time: string; status: string; bookedBy?: string; phone?: string; bookingCode?: string}[]>([])
   useEffect(() => {
     bookingApi.getAll({ limit: 1000 }).then((res: any) => {
-      if (res.success && res.data) {
-        setAllBookings(res.data.map((b: any) => ({
-          courtId: b.court_id,
-          dateLabel: b.booking_date ? new Date(b.booking_date).toLocaleDateString("vi-VN", { weekday: "short", day: "2-digit", month: "2-digit" }) : "",
-          time: b.start_time?.slice(0, 5) || "",
-          status: b.status === "confirmed" ? "booked" : b.status === "hold" ? "hold" : "booked",
-          bookedBy: b.customer_name || "",
-        })))
+      const bookings = res.bookings || []
+      const slots: {bookingId: string; courtId: number; dateLabel: string; time: string; status: string; bookedBy?: string; phone?: string; bookingCode?: string}[] = []
+      for (const b of bookings) {
+        if (!b.courtId || !b.timeStart || b.status === "cancelled") continue
+        const start = parseInt(b.timeStart.split(":")[0])
+        const end = parseInt(b.timeEnd.split(":")[0])
+        const d = new Date(b.bookingDate)
+        const dateLabel = `${d.getDate()}/${d.getMonth() + 1}`
+        for (let h = start; h < end; h++) {
+          slots.push({
+            bookingId: b.id,
+            courtId: b.courtId,
+            dateLabel,
+            time: `${h.toString().padStart(2, '0')}:00`,
+            status: b.status === "hold" ? "hold" : "booked",
+            bookedBy: b.customerName || "",
+            phone: b.customerPhone || "",
+            bookingCode: b.bookingCode || "",
+          })
+        }
       }
+      setAllBookings(slots)
     }).catch(() => {})
   }, [bookingsVersion])
   const dayLabels = useMemo(() => weekDays.map(d => d.label), [weekKey])
@@ -130,31 +147,74 @@ export default function AdminCourtsPage() {
 
   /* Admin click handler: toggle slot status */
   const handleAdminSlotClick = useCallback(async (courtId: number, dateLabel: string, time: string, currentStatus: string) => {
+    // Check if slot is past
+    const parts = dateLabel.split("/")
+    const slotDate = new Date(new Date().getFullYear(), parseInt(parts[1]) - 1, parseInt(parts[0]))
+    if (isSlotPast(dateLabel, time) && currentStatus === "available") {
+      toast.error("Không thể đặt chỗ cho khung giờ đã qua")
+      return
+    }
     if (adminAction === "remove") {
-      setAllBookings(prev => prev.filter(b => !(b.courtId === courtId && b.dateLabel === dateLabel && b.time === time)))
-    } else {
+      // Remove mode: clicking a booked/hold slot → show confirmation to cancel
       if (currentStatus !== "available") {
-        setAllBookings(prev => prev.filter(b => !(b.courtId === courtId && b.dateLabel === dateLabel && b.time === time)))
-      } else {
-        try {
-          const parts = dateLabel.split(", ")[1]?.split("/")
-          const bookingDate = parts ? `${new Date().getFullYear()}-${parts[1]}-${parts[0]}` : new Date().toISOString().split("T")[0]
-          await bookingApi.create({
-            court_id: courtId,
-            booking_date: bookingDate,
-            time_start: time,
-            time_end: `${String(parseInt(time.split(":")[0]) + 1).padStart(2, "0")}:00`,
-            slots: 1,
-            customer_name: "Admin",
-            customer_phone: "0000000000",
-            amount: 0,
-          })
-        } catch {}
-        setAllBookings(prev => [...prev, { courtId, dateLabel, time, status: adminAction, bookedBy: "Admin" }])
+        const matching = allBookings.find(b => b.courtId === courtId && b.dateLabel === dateLabel && b.time === time)
+        if (matching) {
+          setSlotConfirm({ bookingId: matching.bookingId, courtId, dateLabel, time, status: currentStatus, bookedBy: matching.bookedBy, bookingCode: matching.bookingCode })
+        }
       }
+      return
+    }
+    // Booked/Hold mode: clicking an existing booked/hold slot → show confirmation to cancel first
+    if (currentStatus !== "available") {
+      const matching = allBookings.find(b => b.courtId === courtId && b.dateLabel === dateLabel && b.time === time)
+      if (matching) {
+        setSlotConfirm({ bookingId: matching.bookingId, courtId, dateLabel, time, status: currentStatus, bookedBy: matching.bookedBy, bookingCode: matching.bookingCode })
+      }
+      return
+    }
+    // Available slot → create booking directly
+    try {
+      const parts = dateLabel.split("/")
+      const bookingDate = parts.length >= 2 ? `${new Date().getFullYear()}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}` : new Date().toISOString().split("T")[0]
+      const result = await bookingApi.create({
+        courtId: courtId,        // ← đổi id → courtId
+        bookingDate: bookingDate, // ← booking_date → bookingDate (camelCase)
+        timeStart: time,          // ← time_start → timeStart
+        timeEnd: `${String(parseInt(time.split(":")[0]) + 1).padStart(2, "0")}:00`, // ← time_end → timeEnd
+        people: 1,                // ← slots → people
+        paymentMethod: "cash",    // ← thêm field bắt buộc
+        customerName: "Admin",    // ← customer_name → customerName
+        customerPhone: "0000000000", // ← customer_phone → customerPhone
+      })
+      if (result.success) {
+        toast.success("Đã đặt chỗ thành công")
+      } else {
+        toast.error(result.error || "Không thể đặt chỗ")
+      }
+    } catch {
+      toast.error("Lỗi khi đặt chỗ")
     }
     setBookingsVersion(v => v + 1)
-  }, [adminAction])
+  }, [adminAction, allBookings])
+
+  /* Confirm cancel/delete booking from slot */
+  const handleConfirmCancelSlot = useCallback(async () => {
+    if (!slotConfirm) return
+    setSlotLoading(true)
+    try {
+      const res = await bookingApi.updateStatus(slotConfirm.bookingId, "cancelled")
+      if (res.success) {
+        toast.success("Đã hủy đặt chỗ thành công")
+      } else {
+        toast.error(res.error || "Không thể hủy đặt chỗ")
+      }
+    } catch {
+      toast.error("Lỗi khi hủy đặt chỗ")
+    }
+    setSlotLoading(false)
+    setSlotConfirm(null)
+    setBookingsVersion(v => v + 1)
+  }, [slotConfirm])
 
   /* ─── KPI ─── */
   const totalCourts = courtsData.length
@@ -387,6 +447,7 @@ export default function AdminCourtsPage() {
               <span className="flex items-center gap-1.5 text-xs"><span className="h-3 w-3 rounded bg-court-available" /> Trống</span>
               <span className="flex items-center gap-1.5 text-xs"><span className="h-3 w-3 rounded bg-court-booked" /> Đã đặt</span>
               <span className="flex items-center gap-1.5 text-xs"><span className="h-3 w-3 rounded bg-court-hold" /> Giữ chỗ</span>
+              <span className="flex items-center gap-1.5 text-xs"><span className="h-3 w-3 rounded bg-court-past" /> Đã qua</span>
               <span className="border-l pl-4 ml-2 flex items-center gap-2">
                 <span className="text-xs text-muted-foreground">Click ô:</span>
                 <Select value={adminAction} onValueChange={(v: "booked" | "hold" | "remove") => setAdminAction(v)}>
@@ -419,18 +480,34 @@ export default function AdminCourtsPage() {
                     <div className="text-[11px] text-muted-foreground flex items-center justify-end pr-2 font-mono">{time}</div>
                     {weekDays.map(d => {
                       const status = courtAvailability[d.label]?.[time] || "available"
+                      const past = isSlotPast(d.label, time)
                       const bookingEntry = (status === "booked" || status === "hold")
                         ? allBookings.find(b => b.courtId === selectedCourt!.id && b.dateLabel === d.label && b.time === time)
                         : null
+                      if (past && status === "available") {
+                        return (
+                          <div
+                            key={`${d.label}-${time}`}
+                            className="h-8 w-full rounded-[4px] flex items-center justify-center text-[10px] font-medium bg-court-past text-slate-400 cursor-not-allowed select-none"
+                          >
+                            <Lock className="h-3 w-3" />
+                          </div>
+                        )
+                      }
                       const slotBtn = (
                         <button
                           key={`${d.label}-${time}`}
-                          onClick={() => selectedCourt && handleAdminSlotClick(selectedCourt.id, d.label, time, status)}
+                          onClick={() => !past && selectedCourt && handleAdminSlotClick(selectedCourt.id, d.label, time, status)}
+                          disabled={past && status === "available"}
                           className={cn(
-                            "h-8 w-full rounded-[4px] flex items-center justify-center text-[10px] font-medium transition-colors select-none cursor-pointer",
-                            status === "available" && "bg-court-available text-green-700 hover:bg-green-200",
-                            status === "booked" && "bg-court-booked text-red-600 hover:bg-red-200",
-                            status === "hold" && "bg-court-hold text-amber-700 hover:bg-amber-200",
+                            "h-8 w-full rounded-[4px] flex items-center justify-center text-[10px] font-medium transition-colors select-none",
+                            past
+                              ? "bg-court-past text-slate-400 cursor-not-allowed"
+                              : status === "available" ? "bg-court-available text-green-700 hover:bg-green-200 cursor-pointer" : "",
+                            !past && status === "booked" && "bg-court-booked text-red-600 hover:bg-red-200 cursor-pointer",
+                            !past && status === "hold" && "bg-court-hold text-amber-700 hover:bg-amber-200 cursor-pointer",
+                            past && status === "booked" && "bg-court-booked/60 text-red-400 cursor-not-allowed",
+                            past && status === "hold" && "bg-court-hold/60 text-amber-500 cursor-not-allowed",
                           )}
                         >
                           {status === "booked" ? "Đã đặt" : status === "hold" ? "Giữ chỗ" : ""}
@@ -585,6 +662,39 @@ export default function AdminCourtsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Confirm cancel/delete booking dialog */}
+      <AlertDialog open={!!slotConfirm} onOpenChange={open => { if (!open) setSlotConfirm(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Trash2 className="h-5 w-5 text-destructive" />
+              Hủy đặt chỗ
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>Bạn có chắc muốn hủy đặt chỗ này?</p>
+                {slotConfirm && (
+                  <div className="bg-muted rounded-lg p-3 text-sm space-y-1">
+                    <p><strong>Thời gian:</strong> {slotConfirm.dateLabel} • {slotConfirm.time}</p>
+                    {slotConfirm.bookedBy && <p><strong>Khách:</strong> {slotConfirm.bookedBy}</p>}
+                    {slotConfirm.bookingCode && <p><strong>Mã đặt:</strong> {slotConfirm.bookingCode}</p>}
+                    <p><strong>Trạng thái:</strong> {slotConfirm.status === "hold" ? "Giữ chỗ" : "Đã đặt"}</p>
+                  </div>
+                )}
+                <p className="text-destructive text-xs">Hành động này không thể hoàn tác.</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={slotLoading}>Không</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmCancelSlot} disabled={slotLoading} className="bg-destructive text-white hover:bg-destructive/90">
+              {slotLoading ? "Đang xử lý..." : "Xác nhận hủy"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
     </div>
   )
 }

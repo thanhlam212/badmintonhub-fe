@@ -37,3 +37,21 @@ export function getWeekDays(startDate: Date = new Date()): { date: Date; label: 
   }
   return days
 }
+
+export function isSlotPast(dateLabel: string, time: string): boolean {
+  // Guard: nếu thiếu data thì không disable
+  if (!dateLabel || !time) return false
+  
+  const parts = dateLabel.split('/')
+  if (parts.length < 2) return false
+  
+  const day = Number(parts[0])
+  const month = Number(parts[1])
+  if (isNaN(day) || isNaN(month)) return false
+
+  const year = new Date().getFullYear()
+  const slotDate = new Date(year, month - 1, day)
+  const [hour] = time.split(':').map(Number)
+  slotDate.setHours(hour, 0, 0, 0)
+  return slotDate < new Date()
+}

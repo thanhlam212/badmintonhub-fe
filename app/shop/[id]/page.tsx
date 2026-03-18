@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import Image from "next/image"
 import Link from "next/link"
 import { useParams, useRouter } from "next/navigation"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { toast } from "sonner"
 import { formatVND } from "@/lib/utils"
 import { productApi, type ApiProduct } from "@/lib/api"
@@ -23,53 +23,76 @@ import {
 } from "lucide-react"
 
 /* ─── Related products ─── */
-function RelatedProductCard({ product }: { product: ApiProduct }) {
+function RelatedProductCard({ product, index = 0 }: { product: ApiProduct; index?: number }) {
   const router = useRouter()
+  const ref = useRef<HTMLDivElement>(null)
+  const [visible, setVisible] = useState(false)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) { setVisible(true); obs.disconnect() } },
+      { threshold: 0.1 }
+    )
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [])
+
   return (
-    <Card
-      className="group overflow-hidden hover:-translate-y-0.5 transition-all duration-200 hover:shadow-lg cursor-pointer"
-      onClick={() => router.push(`/shop/${product.id}`)}
+    <div
+      ref={ref}
+      className="transition-all duration-500"
+      style={{
+        opacity: visible ? 1 : 0,
+        transform: visible ? "translateY(0)" : "translateY(24px)",
+        transitionDelay: `${index * 80}ms`,
+      }}
     >
-      <div className="relative aspect-square bg-gradient-to-br from-muted to-background flex items-center justify-center overflow-hidden">
-        {product.image && (
-          <Image
-            src={product.image}
-            alt={product.name}
-            fill
-            className="object-contain p-4 group-hover:scale-105 transition-transform duration-300"
-            onError={(e) => { (e.target as HTMLImageElement).style.display = "none" }}
-          />
-        )}
-        {/* Fallback brand letter */}
-        <span className="text-5xl text-muted-foreground/10 font-serif font-bold absolute">{product.brand[0]}</span>
-        <div className="absolute top-2 left-2 flex flex-col gap-1">
-          {product.badges.map(b => (
-            <Badge key={b} className={cn(
-              "text-[10px]",
-              b === "Bán chạy" ? "bg-primary text-primary-foreground" :
-                b === "Mới" ? "bg-secondary text-secondary-foreground" :
-                  "bg-red-500 text-white"
-            )}>{b}</Badge>
-          ))}
-        </div>
-      </div>
-      <CardContent className="p-3">
-        <p className="text-xs text-muted-foreground">{product.brand}</p>
-        <h3 className="text-sm font-semibold line-clamp-2 mt-0.5">{product.name}</h3>
-        <div className="flex items-center gap-1 mt-1">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <Star key={i} className={cn("h-3 w-3", i < Math.floor(product.rating) ? "fill-amber-400 text-amber-400" : "text-muted")} />
-          ))}
-          <span className="text-xs text-muted-foreground ml-1">({product.reviews})</span>
-        </div>
-        <div className="mt-2 flex items-center gap-2">
-          <span className="font-serif font-bold text-primary text-sm">{formatVND(product.price)}</span>
-          {product.originalPrice && (
-            <span className="text-xs text-muted-foreground line-through">{formatVND(product.originalPrice)}</span>
+      <Card
+        className="group overflow-hidden hover:-translate-y-1.5 transition-all duration-300 hover:shadow-xl cursor-pointer"
+        onClick={() => router.push(`/shop/${product.id}`)}
+      >
+        <div className="relative aspect-square bg-gradient-to-br from-muted to-background flex items-center justify-center overflow-hidden">
+          {product.image && (
+            <Image
+              src={product.image}
+              alt={product.name}
+              fill
+              className="object-contain p-4 group-hover:scale-110 transition-transform duration-500"
+              onError={(e) => { (e.target as HTMLImageElement).style.display = "none" }}
+            />
           )}
+          <span className="text-5xl text-muted-foreground/10 font-serif font-bold absolute group-hover:scale-125 transition-transform duration-500">{product.brand[0]}</span>
+          <div className="absolute top-2 left-2 flex flex-col gap-1">
+            {product.badges.map(b => (
+              <Badge key={b} className={cn(
+                "text-[10px] rounded-full",
+                b === "Bán chạy" ? "bg-primary text-primary-foreground" :
+                  b === "Mới" ? "bg-secondary text-secondary-foreground" :
+                    "bg-red-500 text-white"
+              )}>{b}</Badge>
+            ))}
+          </div>
         </div>
-      </CardContent>
-    </Card>
+        <CardContent className="p-3">
+          <p className="text-xs text-muted-foreground font-medium">{product.brand}</p>
+          <h3 className="text-sm font-semibold line-clamp-2 mt-0.5 leading-snug">{product.name}</h3>
+          <div className="flex items-center gap-1 mt-1.5">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Star key={i} className={cn("h-3 w-3", i < Math.floor(product.rating) ? "fill-amber-400 text-amber-400" : "text-muted")} />
+            ))}
+            <span className="text-xs text-muted-foreground ml-1">({product.reviews})</span>
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <span className="font-serif font-bold text-primary text-sm">{formatVND(product.price)}</span>
+            {product.originalPrice && (
+              <span className="text-xs text-muted-foreground line-through">{formatVND(product.originalPrice)}</span>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   )
 }
 
@@ -253,10 +276,19 @@ export default function ProductDetailPage() {
     })
   }, [productId])
 
+  const [added, setAdded] = useState(false)
+  const [pageVisible, setPageVisible] = useState(false)
+
+  useEffect(() => {
+    const t = setTimeout(() => setPageVisible(true), 50)
+    return () => clearTimeout(t)
+  }, [])
+
   const addToCart = () => {
     if (!product) return
     cartAdd({ productId: product.id, name: product.name, price: product.price, qty })
-
+    setAdded(true)
+    setTimeout(() => setAdded(false), 1500)
     toast.success(`Đã thêm "${product.name}" vào giỏ hàng`, {
       description: `${qty} x ${formatVND(product.price)} = ${formatVND(product.price * qty)}`,
       action: { label: "Thanh toán", onClick: () => router.push("/shop/checkout") },
@@ -282,8 +314,30 @@ export default function ProductDetailPage() {
     return (
       <div className="min-h-screen flex flex-col bg-background">
         <Navbar />
-        <main className="flex-1 flex items-center justify-center">
-          <div className="text-center text-muted-foreground">Đang tải...</div>
+        <main className="flex-1">
+          <div className="mx-auto max-w-7xl px-4 py-6 space-y-6">
+            <div className="h-4 w-56 bg-muted rounded animate-pulse" />
+            <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
+              <div className="space-y-3">
+                <div className="aspect-square rounded-2xl bg-muted animate-pulse" />
+                <div className="flex gap-2">
+                  {[1,2,3].map(i => <div key={i} className="h-20 w-20 rounded-xl bg-muted animate-pulse" style={{ animationDelay: `${i * 80}ms` }} />)}
+                </div>
+              </div>
+              <div className="space-y-4">
+                <div className="h-4 w-32 bg-muted rounded animate-pulse" />
+                <div className="h-8 w-3/4 bg-muted rounded animate-pulse" style={{ animationDelay: "80ms" }} />
+                <div className="h-4 w-1/2 bg-muted rounded animate-pulse" style={{ animationDelay: "160ms" }} />
+                <div className="h-20 bg-muted rounded-xl animate-pulse" style={{ animationDelay: "240ms" }} />
+                <div className="h-4 bg-muted rounded animate-pulse" style={{ animationDelay: "320ms" }} />
+                <div className="h-12 bg-muted rounded-xl animate-pulse" style={{ animationDelay: "400ms" }} />
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="h-12 bg-muted rounded-xl animate-pulse" style={{ animationDelay: "480ms" }} />
+                  <div className="h-12 bg-muted rounded-xl animate-pulse" style={{ animationDelay: "560ms" }} />
+                </div>
+              </div>
+            </div>
+          </div>
         </main>
         <Footer />
       </div>
@@ -327,7 +381,10 @@ export default function ProductDetailPage() {
       <main className="flex-1">
         <div className="mx-auto max-w-7xl px-4 py-6">
           {/* Breadcrumb */}
-          <nav className="flex items-center gap-1.5 text-sm text-muted-foreground mb-6 flex-wrap">
+          <nav
+            className="flex items-center gap-1.5 text-sm text-muted-foreground mb-6 flex-wrap transition-all duration-500"
+            style={{ opacity: pageVisible ? 1 : 0, transform: pageVisible ? "translateY(0)" : "translateY(-8px)" }}
+          >
             <Link href="/" className="hover:text-foreground transition-colors">Trang chủ</Link>
             <ChevronRight className="h-3.5 w-3.5" />
             <Link href="/shop" className="hover:text-foreground transition-colors">Cửa hàng</Link>
@@ -342,15 +399,23 @@ export default function ProductDetailPage() {
           {/* ────── Product Section ────── */}
           <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
             {/* Left: Image Gallery */}
-            <ImageGallery
-              images={images}
-              name={product.name}
-              brand={product.brand}
-              badges={product.badges}
-            />
+            <div
+              className="transition-all duration-600"
+              style={{ opacity: pageVisible ? 1 : 0, transform: pageVisible ? "translateX(0)" : "translateX(-20px)", transitionDelay: "100ms" }}
+            >
+              <ImageGallery
+                images={images}
+                name={product.name}
+                brand={product.brand}
+                badges={product.badges}
+              />
+            </div>
 
             {/* Right: Product Info */}
-            <div className="flex flex-col">
+            <div
+              className="flex flex-col transition-all duration-600"
+              style={{ opacity: pageVisible ? 1 : 0, transform: pageVisible ? "translateX(0)" : "translateX(20px)", transitionDelay: "200ms" }}
+            >
               {/* Brand */}
               <div className="flex items-center gap-2">
                 <Badge variant="outline" className="text-xs">{product.brand}</Badge>
@@ -428,14 +493,14 @@ export default function ProductDetailPage() {
                 <div className="flex items-center gap-3">
                   <button
                     onClick={() => setQty(q => Math.max(1, q - 1))}
-                    className="h-10 w-10 rounded-xl border-2 flex items-center justify-center hover:bg-muted transition-colors"
+                    className="h-10 w-10 rounded-xl border-2 flex items-center justify-center hover:bg-muted hover:scale-110 active:scale-95 transition-all duration-150"
                   >
                     <Minus className="h-4 w-4" />
                   </button>
                   <span className="font-bold text-xl w-10 text-center">{qty}</span>
                   <button
                     onClick={() => setQty(q => q + 1)}
-                    className="h-10 w-10 rounded-xl border-2 flex items-center justify-center hover:bg-muted transition-colors"
+                    className="h-10 w-10 rounded-xl border-2 flex items-center justify-center hover:bg-muted hover:scale-110 active:scale-95 transition-all duration-150"
                   >
                     <Plus className="h-4 w-4" />
                   </button>
@@ -451,15 +516,23 @@ export default function ProductDetailPage() {
                   onClick={addToCart}
                   disabled={!product.inStock}
                   variant="outline"
-                  className="flex-1 h-12 font-semibold gap-2 border-2 border-primary text-primary hover:bg-primary/5 text-base"
+                  className={cn(
+                    "flex-1 h-12 font-semibold gap-2 border-2 text-base transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]",
+                    added
+                      ? "border-green-500 text-green-600 bg-green-50 hover:bg-green-50"
+                      : "border-primary text-primary hover:bg-primary/5"
+                  )}
                 >
-                  <ShoppingCart className="h-5 w-5" />
-                  Thêm vào giỏ
+                  {added ? (
+                    <><CheckCircle2 className="h-5 w-5" /> Đã thêm vào giỏ!</>
+                  ) : (
+                    <><ShoppingCart className="h-5 w-5" /> Thêm vào giỏ</>
+                  )}
                 </Button>
                 <Button
                   onClick={buyNow}
                   disabled={!product.inStock}
-                  className="flex-1 h-12 bg-primary text-primary-foreground hover:bg-primary/90 font-semibold gap-2 text-base"
+                  className="flex-1 h-12 bg-primary text-primary-foreground hover:bg-primary/90 font-semibold gap-2 text-base hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 shadow-md shadow-primary/25 hover:shadow-primary/40"
                 >
                   <Zap className="h-5 w-5" />
                   Mua ngay
@@ -544,7 +617,7 @@ export default function ProductDetailPage() {
                         <h3 className="font-serif text-lg font-bold mb-3">Đặc điểm nổi bật</h3>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           {features.map((f, i) => (
-                            <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-green-50 border border-green-100">
+                            <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-green-50 dark:bg-green-900/20 border border-green-100 dark:border-green-800 hover:border-green-300 transition-colors duration-150">
                               <CheckCircle2 className="h-5 w-5 text-green-600 shrink-0 mt-0.5" />
                               <span className="text-sm">{f}</span>
                             </div>
@@ -629,7 +702,10 @@ export default function ProductDetailPage() {
                             <div key={star} className="flex items-center gap-2">
                               <span className="text-xs font-medium w-6 text-right">{star}★</span>
                               <div className="flex-1 h-2.5 rounded-full bg-muted overflow-hidden">
-                                <div className="h-full bg-amber-400 rounded-full" style={{ width: `${pct}%` }} />
+                                <div
+                                  className="h-full bg-amber-400 rounded-full transition-all duration-700"
+                                  style={{ width: `${pct}%`, transitionDelay: `${(5 - star) * 80}ms` }}
+                                />
                               </div>
                               <span className="text-xs text-muted-foreground w-8">{pct}%</span>
                             </div>
@@ -687,8 +763,8 @@ export default function ProductDetailPage() {
                 </Link>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-                {moreProducts.map(p => (
-                  <RelatedProductCard key={p.id} product={p} />
+                {moreProducts.map((p, i) => (
+                  <RelatedProductCard key={p.id} product={p} index={i} />
                 ))}
               </div>
             </div>

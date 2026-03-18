@@ -474,7 +474,8 @@ export default function EmployeeInventory() {
                 ))}
               </SelectContent>
             </Select>
-            <Select value={warehouseFilter} onValueChange={v => { setWarehouseFilter(v); setEmpInvPage(1) }}>
+            {warehouses.length > 1 && (
+              <Select value={warehouseFilter} onValueChange={v => { setWarehouseFilter(v); setEmpInvPage(1) }}>
               <SelectTrigger className="w-[160px] h-9">
                 <SelectValue placeholder="Kho" />
               </SelectTrigger>
@@ -485,6 +486,7 @@ export default function EmployeeInventory() {
                 ))}
               </SelectContent>
             </Select>
+            )}
             <div className="flex items-center gap-2">
               <Switch id="emp-alert-only" checked={alertOnly} onCheckedChange={v => { setAlertOnly(v); setEmpInvPage(1) }} />
               <Label htmlFor="emp-alert-only" className="text-sm">Chỉ cảnh báo</Label>

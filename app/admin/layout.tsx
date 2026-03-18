@@ -14,6 +14,7 @@ import {
 import { cn } from "@/lib/utils"
 import { RouteGuard } from "@/components/route-guard"
 import { useAuth } from "@/lib/auth-context"
+import { InventoryProvider } from '@/lib/inventory-context'
 
 const navGroups = [
   {
@@ -166,18 +167,20 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   return (
     <RouteGuard requiredRole="admin">
-      <div className="min-h-screen bg-background">
-        <AdminSidebar collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
-        <AdminTopbar collapsed={collapsed} onMobileMenu={() => { }} />
-        <main className={cn(
-          "pt-16 min-h-screen transition-all duration-300",
-          collapsed ? "ml-16" : "ml-64"
-        )}>
-          <div className="p-6">
-            {children}
-          </div>
-        </main>
-      </div>
+      <InventoryProvider>  {/* ← bọc toàn bộ bên trong */}
+        <div className="min-h-screen bg-background">
+          <AdminSidebar collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
+          <AdminTopbar collapsed={collapsed} onMobileMenu={() => { }} />
+          <main className={cn(
+            "pt-16 min-h-screen transition-all duration-300",
+            collapsed ? "ml-16" : "ml-64"
+          )}>
+            <div className="p-6">
+              {children}  {/* ← chỉ render 1 lần duy nhất */}
+            </div>
+          </main>
+        </div>
+      </InventoryProvider>
     </RouteGuard>
   )
 }

@@ -9,7 +9,8 @@ import {
   LayoutDashboard, Package, ShoppingCart,
   ChevronLeft, ChevronRight, Menu, LogOut,
   ArrowDownToLine, ArrowUpFromLine, ClipboardList,
-  ClipboardCheck, Repeat, Building2
+  ClipboardCheck, Repeat, Building2,
+  QrCode
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { RouteGuard } from "@/components/route-guard"
@@ -39,6 +40,12 @@ const navGroups = [
     label: "Sân",
     items: [
       { href: "/employee/courts", icon: <Building2 className="h-5 w-5" />, label: "Quản lý sân" },
+    ],
+  },
+  {
+    label: "Check-in/out",
+    items: [
+      { href: "/employee/checkin", label: "Check-in QR", icon: <QrCode className="h-5 w-5" /> }
     ],
   },
   {

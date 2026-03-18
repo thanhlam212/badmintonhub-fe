@@ -173,72 +173,74 @@ export default function BookingPage() {
   }
 
   const handleSubmit = async () => {
-    // Block guests with incomplete info
-    if (isGuest && !isGuestInfoComplete) {
-      setStep(1)
-      validateStep1()
-      return
-    }
-    setSubmitting(true)
+  if (isGuest && !isGuestInfoComplete) {
+    setStep(1)
+    validateStep1()
+    return
+  }
+  setSubmitting(true)
 
-    try {
-      // Parse booking dates for API
-      // booking.date is like "4/3, 5/3" and booking.timeRange is like "08:00 - 10:00"
-      const dates = booking.date.split(',').map(d => d.trim())
-      const firstDate = dates[0] // e.g. "4/3"
-      const [dayStr, monthStr] = firstDate.split('/')
-      const year = new Date().getFullYear()
-      const bookingDate = `${year}-${monthStr.padStart(2, '0')}-${dayStr.padStart(2, '0')}`
+  try {
+    // Parse ngày từ format "4/3" → "2026-03-04"
+    const dates = booking.date.split(',').map((d: string) => d.trim())
+    const firstDate = dates[0]
+    const [dayStr, monthStr] = firstDate.split('/')
+    const year = new Date().getFullYear()
+    const bookingDate = `${year}-${monthStr.padStart(2, '0')}-${dayStr.padStart(2, '0')}`
 
-      const [timeStart, timeEnd] = booking.timeRange.split(' - ').map(t => t.trim())
+    const [timeStart, timeEnd] = booking.timeRange.split(' - ').map((t: string) => t.trim())
 
-      const result = await bookingApi.create({
-        court_id: booking.courtId,
-        booking_date: bookingDate,
-        time_start: timeStart,
-        time_end: timeEnd,
-        slots: booking.slotCount,
-        customer_name: contactName || 'Khách',
-        customer_phone: contactPhone,
-        amount: total,
-        payment_method: paymentMethod,
-        note: note || undefined,
-      })
+    // ✅ Dùng camelCase cho NestJS (không phải snake_case)
+    const result = await bookingApi.create({
+      courtId:       booking.courtId,
+      bookingDate,
+      timeStart,
+      timeEnd,
+      people,
+      paymentMethod,
+      customerName:  contactName || 'Khách',
+      customerPhone: contactPhone,
+      userId:        user?.role !== 'guest' ? user?.id : undefined,
+    })
 
-      if (result.success && result.booking) {
-        // Save completed booking to localStorage for the success page
-        const completedBooking = {
-          id: result.booking.id,
-          courtName: booking.courtName,
-          courtType: booking.courtType,
-          branch: booking.branch,
-          courtAddress: booking.courtAddress,
-          courtLat: booking.courtLat,
-          courtLng: booking.courtLng,
-          date: booking.date,
-          timeRange: booking.timeRange,
-          people,
-          amount: total,
-          paymentMethod,
-          contact: { name: contactName, phone: contactPhone, email: contactEmail, address: contactAddress },
-          racketRental,
-          note,
-        }
-        localStorage.setItem('completedBooking', JSON.stringify(completedBooking))
-        localStorage.removeItem('pendingBooking')
-
-        setTimeout(() => {
-          router.push('/booking/success')
-        }, 2000)
-      } else {
-        alert(result.error || "Đặt sân thất bại. Vui lòng thử lại.")
-        setSubmitting(false)
+    if (result.success && result.booking) {
+      // Lưu vào localStorage để trang success đọc
+      const completedBooking = {
+        id:            result.booking.id,
+        courtName:     booking.courtName,
+        courtType:     booking.courtType,
+        branch:        booking.branch,
+        courtAddress:  booking.courtAddress,
+        courtLat:      booking.courtLat,
+        courtLng:      booking.courtLng,
+        date:          booking.date,
+        timeRange:     booking.timeRange,
+        people,
+        amount:        total,
+        paymentMethod,
+        contact: {
+          name:    contactName,
+          phone:   contactPhone,
+          email:   contactEmail,
+          address: contactAddress,
+        },
+        racketRental,
+        note,
       }
-    } catch {
-      alert("Lỗi kết nối server. Vui lòng thử lại.")
+      localStorage.setItem('completedBooking', JSON.stringify(completedBooking))
+      localStorage.removeItem('pendingBooking')
+
+      setTimeout(() => router.push('/booking/success'), 1500)
+    } else {
+      alert(result.error || 'Đặt sân thất bại. Vui lòng thử lại.')
       setSubmitting(false)
     }
+  } catch (err) {
+    console.error('Booking error:', err)
+    alert('Lỗi kết nối server. Vui lòng thử lại.')
+    setSubmitting(false)
   }
+}
 
   return (
     <RouteGuard>

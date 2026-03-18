@@ -174,10 +174,10 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
       courtApi.getReviews(court.id).then((data: any[]) => {
         setReviewsList(data.map((r: any) => ({
           id: r.id,
-          user_name: r.user_name || 'Ẩn danh',
+          user_name: r.user?.fullName || r.user?.username || 'Ẩn danh',
+          created_at: r.createdAt || '',
           rating: r.rating,
           content: r.content,
-          created_at: r.created_at,
         })))
       })
     }
@@ -484,8 +484,27 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
     return (
       <div className="min-h-screen flex flex-col">
         <Navbar />
-        <main className="flex-1 flex items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <main className="flex-1">
+          <div className="mx-auto max-w-7xl px-4 py-6 space-y-6">
+            {/* Breadcrumb skeleton */}
+            <div className="h-4 w-48 bg-muted rounded animate-pulse" />
+            {/* Gallery skeleton */}
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-2 rounded-xl overflow-hidden">
+              <div className="lg:col-span-3 aspect-video bg-muted animate-pulse rounded-xl" />
+              <div className="hidden lg:grid grid-rows-4 gap-2">
+                {[1,2,3,4].map(i => <div key={i} className="bg-muted animate-pulse rounded-md" />)}
+              </div>
+            </div>
+            {/* Content skeleton */}
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_380px]">
+              <div className="space-y-4">
+                <div className="h-40 bg-muted rounded-xl animate-pulse" />
+                <div className="h-64 bg-muted rounded-xl animate-pulse" style={{ animationDelay: "100ms" }} />
+                <div className="h-48 bg-muted rounded-xl animate-pulse" style={{ animationDelay: "200ms" }} />
+              </div>
+              <div className="hidden lg:block h-64 bg-muted rounded-xl animate-pulse" />
+            </div>
+          </div>
         </main>
         <Footer />
       </div>
@@ -715,8 +734,10 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
                 </CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {court.amenities.map(a => (
-                      <div key={a} className="flex items-center gap-2 rounded-lg border p-3 text-sm">
+                    {court.amenities
+                    .filter((a, i, arr) => arr.indexOf(a) === i)
+                    .map((a, i) => (
+                      <div key={`${a}-${i}`} className="flex items-center gap-2 rounded-lg border p-3 text-sm hover:border-primary/40 hover:bg-primary/5 transition-colors duration-150">
                         <span className="text-primary">{amenityIcons[a] || <Check className="h-5 w-5" />}</span>
                         <span>{a}</span>
                       </div>
@@ -776,14 +797,14 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
                                 disabled={isDisabled}
                                 onClick={() => toggleSlot(d.label, time)}
                                 className={cn(
-                                  "h-8 rounded text-xs font-medium transition-all",
+                                  "h-8 rounded text-xs font-medium transition-all duration-150",
                                   isSelected
-                                    ? "bg-primary text-primary-foreground"
+                                    ? "bg-primary text-primary-foreground scale-[0.95] shadow-sm shadow-primary/40 ring-2 ring-primary/30"
                                     : status === 'available'
-                                      ? "bg-court-available hover:bg-green-200 text-green-700 cursor-pointer"
+                                      ? "bg-court-available hover:bg-green-200 hover:scale-[0.97] text-green-700 cursor-pointer active:scale-95"
                                       : status === 'booked'
-                                        ? "bg-court-booked text-red-400 cursor-not-allowed"
-                                        : "bg-court-hold text-amber-400 cursor-not-allowed"
+                                        ? "bg-court-booked text-red-400 cursor-not-allowed opacity-60"
+                                        : "bg-court-hold text-amber-400 cursor-not-allowed opacity-70"
                                 )}
                               >
                                 {isSelected && <Check className="h-3 w-3 mx-auto" />}
@@ -829,7 +850,7 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
                       <p className="text-sm text-muted-foreground text-center py-4">Chưa có đánh giá nào</p>
                     )}
                     {reviewsList.map(r => (
-                      <div key={r.id} className="border-t pt-4">
+                      <div key={r.id} className="border-t pt-4 hover:bg-muted/30 rounded-lg px-2 -mx-2 transition-colors duration-150">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <div className="h-8 w-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm font-bold">
@@ -857,29 +878,40 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
             {/* Right Sticky Widget */}
             <div className="hidden lg:block">
               <div className="sticky top-20 space-y-4">
-                <Card>
+                <Card className="overflow-hidden">
                   <CardContent className="p-6">
-                    <p className="font-serif text-2xl font-extrabold text-primary">{formatVND(court.price)}<span className="text-sm text-muted-foreground font-normal">/h</span></p>
-                    {selectedSlots.length > 0 ? (
-                      <div className="mt-4">
-                        <p className="text-sm font-semibold mb-2">Đã chọn {selectedSlots.length} slot:</p>
-                        <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto">
-                          {selectedSlots.map(s => (
-                            <Badge key={s} variant="outline" className="text-xs">{s}</Badge>
-                          ))}
-                        </div>
-                        <div className="border-t mt-4 pt-4">
-                          <div className="flex justify-between text-sm">
-                            <span>{selectedSlots.length} x {formatVND(court.price)}</span>
-                            <span className="font-bold">{formatVND(totalPrice)}</span>
+                    <p className="font-serif text-2xl font-extrabold text-primary">
+                      {formatVND(court.price)}<span className="text-sm text-muted-foreground font-normal">/h</span>
+                    </p>
+                    <div
+                      className="transition-all duration-300 overflow-hidden"
+                      style={{ maxHeight: selectedSlots.length > 0 ? "400px" : "0", opacity: selectedSlots.length > 0 ? 1 : 0 }}
+                    >
+                      {selectedSlots.length > 0 && (
+                        <div className="mt-4">
+                          <p className="text-sm font-semibold mb-2">Đã chọn {selectedSlots.length} slot:</p>
+                          <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto">
+                            {selectedSlots.map(s => (
+                              <Badge key={s} variant="outline" className="text-xs">{s}</Badge>
+                            ))}
+                          </div>
+                          <div className="border-t mt-4 pt-4">
+                            <div className="flex justify-between text-sm">
+                              <span>{selectedSlots.length} x {formatVND(court.price)}</span>
+                              <span className="font-bold text-primary">{formatVND(totalPrice)}</span>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ) : (
+                      )}
+                    </div>
+                    <div
+                      className="transition-all duration-300"
+                      style={{ opacity: selectedSlots.length === 0 ? 1 : 0, maxHeight: selectedSlots.length === 0 ? "40px" : "0", overflow: "hidden" }}
+                    >
                       <p className="text-sm text-muted-foreground mt-2">Chọn slot trên lịch để đặt sân</p>
-                    )}
+                    </div>
                     <Button
-                      className="w-full mt-4 bg-primary text-primary-foreground hover:bg-primary/90 font-semibold"
+                      className="w-full mt-4 font-semibold transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
                       disabled={selectedSlots.length === 0 || isClosed}
                       onClick={handleBooking}
                     >
@@ -897,23 +929,26 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
           </div>
         </div>
 
-        {/* Mobile sticky bottom bar */}
-        {selectedSlots.length > 0 && !isClosed && (
-          <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-card border-t p-4 shadow-lg z-40">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">{selectedSlots.length} slot</p>
-                <p className="font-serif font-bold text-primary text-lg">{formatVND(totalPrice)}</p>
-              </div>
-              <Button
-                className="bg-primary text-primary-foreground hover:bg-primary/90 font-semibold"
-                onClick={handleBooking}
-              >
-                Tiếp tục đặt sân
-              </Button>
+        {/* Mobile sticky bottom bar — slide up */}
+        <div className={cn(
+          "lg:hidden fixed bottom-0 left-0 right-0 bg-card border-t p-4 shadow-lg z-40 transition-all duration-300",
+          selectedSlots.length > 0 && !isClosed
+            ? "translate-y-0 opacity-100"
+            : "translate-y-full opacity-0 pointer-events-none"
+        )}>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-muted-foreground">{selectedSlots.length} slot đã chọn</p>
+              <p className="font-serif font-bold text-primary text-lg">{formatVND(totalPrice)}</p>
             </div>
+            <Button
+              className="font-semibold hover:scale-[1.02] transition-transform"
+              onClick={handleBooking}
+            >
+              Tiếp tục đặt sân
+            </Button>
           </div>
-        )}
+        </div>
       </main>
       <Footer />
     </div>

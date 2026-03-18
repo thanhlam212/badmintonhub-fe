@@ -158,15 +158,15 @@ export default function EmployeeCourtsPage() {
           const parts = dateLabel.split(", ")[1]?.split("/")
           const bookingDate = parts ? `${new Date().getFullYear()}-${parts[1]}-${parts[0]}` : new Date().toISOString().split("T")[0]
           await bookingApi.create({
-            court_id: courtId,
-            booking_date: bookingDate,
-            time_start: time,
-            time_end: `${String(parseInt(time.split(":")[0]) + 1).padStart(2, "0")}:00`,
-            slots: 1,
-            customer_name: user?.fullName || "Nhân viên",
-            customer_phone: "0000000000",
-            amount: 0,
-          })
+          courtId: courtId,
+          bookingDate: bookingDate,
+          timeStart: time,
+          timeEnd: `${String(parseInt(time.split(":")[0]) + 1).padStart(2, "0")}:00`,
+          people: 1,
+          paymentMethod: "cash",
+          customerName: user?.fullName || "Nhân viên",
+          customerPhone: "0000000000",
+        })
         } catch {}
         setAllBookings(prev => [...prev, { courtId, dateLabel, time, status: employeeAction, bookedBy: user?.fullName || "Nhân viên" }])
       }

@@ -446,7 +446,7 @@ export default function EmployeeOrdersPage() {
           id: String(o.id),
           items: (o.items || []).map((i: any) => ({ productId: i.productId || i.product_id, name: i.productName || i.name || "", price: i.price || 0, qty: i.quantity || i.qty || 0 })),
           customer: { name: o.customerName || "", phone: o.customerPhone || "", email: o.customerEmail || "", address: o.shippingAddress || "" },
-          note: o.note || "", subtotal: o.totalAmount || 0, shippingFee: 0, total: o.totalAmount || 0,
+          note: o.note || "", subtotal: o.amount || 0, shippingFee: 0, total: o.amount || 0,
           paymentMethod: o.paymentMethod || "", status: o.status || "pending", createdAt: o.createdAt || "",
           userId: o.userId || "", type: "online" as const, deliveryMethod: "delivery" as const,
           fulfillingWarehouse: o.fulfillingWarehouse || "",
