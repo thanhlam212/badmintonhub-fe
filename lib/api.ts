@@ -141,6 +141,7 @@ export interface ApiBooking {
   paymentMethod: string | null
   note: string | null
   createdAt: string
+  pricePerHour: number
 }
 
 export interface ApiOrder {
@@ -254,6 +255,7 @@ function transformBooking(raw: any): ApiBooking {
     paymentMethod: raw.paymentMethod,
     note: raw.note || null,
     createdAt: raw.createdAt,
+    pricePerHour: raw.number
   }
 }
 
@@ -474,7 +476,7 @@ export const bookingApi = {
   // GET /api/bookings (Admin/Employee)
   getAll: async (filters?: {
     status?: string; branchId?: number; date?: string;
-    phone?: string; limit?: number;
+    phone?: string; limit?: number; 
   }) => {
     const params = new URLSearchParams()
     if (filters?.status)   params.set('status', filters.status)

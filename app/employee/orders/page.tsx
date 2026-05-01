@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
-  Package, Truck, Search, Eye, CheckCircle2, Clock, PackageCheck,
+  Package, Truck, Search, Eye, CheckCircle2, Clock, PackageCheck, RotateCcw,
   ArrowUpFromLine, MapPin, Phone, Mail, AlertCircle, RefreshCw, XCircle, Store, Warehouse
 } from "lucide-react"
 import { useState, useEffect } from "react"
@@ -37,7 +37,7 @@ interface Order {
   shippingFee: number
   total: number
   paymentMethod: string
-  status: "pending" | "processing" | "shipping" | "delivered" | "cancelled"
+  status: "pending" | "processing" | "shipping" | "delivered" | "cancelled" | "refunded"
   createdAt: string
   userId: string
   type: "online"
@@ -58,6 +58,7 @@ const statusConfig: Record<string, { label: string; color: string; icon: React.R
   processing: { label: "Đang xử lý", color: "bg-blue-100 text-blue-800 border-blue-200", icon: <Package className="h-3.5 w-3.5" /> },
   shipping: { label: "Đang giao", color: "bg-purple-100 text-purple-800 border-purple-200", icon: <Truck className="h-3.5 w-3.5" /> },
   delivered: { label: "Đã giao", color: "bg-green-100 text-green-800 border-green-200", icon: <CheckCircle2 className="h-3.5 w-3.5" /> },
+  refunded: { label: "Đã hoàn tiền", color: "bg-teal-100 text-teal-800 border-teal-200", icon: <RotateCcw className="h-3.5 w-3.5" /> },
   cancelled: { label: "Đã hủy", color: "bg-red-100 text-red-800 border-red-200", icon: <XCircle className="h-3.5 w-3.5" /> },
 }
 
@@ -77,11 +78,12 @@ function StatusBadge({ status }: { status: string }) {
   )
 }
 
-function OrderDetailDialog({ order, onApprove, onStartDelivery, onDeliver, onCancel, inventoryData }: {
+function OrderDetailDialog({ order, onApprove, onStartDelivery, onDeliver, onRefund, onCancel, inventoryData }: {
   order: Order
   onApprove: (warehouse: string) => void
   onStartDelivery: () => void
   onDeliver: () => void
+  onRefund?: (id: string) => void
   onCancel: () => void
   inventoryData?: { sku: string; name: string; warehouse: string; available: number }[]
 }) {
@@ -425,6 +427,12 @@ function OrderDetailDialog({ order, onApprove, onStartDelivery, onDeliver, onCan
             <PackageCheck className="h-4 w-4" /> Xác nhận đã giao
           </Button>
         )}
+        {order.status === "delivered" && (
+          <Button variant="outline" onClick={() => onRefund?.(order.id)}
+            className="gap-1 text-teal-600 border-teal-300 hover:bg-teal-50">
+            <RotateCcw className="h-4 w-4" /> Hoàn tiền
+          </Button>
+        )}
       </DialogFooter>
     </DialogContent>
   )
@@ -511,6 +519,10 @@ export default function EmployeeOrdersPage() {
     updateOrderStatus(orderId, { status: "cancelled" })
   }
 
+  const handleRefund = (orderId: string) => {
+    updateOrderStatus(orderId, { status: "refunded" })
+  }
+
   const filteredOrders = orders.filter(o => {
     if (!search.trim()) return true
     const q = search.toLowerCase()
@@ -522,7 +534,7 @@ export default function EmployeeOrdersPage() {
   const pendingOrders = filteredOrders.filter(o => o.status === "pending")
   const processingOrders = filteredOrders.filter(o => o.status === "processing")
   const shippingOrders = filteredOrders.filter(o => o.status === "shipping")
-  const completedOrders = filteredOrders.filter(o => ["delivered", "cancelled"].includes(o.status))
+  const completedOrders = filteredOrders.filter(o => ["delivered", "cancelled", "refunded"].includes(o.status))
 
   const stats = {
     pending: orders.filter(o => o.status === "pending").length,
@@ -666,6 +678,7 @@ export default function EmployeeOrdersPage() {
                                 onApprove={(wh) => handleProcess(order.id, wh)}
                                 onStartDelivery={() => handleStartDelivery(order.id)}
                                 onDeliver={() => handleDeliver(order.id)}
+                                onRefund={(id) => handleRefund(id)}
                                 onCancel={() => handleCancel(order.id)}
                                 inventoryData={inventory.map(i => ({ sku: i.sku, name: i.name, warehouse: i.warehouse, available: i.available }))}
                               />

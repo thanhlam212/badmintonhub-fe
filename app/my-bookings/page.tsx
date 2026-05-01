@@ -87,6 +87,7 @@ function BookingDetailDialog({ booking }: { booking: ApiBooking }) {
 
   const statusSteps = [
     { key: "pending",   label: "Chờ xác nhận" },
+    { key: "deposited", label: "Đã đặt cọc" },
     { key: "confirmed", label: "Đã xác nhận" },
     { key: "playing",   label: "Đang chơi" },
     { key: "completed", label: "Hoàn thành" },
@@ -199,6 +200,12 @@ function BookingDetailDialog({ booking }: { booking: ApiBooking }) {
               <span className="font-semibold">Tổng tiền</span>
               <span className="font-serif font-bold text-lg text-primary">{formatVND(booking.amount)}</span>
             </div>
+            {booking.pricePerHour > 0 && (
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>Giá tại thời điểm đặt</span>
+                <span>{formatVND(booking.pricePerHour)}/giờ</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -611,7 +618,7 @@ export default function MyBookingsPage() {
     }
   }
 
-  const upcoming  = allBookings.filter(b => ["confirmed", "pending", "playing"].includes(b.status))
+  const upcoming  = allBookings.filter(b => ["confirmed", "pending", "playing", "deposited"].includes(b.status))
   const completed = allBookings.filter(b => b.status === "completed")
   const cancelled = allBookings.filter(b => b.status === "cancelled")
 
