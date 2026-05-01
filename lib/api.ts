@@ -255,7 +255,7 @@ function transformBooking(raw: any): ApiBooking {
     paymentMethod: raw.paymentMethod,
     note: raw.note || null,
     createdAt: raw.createdAt,
-    pricePerHour: raw.number
+    pricePerHour: parseFloat(String(raw.pricePerHour ?? raw.price_per_hour ?? 0))
   }
 }
 
@@ -565,6 +565,49 @@ export const bookingApi = {
   delete: async (id: string) => {
     const res = await apiFetch(`/bookings/${id}/cancel`, { method: 'PATCH' })
     return { success: res.success }
+  },
+
+  previewFixed: async (data: {
+    courtId: number
+    cycle: "weekly" | "monthly"
+    startDate: string
+    endDate: string
+    timeStart: string
+    timeEnd: string
+  }) => {
+    const res = await apiFetch<any>('/bookings/fixed/preview', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+    return { success: res.success, data: res.data, error: res.message }
+  },
+
+  confirmFixed: async (data: {
+    courtId: number
+    cycle: "weekly" | "monthly"
+    startDate: string
+    endDate: string
+    timeStart: string
+    timeEnd: string
+    paymentMethod: string
+    customerName: string
+    customerPhone: string
+    customerEmail?: string
+    userId?: string
+    adjustmentLimit?: number
+    occurrences: {
+      date: string
+      courtId: number
+      timeStart: string
+      timeEnd: string
+      skip: boolean
+    }[]
+  }) => {
+    const res = await apiFetch<any>('/bookings/fixed/confirm', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+    return { success: res.success, data: res.data, error: res.message }
   },
 }
 

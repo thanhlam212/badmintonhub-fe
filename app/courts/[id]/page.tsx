@@ -917,6 +917,11 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
                     >
                       {isClosed ? "Sân đang tạm đóng" : "Tiếp tục đặt sân"}
                     </Button>
+                    <Link href={`/booking/fixed?courtId=${court.id}`}>
+                      <Button variant="outline" className="w-full mt-2 font-semibold" disabled={isClosed}>
+                        Đặt lịch cố định
+                      </Button>
+                    </Link>
                     <div className="mt-3 p-3 rounded-lg bg-muted">
                       <p className="text-xs text-muted-foreground flex items-center gap-1">
                         <Lock className="h-3 w-3" /> Giữ chỗ 10 phút sau khi chọn slot
