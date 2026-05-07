@@ -905,3 +905,147 @@ export const salesOrderApi = {
     })
   },
 }
+
+// ═══════════════════════════════════════════════════════════════
+// FIXED SCHEDULE API
+// ═══════════════════════════════════════════════════════════════
+
+export interface ApiFixedScheduleOccurrence {
+  date: string;
+  dayLabel: string;
+  courtId: number;
+  courtName: string;
+  timeStart: string;
+  timeEnd: string;
+  slots: string[];
+  available: boolean;
+  conflicts: Array<{
+    time: string;
+    status: string;
+    bookedBy?: string;
+  }>;
+  pricePerHour: number;
+  amount: number;
+  skip: boolean;
+}
+
+export interface ApiFixedSchedulePreview {
+  court: {
+    id: number;
+    name: string;
+    type: string;
+    price: number;
+  };
+  cycle: 'weekly' | 'monthly';
+  startDate: string;
+  endDate: string;
+  hoursPerSession: number;
+  occurrences: ApiFixedScheduleOccurrence[];
+  totalOccurrences: number;
+  availableOccurrences: number;
+  conflictOccurrences: number;
+  pricing: {
+    pricePerHour: number;
+    pricePerSession: number;
+    totalSessions: number;
+    subtotal: number;
+    suggestedDiscount: number;
+    discountAmount: number;
+    finalAmount: number;
+  };
+  suggestions: {
+    hasConflicts: boolean;
+    message: string;
+  };
+}
+
+export const fixedScheduleApi = {
+  /**
+   * Preview Fixed Schedule - Xem trước lịch cố định
+   */
+  preview: async (data: {
+    courtId: number;
+    cycle: 'weekly' | 'monthly';
+    startDate: string;
+    endDate: string;
+    timeStart: string;
+    timeEnd: string;
+  }): Promise<{ success: boolean; data?: ApiFixedSchedulePreview; error?: string }> => {
+    const res = await apiFetch<ApiFixedSchedulePreview>('/bookings/fixed/preview', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+
+    if (res.success && res.data) {
+      return { success: true, data: res.data };
+    }
+    return { success: false, error: res.message };
+  },
+
+  /**
+   * Confirm Fixed Schedule - Xác nhận tạo lịch cố định
+   */
+  confirm: async (data: {
+    courtId: number;
+    cycle: 'weekly' | 'monthly';
+    startDate: string;
+    endDate: string;
+    timeStart: string;
+    timeEnd: string;
+    customerName: string;
+    customerPhone: string;
+    customerEmail?: string;
+    paymentMethod: 'cash' | 'bank_transfer' | 'momo' | 'vnpay';
+    adjustmentLimit?: number;
+    discountRate?: number;
+    occurrences: ApiFixedScheduleOccurrence[];
+  }): Promise<{ success: boolean; data?: any; error?: string }> => {
+    const res = await apiFetch<any>('/bookings/fixed/confirm', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+
+    if (res.success && res.data) {
+      return { success: true, data: res.data };
+    }
+    return { success: false, error: res.message };
+  },
+
+  /**
+   * Get My Fixed Schedules - Lấy danh sách lịch cố định của user
+   */
+  getMySchedules: async (): Promise<{ success: boolean; data?: any[]; error?: string }> => {
+    const res = await apiFetch<any[]>('/bookings/my/fixed-schedules');
+
+    if (res.success && res.data) {
+      return { success: true, data: res.data };
+    }
+    return { success: false, error: res.message };
+  },
+
+  /**
+   * Adjust Fixed Schedule Occurrence - Điều chỉnh buổi trong lịch cố định
+   */
+  adjustOccurrence: async (
+    scheduleId: string,
+    occurrenceId: string,
+    data: {
+      type: 'skip' | 'reschedule' | 'change_court';
+      newCourtId?: number;
+      newDate?: string;
+      newTimeStart?: string;
+      newTimeEnd?: string;
+      note?: string;
+    }
+  ): Promise<{ success: boolean; error?: string }> => {
+    const res = await apiFetch(
+      `/bookings/fixed/${scheduleId}/occurrences/${occurrenceId}/adjust`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }
+    );
+
+    return { success: res.success, error: res.message };
+  },
+};
