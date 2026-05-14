@@ -19,11 +19,12 @@ import {
   Calendar, Clock, MapPin, QrCode, Star, ChevronDown, Settings, Heart,
   Gift, ShoppingBag, Award, User as UserIcon, Save, CheckCircle2,
   AlertCircle, Mail, Phone, Package, Truck, Receipt, Printer, Download,
-  Copy, CalendarDays, CreditCard, Users, FileText
+  Copy, CalendarDays, CreditCard, Users, FileText,
+  RefreshCw, SkipForward, XCircle, ChevronRight, Loader2,
 } from "lucide-react"
 import { useState, useEffect } from "react"
 import { formatVND } from "@/lib/utils"
-import { bookingApi, orderApi, type ApiBooking, type ApiOrder } from "@/lib/api"
+import { bookingApi, orderApi, fixedScheduleApi, type ApiBooking, type ApiOrder } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
 
@@ -103,7 +104,6 @@ function BookingDetailDialog({ booking }: { booking: ApiBooking }) {
       </DialogHeader>
 
       <div className="space-y-4 mt-2">
-        {/* Booking ID + Status */}
         <div className="flex items-center justify-between">
           <span className="font-mono text-sm text-primary font-semibold bg-primary/5 px-2 py-1 rounded">
             {booking.id}
@@ -111,7 +111,6 @@ function BookingDetailDialog({ booking }: { booking: ApiBooking }) {
           <BookingStatusBadge status={booking.status} />
         </div>
 
-        {/* Timeline — chỉ hiện khi chưa bị huỷ */}
         {booking.status !== "cancelled" && (
           <div className="flex items-center gap-1 mt-2">
             {statusSteps.map((step, i) => (
@@ -144,56 +143,34 @@ function BookingDetailDialog({ booking }: { booking: ApiBooking }) {
 
         <Separator />
 
-        {/* Thông tin sân */}
         <div>
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Thông tin sân</p>
           <div className="rounded-lg border p-3 space-y-2">
             <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground flex items-center gap-1.5">
-                <MapPin className="h-3.5 w-3.5" /> Sân
-              </span>
+              <span className="text-muted-foreground flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" /> Sân</span>
               <span className="font-semibold">{booking.courtName}</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground flex items-center gap-1.5">
-                <MapPin className="h-3.5 w-3.5" /> Chi nhánh
-              </span>
+              <span className="text-muted-foreground flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" /> Chi nhánh</span>
               <span className="font-medium">{booking.branchName}</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground flex items-center gap-1.5">
-                <Calendar className="h-3.5 w-3.5" /> Ngày
-              </span>
+              <span className="text-muted-foreground flex items-center gap-1.5"><Calendar className="h-3.5 w-3.5" /> Ngày</span>
               <span className="font-medium">{dateStr}</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground flex items-center gap-1.5">
-                <Clock className="h-3.5 w-3.5" /> Giờ chơi
-              </span>
+              <span className="text-muted-foreground flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" /> Giờ chơi</span>
               <span className="font-semibold text-primary">{booking.timeStart} – {booking.timeEnd}</span>
             </div>
-            {booking.slots && (
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground flex items-center gap-1.5">
-                  <Users className="h-3.5 w-3.5" /> Số người
-                </span>
-                <span className="font-medium">{booking.slots ?? '—'} người</span>
-              </div>
-            )}
           </div>
         </div>
 
-        {/* Thanh toán */}
         <div>
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Thanh toán</p>
           <div className="rounded-lg border p-3 space-y-2">
             <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground flex items-center gap-1.5">
-                <CreditCard className="h-3.5 w-3.5" /> Phương thức
-              </span>
-              <span className="font-medium">
-                {paymentLabels[booking.paymentMethod || ""] || booking.paymentMethod || "—"}
-              </span>
+              <span className="text-muted-foreground flex items-center gap-1.5"><CreditCard className="h-3.5 w-3.5" /> Phương thức</span>
+              <span className="font-medium">{paymentLabels[booking.paymentMethod || ""] || booking.paymentMethod || "—"}</span>
             </div>
             <Separator />
             <div className="flex justify-between">
@@ -209,15 +186,6 @@ function BookingDetailDialog({ booking }: { booking: ApiBooking }) {
           </div>
         </div>
 
-        {/* Ghi chú */}
-        {booking.note && (
-          <div>
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Ghi chú</p>
-            <p className="text-sm text-muted-foreground bg-muted rounded-lg px-3 py-2">{booking.note}</p>
-          </div>
-        )}
-
-        {/* QR Code */}
         {(booking.status === "confirmed" || booking.status === "playing") && (
           <div>
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">QR Check-in</p>
@@ -227,13 +195,12 @@ function BookingDetailDialog({ booking }: { booking: ApiBooking }) {
               </div>
               <div className="text-sm">
                 <p className="font-semibold">Xuất trình khi đến sân</p>
-                <p className="text-muted-foreground text-xs mt-1">Nhân viên sẽ quét mã này để xác nhận lịch chơi của bạn</p>
+                <p className="text-muted-foreground text-xs mt-1">Nhân viên sẽ quét mã này để xác nhận lịch chơi</p>
               </div>
             </div>
           </div>
         )}
 
-        {/* Ngày tạo */}
         <p className="text-xs text-muted-foreground">
           Đặt lúc: {booking.createdAt ? new Date(booking.createdAt).toLocaleString("vi-VN") : "—"}
         </p>
@@ -258,14 +225,12 @@ function BookingCard({ booking, onCancel }: { booking: ApiBooking; onCancel?: (i
     <Card className="hover:-translate-y-0.5 transition-all duration-200 hover:shadow-md">
       <CardContent className="p-4">
         <div className="flex gap-4">
-          {/* Date Block */}
           <div className="flex flex-col items-center justify-center rounded-lg bg-primary px-3 py-2 text-primary-foreground shrink-0 min-w-[60px]">
             <span className="text-xs font-medium">{dayName}</span>
             <span className="font-serif text-2xl font-extrabold leading-none">{dayNum}</span>
             <span className="text-xs">{month}</span>
           </div>
 
-          {/* Center Details */}
           <div className="flex-1 min-w-0">
             <h3 className="font-semibold text-foreground">{booking.courtName}</h3>
             <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1 text-sm text-muted-foreground">
@@ -278,12 +243,9 @@ function BookingCard({ booking, onCancel }: { booking: ApiBooking; onCancel?: (i
             </div>
           </div>
 
-          {/* Right: Status & Actions */}
           <div className="flex flex-col items-end gap-2 shrink-0">
             <BookingStatusBadge status={booking.status} />
-
             <div className="flex gap-1.5 flex-wrap justify-end">
-              {/* ✅ Chi tiết — tất cả status đều có */}
               <Dialog>
                 <DialogTrigger asChild>
                   <Button variant="outline" size="sm" className="text-xs h-7">Chi tiết</Button>
@@ -291,7 +253,6 @@ function BookingCard({ booking, onCancel }: { booking: ApiBooking; onCancel?: (i
                 <BookingDetailDialog booking={booking} />
               </Dialog>
 
-              {/* Huỷ — chỉ khi pending hoặc confirmed */}
               {(booking.status === "pending" || booking.status === "confirmed") && (
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
@@ -314,7 +275,6 @@ function BookingCard({ booking, onCancel }: { booking: ApiBooking; onCancel?: (i
                 </AlertDialog>
               )}
 
-              {/* Đánh giá — khi completed */}
               {booking.status === "completed" && (
                 <Dialog>
                   <DialogTrigger asChild>
@@ -328,32 +288,16 @@ function BookingCard({ booking, onCancel }: { booking: ApiBooking; onCancel?: (i
                       <p className="text-sm text-muted-foreground text-center">{booking.courtName}</p>
                       <div className="flex justify-center gap-2">
                         {[1, 2, 3, 4, 5].map(s => (
-                          <button
-                            key={s}
-                            onMouseEnter={() => setHoverRating(s)}
-                            onMouseLeave={() => setHoverRating(0)}
-                            onClick={() => setRating(s)}
-                          >
-                            <Star className={cn(
-                              "h-8 w-8 transition-colors",
-                              (hoverRating || rating) >= s ? "fill-amber-400 text-amber-400" : "text-muted"
-                            )} />
+                          <button key={s} onMouseEnter={() => setHoverRating(s)} onMouseLeave={() => setHoverRating(0)} onClick={() => setRating(s)}>
+                            <Star className={cn("h-8 w-8 transition-colors", (hoverRating || rating) >= s ? "fill-amber-400 text-amber-400" : "text-muted")} />
                           </button>
                         ))}
                       </div>
                       <p className="text-center text-sm text-muted-foreground">
                         {rating === 0 ? "Chọn số sao" : `Bạn đánh giá ${rating} sao`}
                       </p>
-                      <Textarea
-                        placeholder="Chia sẻ trải nghiệm của bạn về sân..."
-                        value={reviewContent}
-                        onChange={e => setReviewContent(e.target.value)}
-                        rows={3}
-                      />
-                      <Button
-                        className="w-full bg-primary text-primary-foreground hover:bg-primary/90 font-semibold"
-                        disabled={rating === 0}
-                      >
+                      <Textarea placeholder="Chia sẻ trải nghiệm của bạn về sân..." value={reviewContent} onChange={e => setReviewContent(e.target.value)} rows={3} />
+                      <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90 font-semibold" disabled={rating === 0}>
                         Gửi đánh giá
                       </Button>
                     </div>
@@ -365,6 +309,445 @@ function BookingCard({ booking, onCancel }: { booking: ApiBooking; onCancel?: (i
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ─── ✨ MỚI: Fixed Schedule Types ─────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+
+interface FixedScheduleSummary {
+  id: string
+  status: string
+  cycle: "weekly" | "monthly"
+  startDate: string
+  endDate: string
+  timeStart: string
+  timeEnd: string
+  occurrenceCount: number
+  adjustmentLimit: number
+  adjustmentUsed: number
+  totalAmountSnapshot: number
+  court: {
+    id: number
+    name: string
+    type: string
+    branch: { name: string; address: string }
+  }
+  occurrenceSummary: {
+    total: number
+    scheduled: number
+    completed: number
+    skipped: number
+    upcoming: {
+      id: string
+      date: string
+      dayLabel: string
+      timeStart: string
+      timeEnd: string
+    }[]
+  }
+  invoice: { id: string; code: string; status: string } | null
+}
+
+interface FixedScheduleDetail extends FixedScheduleSummary {
+  occurrences: {
+    id: string
+    date: string
+    dayLabel: string
+    timeStart: string
+    timeEnd: string
+    status: string
+    courtName: string
+    courtId: number
+    amountSnapshot: number
+  }[]
+}
+
+const FIXED_STATUS_CONFIG: Record<string, { label: string; color: string }> = {
+  pending:   { label: "Chờ thanh toán", color: "bg-amber-100 text-amber-800 border-amber-200" },
+  deposited: { label: "Đã cọc",         color: "bg-blue-100 text-blue-800 border-blue-200" },
+  confirmed: { label: "Đã xác nhận",    color: "bg-green-100 text-green-800 border-green-200" },
+  completed: { label: "Hoàn thành",     color: "bg-gray-100 text-gray-600 border-gray-200" },
+  cancelled: { label: "Đã hủy",         color: "bg-red-100 text-red-600 border-red-200" },
+}
+
+const OCC_STATUS_CONFIG: Record<string, { label: string; icon: React.ReactNode; rowClass: string; badgeClass: string }> = {
+  scheduled:  { label: "Sắp tới",    icon: <Clock className="h-3 w-3" />,        rowClass: "bg-white",         badgeClass: "bg-green-50 text-green-700 border-green-100" },
+  completed:  { label: "Hoàn thành", icon: <CheckCircle2 className="h-3 w-3" />, rowClass: "bg-muted/30",      badgeClass: "bg-blue-50 text-blue-600 border-blue-100" },
+  skipped:    { label: "Bỏ qua",     icon: <SkipForward className="h-3 w-3" />,  rowClass: "bg-muted/30",      badgeClass: "bg-gray-100 text-gray-500 border-gray-200" },
+  rescheduled:{ label: "Đổi lịch",   icon: <RefreshCw className="h-3 w-3" />,    rowClass: "bg-blue-50/30",    badgeClass: "bg-blue-50 text-blue-600 border-blue-100" },
+  cancelled:  { label: "Đã hủy",     icon: <XCircle className="h-3 w-3" />,      rowClass: "bg-red-50/20",     badgeClass: "bg-red-50 text-red-500 border-red-100" },
+}
+
+// ─── Fixed Schedule Card ──────────────────────────────────────
+function FixedScheduleCard({
+  schedule,
+  onViewDetail,
+}: {
+  schedule: FixedScheduleSummary
+  onViewDetail: (id: string) => void
+}) {
+  const statusCfg = FIXED_STATUS_CONFIG[schedule.status] || FIXED_STATUS_CONFIG.pending
+  const adjustmentLeft = schedule.adjustmentLimit - schedule.adjustmentUsed
+
+  return (
+    <Card
+      className="hover:-translate-y-0.5 transition-all duration-200 hover:shadow-md cursor-pointer group"
+      onClick={() => onViewDetail(schedule.id)}
+    >
+      <CardContent className="p-4">
+        <div className="flex flex-col gap-3">
+          {/* Row 1: Tên sân + status + arrow */}
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-semibold text-foreground">{schedule.court.name}</h3>
+                <span className="text-xs px-1.5 py-0.5 bg-muted rounded text-muted-foreground">
+                  {schedule.court.type}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                <MapPin className="h-3 w-3" />
+                {schedule.court.branch.name}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Badge variant="outline" className={cn("text-xs", statusCfg.color)}>
+                {statusCfg.label}
+              </Badge>
+              <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
+            </div>
+          </div>
+
+          {/* Row 2: Thông tin gói */}
+          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <RefreshCw className="h-3 w-3" />
+              {schedule.cycle === "weekly" ? "Hàng tuần" : "Hàng tháng"}
+            </span>
+            <span className="flex items-center gap-1">
+              <Clock className="h-3 w-3" />
+              {schedule.timeStart} – {schedule.timeEnd}
+            </span>
+            <span className="flex items-center gap-1">
+              <Calendar className="h-3 w-3" />
+              {schedule.startDate} → {schedule.endDate}
+            </span>
+          </div>
+
+          {/* Row 3: Stats */}
+          <div className="grid grid-cols-4 gap-2">
+            {[
+              { label: "Tổng",    value: schedule.occurrenceSummary.total,     color: "text-foreground" },
+              { label: "Còn lại", value: schedule.occurrenceSummary.scheduled, color: "text-green-600" },
+              { label: "Xong",    value: schedule.occurrenceSummary.completed, color: "text-blue-600" },
+              { label: "Bỏ",      value: schedule.occurrenceSummary.skipped,   color: "text-muted-foreground" },
+            ].map(stat => (
+              <div key={stat.label} className="bg-muted/60 rounded-lg p-2 text-center">
+                <p className={cn("text-base font-bold", stat.color)}>{stat.value}</p>
+                <p className="text-[10px] text-muted-foreground">{stat.label}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Row 4: Buổi sắp tới */}
+          {schedule.occurrenceSummary.upcoming.length > 0 && (
+            <div>
+              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">
+                Buổi sắp tới
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {schedule.occurrenceSummary.upcoming.map(occ => (
+                  <span
+                    key={occ.id}
+                    className="inline-flex items-center gap-1 px-2 py-1 bg-primary/5 border border-primary/20 rounded-lg text-xs text-primary"
+                  >
+                    <Calendar className="h-3 w-3" />
+                    <span className="font-medium">{occ.dayLabel} {occ.date}</span>
+                    <span className="text-primary/70">{occ.timeStart}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Row 5: Footer */}
+          <div className="flex items-center justify-between pt-1 border-t border-border/50">
+            <div className="flex items-center gap-2">
+              {schedule.invoice && (
+                <span className={cn(
+                  "text-xs px-2 py-0.5 rounded-full border",
+                  schedule.invoice.status === "paid"      ? "bg-green-50 text-green-600 border-green-200" :
+                  schedule.invoice.status === "deposited" ? "bg-blue-50 text-blue-600 border-blue-200" :
+                  "bg-amber-50 text-amber-600 border-amber-200"
+                )}>
+                  {schedule.invoice.status === "paid" ? "Đã thanh toán" :
+                   schedule.invoice.status === "deposited" ? "Đã cọc" : "Chưa thanh toán"}
+                </span>
+              )}
+              {adjustmentLeft > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  Còn {adjustmentLeft} lần điều chỉnh
+                </span>
+              )}
+            </div>
+            <p className="font-serif font-bold text-primary">
+              {formatVND(schedule.totalAmountSnapshot)}
+            </p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+// ─── Fixed Schedule Detail Dialog ────────────────────────────
+function FixedScheduleDetailDialog({
+  schedule,
+  open,
+  onClose,
+}: {
+  schedule: FixedScheduleDetail | null
+  open: boolean
+  onClose: () => void
+}) {
+  const [filter, setFilter] = useState<"all" | "scheduled" | "completed" | "skipped">("all")
+
+  if (!schedule) return null
+
+  const filtered = filter === "all"
+    ? schedule.occurrences
+    : schedule.occurrences.filter(o => o.status === filter)
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="font-serif text-lg flex items-center gap-2">
+            <Calendar className="h-5 w-5 text-primary" />
+            Chi tiết gói đặt lịch cố định
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          {/* Thông tin gói */}
+          <div className="grid grid-cols-2 gap-3 p-4 bg-muted/30 rounded-xl text-sm">
+            <div>
+              <p className="text-xs text-muted-foreground mb-0.5">Sân</p>
+              <p className="font-semibold">{schedule.court.name}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-0.5">Chi nhánh</p>
+              <p className="font-medium">{schedule.court.branch.name}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-0.5">Chu kỳ</p>
+              <p className="font-medium">{schedule.cycle === "weekly" ? "Hàng tuần" : "Hàng tháng"}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-0.5">Khung giờ</p>
+              <p className="font-semibold text-primary">{schedule.timeStart} – {schedule.timeEnd}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-0.5">Thời gian</p>
+              <p className="font-medium">{schedule.startDate} → {schedule.endDate}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-0.5">Tổng tiền</p>
+              <p className="font-serif font-bold text-primary text-base">
+                {formatVND(schedule.totalAmountSnapshot)}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-0.5">Điều chỉnh</p>
+              <p className="font-medium">
+                {schedule.adjustmentUsed}/{schedule.adjustmentLimit} lần đã dùng
+              </p>
+            </div>
+            {schedule.invoice && (
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Hóa đơn</p>
+                <p className="font-mono text-xs font-medium text-primary">{schedule.invoice.code}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Filter tabs */}
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+              Danh sách buổi ({schedule.occurrences.length} buổi)
+            </p>
+            <div className="flex gap-2 flex-wrap">
+              {(["all", "scheduled", "completed", "skipped"] as const).map(f => (
+                <button
+                  key={f}
+                  onClick={() => setFilter(f)}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+                    filter === f
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground hover:bg-muted/80"
+                  )}
+                >
+                  {f === "all"       ? `Tất cả (${schedule.occurrences.length})` :
+                   f === "scheduled" ? `Sắp tới (${schedule.occurrences.filter(o => o.status === "scheduled").length})` :
+                   f === "completed" ? `Xong (${schedule.occurrences.filter(o => o.status === "completed").length})` :
+                   `Bỏ qua (${schedule.occurrences.filter(o => o.status === "skipped").length})`}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Occurrences list */}
+          <div className="border rounded-xl overflow-hidden divide-y divide-border max-h-64 overflow-y-auto">
+            {filtered.length === 0 ? (
+              <div className="py-8 text-center text-sm text-muted-foreground">Không có buổi nào</div>
+            ) : (
+              filtered.map((occ, idx) => {
+                const cfg = OCC_STATUS_CONFIG[occ.status] || OCC_STATUS_CONFIG.scheduled
+                const isOriginalCourt = occ.courtId === schedule.court.id
+                return (
+                  <div key={occ.id} className={cn("flex items-center gap-3 px-4 py-3", cfg.rowClass)}>
+                    <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-xs font-bold text-muted-foreground shrink-0">
+                      {idx + 1}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-sm font-semibold">{occ.dayLabel}</span>
+                        <span className="text-xs text-muted-foreground">{occ.date}</span>
+                        {!isOriginalCourt && (
+                          <span className="text-xs px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded border border-blue-100">
+                            {occ.courtName}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {occ.timeStart} – {occ.timeEnd}
+                        {occ.amountSnapshot > 0 && (
+                          <span className="ml-2">{formatVND(occ.amountSnapshot)}</span>
+                        )}
+                      </p>
+                    </div>
+                    <span className={cn("inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium border shrink-0", cfg.badgeClass)}>
+                      {cfg.icon}
+                      {cfg.label}
+                    </span>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ─── Fixed Schedule View ──────────────────────────────────────
+function FixedScheduleView() {
+  const { user } = useAuth()
+  const [schedules, setSchedules] = useState<FixedScheduleSummary[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState("")
+  const [selectedSchedule, setSelectedSchedule] = useState<FixedScheduleDetail | null>(null)
+  const [loadingDetail, setLoadingDetail] = useState(false)
+  const [dialogOpen, setDialogOpen] = useState(false)
+
+  useEffect(() => {
+    fetchSchedules()
+  }, [])
+
+  const fetchSchedules = async () => {
+    try {
+      setLoading(true)
+      setError("")
+      // ✅ Dùng fixedScheduleApi (đã có token qua apiFetch/getToken)
+      const data = await fixedScheduleApi.getMySchedules()
+      setSchedules(data)
+    } catch (err: any) {
+      setError(err.message || "Có lỗi xảy ra")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleViewDetail = async (id: string) => {
+    try {
+      setLoadingDetail(true)
+      setDialogOpen(true)
+      // ✅ Dùng fixedScheduleApi
+      const detail = await fixedScheduleApi.getScheduleDetail(id)
+      setSelectedSchedule(detail)
+    } catch {
+      setDialogOpen(false)
+    } finally {
+      setLoadingDetail(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <Loader2 className="h-8 w-8 text-primary animate-spin" />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <Card>
+        <CardContent className="p-8 text-center">
+          <AlertCircle className="h-12 w-12 text-red-400 mx-auto mb-3" />
+          <p className="text-sm text-muted-foreground mb-4">{error}</p>
+          <Button variant="outline" size="sm" onClick={fetchSchedules}>Thử lại</Button>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (schedules.length === 0) {
+    return (
+      <Card>
+        <CardContent className="p-12 text-center">
+          <CalendarDays className="h-12 w-12 text-muted-foreground/20 mx-auto mb-4" />
+          <h3 className="font-serif font-bold text-lg text-muted-foreground">Chưa có lịch cố định nào</h3>
+          <p className="text-sm text-muted-foreground mt-1">Đặt gói sân cố định để không lo hết chỗ!</p>
+          <a href="/booking/fixed-schedule">
+            <Button className="mt-4 bg-primary text-primary-foreground hover:bg-primary/90 gap-2">
+              <CalendarDays className="h-4 w-4" /> Đặt lịch ngay
+            </Button>
+          </a>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <>
+      <div className="flex flex-col gap-4">
+        {schedules.map(s => (
+          <FixedScheduleCard key={s.id} schedule={s} onViewDetail={handleViewDetail} />
+        ))}
+      </div>
+
+      {/* Detail dialog */}
+      {loadingDetail && dialogOpen && (
+        <Dialog open onOpenChange={() => setDialogOpen(false)}>
+          <DialogContent className="max-w-sm">
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-8 w-8 text-primary animate-spin" />
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      <FixedScheduleDetailDialog
+        schedule={selectedSchedule}
+        open={dialogOpen && !loadingDetail}
+        onClose={() => { setDialogOpen(false); setSelectedSchedule(null) }}
+      />
+    </>
   )
 }
 
@@ -618,9 +1001,11 @@ export default function MyBookingsPage() {
     }
   }
 
-  const upcoming  = allBookings.filter(b => ["confirmed", "pending", "playing", "deposited"].includes(b.status))
-  const completed = allBookings.filter(b => b.status === "completed")
-  const cancelled = allBookings.filter(b => b.status === "cancelled")
+  // ✅ Chỉ lấy booking LẺ (không thuộc gói cố định)
+  const regularBookings = allBookings.filter(b => !b.fixedScheduleId)
+  const upcoming  = regularBookings.filter(b => ["confirmed", "pending", "playing", "deposited"].includes(b.status))
+  const completed = regularBookings.filter(b => b.status === "completed")
+  const cancelled = regularBookings.filter(b => b.status === "cancelled")
 
   if (user?.role === "guest") {
     return (
@@ -656,42 +1041,65 @@ export default function MyBookingsPage() {
                 {activePage === "bookings" ? (
                   <>
                     <h1 className="font-serif text-2xl font-extrabold">Lịch đặt của tôi</h1>
-                    <Tabs defaultValue="upcoming" className="mt-6">
+
+                    {/* ✨ Tabs: Booking thường + Lịch cố định */}
+                    <Tabs defaultValue="regular" className="mt-6">
                       <TabsList>
-                        <TabsTrigger value="upcoming">Sắp tới ({upcoming.length})</TabsTrigger>
-                        <TabsTrigger value="completed">Hoàn thành ({completed.length})</TabsTrigger>
-                        <TabsTrigger value="cancelled">Đã huỷ ({cancelled.length})</TabsTrigger>
+                        <TabsTrigger value="regular" className="gap-1.5">
+                          <Calendar className="h-3.5 w-3.5" />
+                          Đặt lẻ ({regularBookings.length})
+                        </TabsTrigger>
+                        <TabsTrigger value="fixed" className="gap-1.5">
+                          <RefreshCw className="h-3.5 w-3.5" />
+                          Lịch cố định
+                        </TabsTrigger>
                       </TabsList>
 
-                      <TabsContent value="upcoming" className="mt-4 flex flex-col gap-4">
-                        {upcoming.length === 0
-                          ? <Card><CardContent className="p-8 text-center text-muted-foreground">
-                              <Calendar className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
-                              <p className="font-semibold text-foreground">Chưa có lịch sắp tới</p>
-                              <p className="text-sm mt-1">Hãy <a href="/courts" className="text-primary underline">đặt sân</a> để bắt đầu!</p>
-                            </CardContent></Card>
-                          : upcoming.map(b => <BookingCard key={b.id} booking={b} onCancel={handleCancel} />)
-                        }
+                      {/* Tab booking thường - giữ nguyên code cũ */}
+                      <TabsContent value="regular" className="mt-4">
+                        <Tabs defaultValue="upcoming">
+                          <TabsList>
+                            <TabsTrigger value="upcoming">Sắp tới ({upcoming.length})</TabsTrigger>
+                            <TabsTrigger value="completed">Hoàn thành ({completed.length})</TabsTrigger>
+                            <TabsTrigger value="cancelled">Đã huỷ ({cancelled.length})</TabsTrigger>
+                          </TabsList>
+
+                          <TabsContent value="upcoming" className="mt-4 flex flex-col gap-4">
+                            {upcoming.length === 0
+                              ? <Card><CardContent className="p-8 text-center text-muted-foreground">
+                                  <Calendar className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
+                                  <p className="font-semibold text-foreground">Chưa có lịch sắp tới</p>
+                                  <p className="text-sm mt-1">Hãy <a href="/courts" className="text-primary underline">đặt sân</a> để bắt đầu!</p>
+                                </CardContent></Card>
+                              : upcoming.map(b => <BookingCard key={b.id} booking={b} onCancel={handleCancel} />)
+                            }
+                          </TabsContent>
+
+                          <TabsContent value="completed" className="mt-4 flex flex-col gap-4">
+                            {completed.length === 0
+                              ? <Card><CardContent className="p-8 text-center text-muted-foreground">
+                                  <CheckCircle2 className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
+                                  <p className="font-semibold text-foreground">Chưa có lịch hoàn thành</p>
+                                </CardContent></Card>
+                              : completed.map(b => <BookingCard key={b.id} booking={b} />)
+                            }
+                          </TabsContent>
+
+                          <TabsContent value="cancelled" className="mt-4 flex flex-col gap-4">
+                            {cancelled.length === 0
+                              ? <Card><CardContent className="p-8 text-center text-muted-foreground">
+                                  <AlertCircle className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
+                                  <p className="font-semibold text-foreground">Chưa có lịch đã huỷ</p>
+                                </CardContent></Card>
+                              : cancelled.map(b => <BookingCard key={b.id} booking={b} />)
+                            }
+                          </TabsContent>
+                        </Tabs>
                       </TabsContent>
 
-                      <TabsContent value="completed" className="mt-4 flex flex-col gap-4">
-                        {completed.length === 0
-                          ? <Card><CardContent className="p-8 text-center text-muted-foreground">
-                              <CheckCircle2 className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
-                              <p className="font-semibold text-foreground">Chưa có lịch hoàn thành</p>
-                            </CardContent></Card>
-                          : completed.map(b => <BookingCard key={b.id} booking={b} />)
-                        }
-                      </TabsContent>
-
-                      <TabsContent value="cancelled" className="mt-4 flex flex-col gap-4">
-                        {cancelled.length === 0
-                          ? <Card><CardContent className="p-8 text-center text-muted-foreground">
-                              <AlertCircle className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
-                              <p className="font-semibold text-foreground">Chưa có lịch đã huỷ</p>
-                            </CardContent></Card>
-                          : cancelled.map(b => <BookingCard key={b.id} booking={b} />)
-                        }
+                      {/* ✨ Tab lịch cố định - MỚI */}
+                      <TabsContent value="fixed" className="mt-4">
+                        <FixedScheduleView />
                       </TabsContent>
                     </Tabs>
                   </>
