@@ -1,20 +1,56 @@
 'use client';
 
+import { useEffect } from 'react';
 import { User } from 'lucide-react';
+import { useAuth } from '@/lib/auth-context'
 import type { PaymentMethod } from '../types';
 
-interface Props {
-  formData: {
-    customerName: string;
-    customerPhone: string;
-    customerEmail: string;
-    paymentMethod: PaymentMethod;
-    adjustmentLimit: number;
-  };
-  onChange: (field: string, value: any) => void;
+// ═══════════════════════════════════════════════════════════════
+// TYPES
+// ═══════════════════════════════════════════════════════════════
+
+export interface CustomerFormData {
+  customerName: string;
+  customerPhone: string;
+  customerEmail: string;
+  paymentMethod: PaymentMethod;
+  adjustmentLimit: number;
 }
 
+interface Props {
+  formData: CustomerFormData;
+  onChange: (field: keyof CustomerFormData, value: string | number) => void;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// COMPONENT
+// ═══════════════════════════════════════════════════════════════
+
 export function CustomerInfo({ formData, onChange }: Props) {
+  const { user } = useAuth();
+
+  /**
+   * Auto-fill thông tin từ user đang login.
+   * Chỉ fill khi:
+   * 1. User đã login (không phải guest)
+   * 2. Field đang trống (không override nếu user đã tự điền)
+   */
+  useEffect(() => {
+    if (!user || user.role === 'guest') return;
+
+    if (!formData.customerName && user.fullName) {
+      onChange('customerName', user.fullName);
+    }
+    if (!formData.customerPhone && user.phone) {
+      onChange('customerPhone', user.phone);
+    }
+    if (!formData.customerEmail && user.email) {
+      onChange('customerEmail', user.email);
+    }
+  }, [user]); // Chỉ chạy khi user thay đổi (mount hoặc login)
+
+  const isLoggedIn = user && user.role !== 'guest';
+
   return (
     <div className="bg-white rounded-lg shadow-md p-6">
       <div className="mb-4">
@@ -22,15 +58,26 @@ export function CustomerInfo({ formData, onChange }: Props) {
           <User className="h-5 w-5" />
           Thông tin khách hàng
         </h2>
-        <p className="text-gray-600 text-sm mt-1">
-          Điền thông tin liên hệ và phương thức thanh toán
-        </p>
+
+        {/* Badge trạng thái login */}
+        {isLoggedIn ? (
+          <p className="text-sm text-green-600 mt-1 flex items-center gap-1">
+            <span className="w-2 h-2 bg-green-500 rounded-full inline-block" />
+            Đã điền từ tài khoản của bạn. Có thể chỉnh sửa nếu đặt giùm người khác.
+          </p>
+        ) : (
+          <p className="text-gray-600 text-sm mt-1">
+            Điền thông tin liên hệ và phương thức thanh toán
+          </p>
+        )}
       </div>
 
       <div className="space-y-4">
-        {/* Name */}
+        {/* Họ tên */}
         <div>
-          <label className="block text-sm font-medium mb-2">Họ và tên *</label>
+          <label className="block text-sm font-medium mb-2">
+            Họ và tên <span className="text-red-500">*</span>
+          </label>
           <input
             type="text"
             placeholder="Nguyễn Văn A"
@@ -41,9 +88,11 @@ export function CustomerInfo({ formData, onChange }: Props) {
           />
         </div>
 
-        {/* Phone */}
+        {/* Số điện thoại */}
         <div>
-          <label className="block text-sm font-medium mb-2">Số điện thoại *</label>
+          <label className="block text-sm font-medium mb-2">
+            Số điện thoại <span className="text-red-500">*</span>
+          </label>
           <input
             type="tel"
             placeholder="0901234567"
@@ -56,7 +105,9 @@ export function CustomerInfo({ formData, onChange }: Props) {
 
         {/* Email */}
         <div>
-          <label className="block text-sm font-medium mb-2">Email (tùy chọn)</label>
+          <label className="block text-sm font-medium mb-2">
+            Email <span className="text-gray-400 text-xs">(tùy chọn)</span>
+          </label>
           <input
             type="email"
             placeholder="example@email.com"
@@ -66,13 +117,15 @@ export function CustomerInfo({ formData, onChange }: Props) {
           />
         </div>
 
-        {/* Payment Method */}
+        {/* Phương thức thanh toán */}
         <div>
-          <label className="block text-sm font-medium mb-2">Phương thức thanh toán *</label>
+          <label className="block text-sm font-medium mb-2">
+            Phương thức thanh toán <span className="text-red-500">*</span>
+          </label>
           <select
             className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             value={formData.paymentMethod}
-            onChange={(e) => onChange('paymentMethod', e.target.value)}
+            onChange={(e) => onChange('paymentMethod', e.target.value as PaymentMethod)}
           >
             <option value="cash">Tiền mặt</option>
             <option value="bank_transfer">Chuyển khoản ngân hàng</option>
@@ -81,9 +134,11 @@ export function CustomerInfo({ formData, onChange }: Props) {
           </select>
         </div>
 
-        {/* Adjustment Limit */}
+        {/* Số lần điều chỉnh */}
         <div>
-          <label className="block text-sm font-medium mb-2">Số lần điều chỉnh cho phép</label>
+          <label className="block text-sm font-medium mb-2">
+            Số lần điều chỉnh cho phép
+          </label>
           <select
             className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             value={formData.adjustmentLimit.toString()}
@@ -96,7 +151,7 @@ export function CustomerInfo({ formData, onChange }: Props) {
             <option value="5">5 lần/gói</option>
           </select>
           <p className="text-xs text-gray-500 mt-1">
-            Số lần khách hàng được phép báo nghỉ, dời ngày hoặc đổi giờ trong suốt gói đặt lịch
+            Số lần khách được phép báo nghỉ, dời ngày hoặc đổi sân trong suốt gói
           </p>
         </div>
       </div>

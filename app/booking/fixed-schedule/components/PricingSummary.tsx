@@ -1,20 +1,24 @@
 'use client';
 
-import { Receipt, Tag, TrendingDown } from 'lucide-react';
-import type { PreviewResponse } from '../types';
+import { Receipt } from 'lucide-react';
+import type { FixedSchedulePreviewResponse, OccurrenceUIState } from '../types';
 
 interface Props {
-  preview: PreviewResponse;
-  selectedCount: number;
+  preview: FixedSchedulePreviewResponse;
+  occurrences: OccurrenceUIState[];
 }
 
-export function PricingSummary({ preview, selectedCount }: Props) {
+export function PricingSummary({ preview, occurrences }: Props) {
   const { pricing } = preview;
-  
-  // Tính lại giá dựa trên số buổi đã chọn
-  const actualSubtotal = pricing.pricePerSession * selectedCount;
-  const actualDiscount = Math.floor(actualSubtotal * pricing.suggestedDiscount);
-  const actualTotal = actualSubtotal - actualDiscount;
+
+  // Đếm số buổi thực sự tính tiền (keep + replace, không tính skip)
+  const billableCount = occurrences.filter(
+    (o) => o.action === 'keep' || o.action === 'replace',
+  ).length;
+  const skippedCount = occurrences.filter((o) => o.action === 'skip').length;
+
+  // Giá luôn dùng giá sân gốc (bù miễn phí theo policy)
+  const totalAmount = pricing.pricePerSession * billableCount;
 
   return (
     <div className="bg-white rounded-lg shadow-md p-6 sticky top-4">
@@ -24,65 +28,59 @@ export function PricingSummary({ preview, selectedCount }: Props) {
           Tổng kết thanh toán
         </h2>
         <p className="text-gray-600 text-sm mt-1">
-          Chi tiết giá cho {selectedCount} buổi
+          Chi tiết giá cho {billableCount} buổi
         </p>
       </div>
 
-      <div className="space-y-4">
+      <div className="space-y-3 text-sm">
         {/* Breakdown */}
-        <div className="space-y-2 text-sm">
+        <div className="space-y-2 text-gray-600">
           <div className="flex justify-between">
-            <span className="text-gray-600">Giá mỗi giờ:</span>
-            <span className="font-medium">{pricing.pricePerHour.toLocaleString()}đ</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-600">Số giờ mỗi buổi:</span>
-            <span className="font-medium">{preview.hoursPerSession} giờ</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-600">Giá mỗi buổi:</span>
-            <span className="font-medium">{pricing.pricePerSession.toLocaleString()}đ</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-600">Số buổi đã chọn:</span>
-            <span className="font-medium">{selectedCount} buổi</span>
-          </div>
-        </div>
-
-        <div className="border-t pt-3"></div>
-
-        {/* Subtotal */}
-        <div className="flex justify-between text-base">
-          <span>Tạm tính:</span>
-          <span className="font-semibold">{actualSubtotal.toLocaleString()}đ</span>
-        </div>
-
-        {/* Discount */}
-        {pricing.suggestedDiscount > 0 && (
-          <div className="flex justify-between text-green-600">
-            <span className="flex items-center gap-1">
-              <Tag className="h-4 w-4" />
-              Giảm giá ({(pricing.suggestedDiscount * 100).toFixed(0)}%):
+            <span>Giá mỗi giờ:</span>
+            <span className="font-medium text-gray-900">
+              {pricing.pricePerHour.toLocaleString('vi-VN')}đ
             </span>
-            <span className="font-semibold">-{actualDiscount.toLocaleString()}đ</span>
           </div>
-        )}
-
-        <div className="border-t pt-3"></div>
-
-        {/* Total */}
-        <div className="flex justify-between text-lg">
-          <span className="font-bold">Tổng cộng:</span>
-          <span className="font-bold text-blue-600">{actualTotal.toLocaleString()}đ</span>
+          <div className="flex justify-between">
+            <span>Số giờ mỗi buổi:</span>
+            <span className="font-medium text-gray-900">
+              {preview.hoursPerSession} giờ
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span>Giá mỗi buổi:</span>
+            <span className="font-medium text-gray-900">
+              {pricing.pricePerSession.toLocaleString('vi-VN')}đ
+            </span>
+          </div>
         </div>
 
-        {/* Discount Info */}
-        {pricing.suggestedDiscount > 0 && (
-          <div className="flex items-start gap-2 p-3 bg-green-50 rounded-lg text-sm text-green-700">
-            <TrendingDown className="h-4 w-4 mt-0.5 flex-shrink-0" />
-            <p>
-              Bạn tiết kiệm được <strong>{actualDiscount.toLocaleString()}đ</strong> nhờ đặt gói dài hạn!
-            </p>
+        <div className="border-t pt-3 space-y-2 text-gray-600">
+          <div className="flex justify-between">
+            <span>Buổi giữ nguyên / sân bù:</span>
+            <span className="font-medium text-gray-900">{billableCount} buổi</span>
+          </div>
+          {skippedCount > 0 && (
+            <div className="flex justify-between text-gray-400">
+              <span>Buổi bỏ qua (miễn phí):</span>
+              <span>{skippedCount} buổi</span>
+            </div>
+          )}
+        </div>
+
+        <div className="border-t pt-3">
+          <div className="flex justify-between text-base font-bold">
+            <span>Tổng cộng:</span>
+            <span className="text-blue-600">
+              {totalAmount.toLocaleString('vi-VN')}đ
+            </span>
+          </div>
+        </div>
+
+        {/* Note về bù sân miễn phí */}
+        {occurrences.some((o) => o.action === 'replace') && (
+          <div className="p-3 bg-blue-50 rounded-lg text-xs text-blue-700">
+            🔄 Các buổi dùng sân thay thế được tính theo giá sân gốc (bù miễn phí).
           </div>
         )}
       </div>

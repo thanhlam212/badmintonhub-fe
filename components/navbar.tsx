@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import Image from "next/image"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Menu, X, ShoppingCart, User, Phone, MapPin, LogOut, Shield, LogIn, ChevronDown, Calendar, Sparkles } from "lucide-react"
@@ -45,16 +45,40 @@ export function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [scrolled, setScrolled] = useState(false)
   const [bookingMenuOpen, setBookingMenuOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
   const pathname = usePathname()
   const router = useRouter()
   const { user, logout } = useAuth()
   const { totalItems } = useCart()
 
   useEffect(() => {
-    const handleScroll = () => setScrolled(window.scrollY > 20)
+    const handleScroll = () => {
+      setScrolled(window.scrollY > 20)
+      // Đóng dropdown khi scroll
+      if (bookingMenuOpen) {
+        setBookingMenuOpen(false)
+      }
+    }
     window.addEventListener("scroll", handleScroll, { passive: true })
     return () => window.removeEventListener("scroll", handleScroll)
-  }, [])
+  }, [bookingMenuOpen])
+
+  // Click outside to close dropdown
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setBookingMenuOpen(false)
+      }
+    }
+
+    if (bookingMenuOpen) {
+      document.addEventListener("mousedown", handleClickOutside)
+    }
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside)
+    }
+  }, [bookingMenuOpen])
 
   // Check if current path is in booking submenu
   const isBookingMenuActive = pathname.startsWith('/courts') || pathname.startsWith('/booking/fixed-schedule')
@@ -89,30 +113,31 @@ export function Navbar() {
             : "bg-white border-b border-gray-100"
         )}
       >
-        <div className="mx-auto max-w-7xl flex items-center justify-between px-6 h-20">
-          {/* Logo */}
-          <Link href="/" className="flex items-center gap-3 group shrink-0">
-            <div className="relative">
-              <Image
-                src="/logo.jpg"
-                alt="BadmintonHub"
-                width={56}
-                height={56}
-                className="rounded-xl transition-transform duration-300 group-hover:scale-105"
-              />
-            </div>
-            <div className="flex flex-col leading-none">
-              <span className="font-serif text-xl font-extrabold tracking-tight text-[#0A2416]">
-                Badminton<span className="text-primary">Hub</span>
-              </span>
-              <span className="text-[11px] font-medium tracking-widest uppercase text-muted-foreground">
-                Hệ thống sân cầu lông
-              </span>
-            </div>
-          </Link>
+        <div className="mx-auto max-w-7xl px-6 h-20">
+          <div className="flex items-center justify-between h-full gap-8">
+            {/* Logo - Bên trái */}
+            <Link href="/" className="flex items-center gap-3 group shrink-0">
+              <div className="relative">
+                <Image
+                  src="/logo.jpg"
+                  alt="BadmintonHub"
+                  width={56}
+                  height={56}
+                  className="rounded-xl transition-transform duration-300 group-hover:scale-105"
+                />
+              </div>
+              <div className="flex flex-col leading-none">
+                <span className="font-serif text-xl font-extrabold tracking-tight text-[#0A2416]">
+                  Badminton<span className="text-primary">Hub</span>
+                </span>
+                <span className="text-[11px] font-medium tracking-widest uppercase text-muted-foreground">
+                  Hệ thống sân cầu lông
+                </span>
+              </div>
+            </Link>
 
-          {/* Desktop Nav */}
-          <nav className="hidden md:flex items-center gap-1">
+            {/* Desktop Nav - Giữa */}
+            <nav className="hidden md:flex items-center gap-3 flex-1 justify-center">
             {navLinks.map(link => {
               if (link.submenu) {
                 // Dropdown menu item
@@ -120,10 +145,10 @@ export function Navbar() {
                   <div
                     key={link.label}
                     className="relative"
-                    onMouseEnter={() => setBookingMenuOpen(true)}
-                    onMouseLeave={() => setBookingMenuOpen(false)}
+                    ref={dropdownRef}
                   >
                     <button
+                      onClick={() => setBookingMenuOpen(!bookingMenuOpen)}
                       className={cn(
                         "relative flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg transition-all duration-200 whitespace-nowrap group",
                         isBookingMenuActive
@@ -158,6 +183,7 @@ export function Navbar() {
                             <Link
                               key={item.href}
                               href={item.href}
+                              onClick={() => setBookingMenuOpen(false)}
                               className={cn(
                                 "flex items-start gap-3 p-3 rounded-lg transition-all duration-200 group/item relative",
                                 isActive
@@ -213,21 +239,6 @@ export function Navbar() {
 
           {/* Desktop Actions */}
           <div className="hidden md:flex items-center gap-2">
-            <Link href="/shop">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="relative h-9 w-9 rounded-lg text-gray-600 hover:text-[#0A2416] hover:bg-gray-100 transition-all duration-200 hover:scale-105"
-              >
-                <ShoppingCart className="h-5 w-5" />
-                {totalItems > 0 && (
-                  <span className="absolute -top-0.5 -right-0.5 flex h-4.5 w-4.5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-white shadow-sm animate-bounce">
-                    {totalItems}
-                  </span>
-                )}
-              </Button>
-            </Link>
-
             {user ? (
               user.role === "guest" ? (
                 /* Guest user - show register/login options */
@@ -345,6 +356,7 @@ export function Navbar() {
           >
             {mobileOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
           </button>
+          </div>
         </div>
 
         {/* Mobile Menu */}
