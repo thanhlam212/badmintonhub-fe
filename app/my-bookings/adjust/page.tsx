@@ -8,7 +8,7 @@ import {
   Loader2, ChevronRight, Info, Shield,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { useAuth } from '@/contexts/auth-context';
+import { useAuth } from '@/lib/auth-context';
 import { cn } from '@/lib/utils';
 import { fixedScheduleApi } from '@/lib/api';
 
