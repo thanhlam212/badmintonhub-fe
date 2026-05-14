@@ -2,150 +2,251 @@
 
 import { useState, useCallback } from 'react';
 import { toast } from 'sonner';
-import { fixedScheduleApi } from '@/lib//api'; // ✅ Import API
-import type { ApiFixedSchedulePreview, ApiFixedScheduleOccurrence } from '@/lib/api';
-import type { FixedScheduleFormData } from '../types';
+import { fixedScheduleApi } from '@/lib/api';
+import type {
+  FixedSchedulePreviewRequest,
+  FixedSchedulePreviewResponse,
+  FixedScheduleConfirmRequest,
+  FixedScheduleConfirmResponse,
+  OccurrenceUIState,
+  OccurrenceAction,
+  CheckSlotRequest,
+  CheckSlotResponse,
+} from '../types';
 
-export function useFixedSchedule() {
-  const [loading, setLoading] = useState(false);
-  const [preview, setPreview] = useState<ApiFixedSchedulePreview | null>(null);
-  const [occurrences, setOccurrences] = useState<ApiFixedScheduleOccurrence[]>([]);
-  const [step, setStep] = useState<'form' | 'preview'>('form');
+// ═══════════════════════════════════════════════════════════════
+// HOOK STATE TYPE
+// ═══════════════════════════════════════════════════════════════
 
-  /**
-   * Fetch Preview Fixed Schedule
-   */
-  const fetchPreview = useCallback(async (formData: Partial<FixedScheduleFormData>) => {
-    if (!formData.courtId || !formData.cycle || !formData.startDate || !formData.endDate || !formData.timeStart || !formData.timeEnd) {
-      toast.error('Vui lòng điền đầy đủ thông tin cơ bản');
-      return;
-    }
+export interface UseFixedScheduleReturn {
+  preview: FixedSchedulePreviewResponse | null;
+  occurrences: OccurrenceUIState[];
+  loadingPreview: boolean;
+  loadingConfirm: boolean;
+  confirmResult: FixedScheduleConfirmResponse | null;
+  fetchPreview: (data: FixedSchedulePreviewRequest) => Promise<boolean>;
+  setOccurrenceAction: (date: string, action: OccurrenceAction, replaceWithCourtId?: number) => void;
+  setCustomAction: (date: string, courtId: number, courtName: string, timeStart: string, timeEnd: string) => void;
+  checkSlot: (req: CheckSlotRequest) => Promise<CheckSlotResponse | null>;
+  confirmBooking: (data: FixedScheduleConfirmRequest) => Promise<FixedScheduleConfirmResponse | null>;
+  resetPreview: () => void;
+}
 
-    if (loading) return; // Tránh double call
+// ═══════════════════════════════════════════════════════════════
+// HOOK
+// ═══════════════════════════════════════════════════════════════
 
-    setLoading(true);
+export function useFixedSchedule(): UseFixedScheduleReturn {
+  const [preview, setPreview] = useState<FixedSchedulePreviewResponse | null>(null);
+  const [occurrences, setOccurrences] = useState<OccurrenceUIState[]>([]);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [loadingConfirm, setLoadingConfirm] = useState(false);
+  const [confirmResult, setConfirmResult] = useState<FixedScheduleConfirmResponse | null>(null);
+
+  // ─────────────────────────────────────────────────────────────
+  // FETCH PREVIEW
+  // ─────────────────────────────────────────────────────────────
+
+  const fetchPreview = useCallback(async (
+    data: FixedSchedulePreviewRequest,
+  ): Promise<boolean> => {
     try {
-      // ✅ Sử dụng API từ api.ts
-      const result = await fixedScheduleApi.preview({
-        courtId: formData.courtId,
-        cycle: formData.cycle,
-        startDate: formData.startDate,
-        endDate: formData.endDate,
-        timeStart: formData.timeStart,
-        timeEnd: formData.timeEnd,
-      });
+      setLoadingPreview(true);
+      setPreview(null);
+      setOccurrences([]);
 
-      if (result.success && result.data) {
-        setPreview(result.data);
-        setOccurrences(result.data.occurrences);
-        setStep('preview');
-        
-        if (result.data.suggestions.hasConflicts) {
-          toast.warning(result.data.suggestions.message);
-        } else {
-          toast.success('Tất cả các buổi đều khả dụng!');
+      console.log('📤 Preview Request:', data);
+      const response: FixedSchedulePreviewResponse = await fixedScheduleApi.preview(data);
+      console.log('📥 Preview Response:', response);
+
+      if (!response.occurrences || response.occurrences.length === 0) {
+        toast.error('Không có buổi nào trong khoảng thời gian này!');
+        return false;
+      }
+
+      // Map PreviewOccurrence → OccurrenceUIState
+      // - Không conflict → action: 'keep'
+      // - Có conflict + tìm được sân bù → action: 'replace', selectedReplacement = suggestion
+      // - Có conflict + không tìm được → action: 'skip'
+      const uiOccurrences: OccurrenceUIState[] = response.occurrences.map((occ) => {
+        if (!occ.hasConflict) {
+          return {
+            ...occ,
+            action: 'keep',
+            selectedReplacement: null,
+          };
         }
-      } else {
-        throw new Error(result.error || 'Không thể tải preview');
-      }
-    } catch (error: any) {
-      toast.error(error.message || 'Đã có lỗi xảy ra');
-      console.error('Preview error:', error);
-    } finally {
-      setLoading(false);
-    }
-  }, [loading]);
 
-  /**
-   * Toggle skip occurrence
-   */
-  const toggleSkip = useCallback((date: string) => {
-    setOccurrences(prev =>
-      prev.map(occ =>
-        occ.date === date ? { ...occ, skip: !occ.skip } : occ
-      )
-    );
-  }, []);
+        if (occ.suggestedReplacement) {
+          return {
+            ...occ,
+            action: 'replace',
+            selectedReplacement: occ.suggestedReplacement,
+          };
+        }
 
-  /**
-   * Adjust occurrence (change court/time)
-   */
-  const adjustOccurrence = useCallback((
-    date: string,
-    adjustments: {
-      courtId?: number;
-      timeStart?: string;
-      timeEnd?: string;
-    }
-  ) => {
-    setOccurrences(prev =>
-      prev.map(occ =>
-        occ.date === date
-          ? {
-              ...occ,
-              adjustedCourtId: adjustments.courtId,
-              adjustedTimeStart: adjustments.timeStart,
-              adjustedTimeEnd: adjustments.timeEnd,
-              available: true,
-            }
-          : occ
-      )
-    );
-  }, []);
-
-  /**
-   * Confirm và tạo Fixed Schedule
-   */
-  const confirmSchedule = useCallback(async (formData: FixedScheduleFormData) => {
-    const selectedOccurrences = occurrences.filter(occ => !occ.skip);
-    
-    if (selectedOccurrences.length === 0) {
-      toast.error('Vui lòng chọn ít nhất 1 buổi');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      // ✅ Sử dụng API từ api.ts
-      const result = await fixedScheduleApi.confirm({
-        ...formData,
-        occurrences: occurrences,
+        // Có conflict nhưng không tìm được sân bù → mặc định skip
+        return {
+          ...occ,
+          action: 'skip',
+          selectedReplacement: null,
+        };
       });
 
-      if (result.success && result.data) {
-        toast.success('Đặt lịch cố định thành công!');
-        return result.data;
-      } else {
-        throw new Error(result.error || 'Không thể tạo lịch cố định');
-      }
-    } catch (error: any) {
-      toast.error(error.message || 'Đã có lỗi xảy ra');
-      console.error('Confirm error:', error);
-      throw error;
-    } finally {
-      setLoading(false);
-    }
-  }, [occurrences]);
+      setPreview(response);
+      setOccurrences(uiOccurrences);
 
-  /**
-   * Reset form
-   */
-  const reset = useCallback(() => {
+      // Toast summary
+      const { summary } = response;
+      if (summary.unresolvableCount > 0) {
+        toast.warning(
+          `Có ${summary.unresolvableCount} buổi không tìm được sân bù, đã tự động bỏ qua.`,
+        );
+      } else if (summary.replaceableCount > 0) {
+        toast.warning(
+          `Có ${summary.replaceableCount} buổi bị trùng, hệ thống đã gợi ý sân thay thế.`,
+        );
+      } else {
+        toast.success('Tất cả các buổi đều khả dụng!');
+      }
+
+      return true;
+    } catch (error: any) {
+      console.error('❌ Preview error:', error);
+      toast.error(error.message || 'Không thể xem trước lịch. Vui lòng kiểm tra lại!');
+      return false;
+    } finally {
+      setLoadingPreview(false);
+    }
+  }, []);
+
+  // ─────────────────────────────────────────────────────────────
+  // SET OCCURRENCE ACTION (user thay đổi action trên UI)
+  // ─────────────────────────────────────────────────────────────
+
+  const setOccurrenceAction = useCallback((
+    date: string,
+    action: OccurrenceAction,
+    replaceWithCourtId?: number,
+  ) => {
+    setOccurrences((prev) =>
+      prev.map((occ) => {
+        if (occ.date !== date) return occ;
+
+        // Khi đổi sang replace: giữ selectedReplacement hiện tại (suggestion từ BE)
+        // hoặc cập nhật nếu user chọn courtId khác
+        if (action === 'replace') {
+          const newReplacement =
+            replaceWithCourtId && occ.suggestedReplacement
+              ? { ...occ.suggestedReplacement, courtId: replaceWithCourtId }
+              : occ.suggestedReplacement;
+
+          return { ...occ, action, selectedReplacement: newReplacement };
+        }
+
+        return { ...occ, action, selectedReplacement: null };
+      }),
+    );
+  }, []);
+
+  // ─────────────────────────────────────────────────────────────
+  // SET CUSTOM ACTION (user tự chọn sân + giờ)
+  // ─────────────────────────────────────────────────────────────
+
+  const setCustomAction = useCallback((
+    date: string,
+    courtId: number,
+    courtName: string,
+    timeStart: string,
+    timeEnd: string,
+  ) => {
+    setOccurrences((prev) =>
+      prev.map((occ) => {
+        if (occ.date !== date) return occ;
+        return {
+          ...occ,
+          action: 'custom' as OccurrenceAction,
+          selectedReplacement: null,
+          customCourtId: courtId,
+          customCourtName: courtName,
+          customTimeStart: timeStart,
+          customTimeEnd: timeEnd,
+        };
+      }),
+    );
+  }, []);
+
+  // ─────────────────────────────────────────────────────────────
+  // CHECK SLOT (dùng trong modal đổi giờ)
+  // ─────────────────────────────────────────────────────────────
+
+  const checkSlot = useCallback(async (
+    req: CheckSlotRequest,
+  ): Promise<CheckSlotResponse | null> => {
+    try {
+      const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+      const res = await fetch(`${API}/bookings/fixed/check-slot`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(req),
+      });
+      if (!res.ok) throw new Error('Không thể kiểm tra slot');
+      return await res.json();
+    } catch (err: any) {
+      toast.error(err.message || 'Lỗi kiểm tra slot');
+      return null;
+    }
+  }, []);
+
+  const confirmBooking = useCallback(async (
+    data: FixedScheduleConfirmRequest,
+  ): Promise<FixedScheduleConfirmResponse | null> => {
+    try {
+      setLoadingConfirm(true);
+
+      console.log('📤 Confirm Request:', data);
+      const response: FixedScheduleConfirmResponse = await fixedScheduleApi.confirm(data);
+      console.log('📥 Confirm Response:', response);
+
+      setConfirmResult(response);
+      toast.success(
+        `Đặt lịch thành công! Mã hóa đơn: ${response.invoiceCode}`,
+      );
+      return response;
+    } catch (error: any) {
+      console.error('❌ Confirm error:', error);
+      const msg =
+        error.response?.data?.message ||
+        error.message ||
+        'Không thể đặt lịch. Vui lòng thử lại!';
+      toast.error(msg);
+      return null;
+    } finally {
+      setLoadingConfirm(false);
+    }
+  }, []);
+
+  // ─────────────────────────────────────────────────────────────
+  // RESET
+  // ─────────────────────────────────────────────────────────────
+
+  const resetPreview = useCallback(() => {
     setPreview(null);
     setOccurrences([]);
-    setStep('form');
+    setConfirmResult(null);
   }, []);
 
   return {
-    loading,
     preview,
     occurrences,
-    step,
-    setStep,
+    loadingPreview,
+    loadingConfirm,
+    confirmResult,
     fetchPreview,
-    toggleSkip,
-    adjustOccurrence,
-    confirmSchedule,
-    reset,
+    setOccurrenceAction,
+    setCustomAction,
+    checkSlot,
+    confirmBooking,
+    resetPreview,
   };
 }
