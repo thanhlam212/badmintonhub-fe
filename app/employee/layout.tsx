@@ -10,11 +10,12 @@ import {
   ChevronLeft, ChevronRight, Menu, LogOut,
   ArrowDownToLine, ArrowUpFromLine, ClipboardList,
   ClipboardCheck, Repeat, Building2,
-  QrCode
+  QrCode, CalendarCheck, Wrench, FolderSearch, ShieldCheck
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { RouteGuard } from "@/components/route-guard"
 import { useAuth } from "@/lib/auth-context"
+import { InventoryProvider } from "@/lib/inventory-context"
 
 const navGroups = [
   {
@@ -24,34 +25,28 @@ const navGroups = [
     ],
   },
   {
+    label: "Đặt sân",
+    items: [
+      { href: "/employee/bookings", icon: <CalendarCheck className="h-5 w-5" />, label: "Quản lý đặt sân" },
+      { href: "/employee/checkin", icon: <QrCode className="h-5 w-5" />, label: "Check-in QR" },
+      { href: "/employee/courts", icon: <Building2 className="h-5 w-5" />, label: "Quản lý sân" },
+      { href: "/employee/court-services", icon: <Wrench className="h-5 w-5" />, label: "Dịch vụ sân" },
+    ],
+  },
+  {
     label: "Bán hàng",
     items: [
       { href: "/employee/sales", icon: <ShoppingCart className="h-5 w-5" />, label: "Bán hàng" },
       { href: "/employee/approval", icon: <ClipboardCheck className="h-5 w-5" />, label: "Duyệt đơn" },
-    ],
-  },
-  {
-    label: "Đơn hàng",
-    items: [
       { href: "/employee/orders", icon: <ClipboardList className="h-5 w-5" />, label: "Đơn hàng online" },
-    ],
-  },
-  {
-    label: "Sân",
-    items: [
-      { href: "/employee/courts", icon: <Building2 className="h-5 w-5" />, label: "Quản lý sân" },
-    ],
-  },
-  {
-    label: "Check-in/out",
-    items: [
-      { href: "/employee/checkin", label: "Check-in QR", icon: <QrCode className="h-5 w-5" /> }
+      { href: "/employee/warranty", icon: <ShieldCheck className="h-5 w-5" />, label: "Bảo hành" },
     ],
   },
   {
     label: "Kho hàng",
     items: [
       { href: "/employee/inventory", icon: <Package className="h-5 w-5" />, label: "Tồn kho" },
+      { href: "/employee/document-audit", icon: <FolderSearch className="h-5 w-5" />, label: "Rà soát chứng từ" },
     ],
   },
 ]
@@ -145,11 +140,16 @@ function EmployeeTopbar({ collapsed, onMobileMenu }: { collapsed: boolean; onMob
 
   const breadcrumbMap: Record<string, string> = {
     '/employee': 'Dashboard',
+    '/employee/bookings': 'Quản lý đặt sân',
+    '/employee/checkin': 'Check-in QR',
+    '/employee/courts': 'Quản lý sân',
+    '/employee/court-services': 'Dịch vụ sân',
     '/employee/sales': 'Bán hàng',
     '/employee/approval': 'Duyệt đơn',
     '/employee/orders': 'Đơn hàng online',
+    '/employee/warranty': 'Bảo hành',
     '/employee/inventory': 'Tồn kho',
-    '/employee/courts': 'Quản lý sân',
+    '/employee/document-audit': 'Rà soát chứng từ',
   }
 
   return (
@@ -193,18 +193,20 @@ export default function EmployeeLayout({ children }: { children: React.ReactNode
 
   return (
     <RouteGuard requiredRole="employee">
-      <div className="min-h-screen bg-background">
-        <EmployeeSidebar collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
-        <EmployeeTopbar collapsed={collapsed} onMobileMenu={() => { }} />
-        <main className={cn(
-          "pt-16 min-h-screen transition-all duration-300",
-          collapsed ? "ml-16" : "ml-64"
-        )}>
-          <div className="p-6">
-            {children}
-          </div>
-        </main>
-      </div>
+      <InventoryProvider>
+        <div className="min-h-screen bg-background">
+          <EmployeeSidebar collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
+          <EmployeeTopbar collapsed={collapsed} onMobileMenu={() => { }} />
+          <main className={cn(
+            "pt-16 min-h-screen transition-all duration-300",
+            collapsed ? "ml-16" : "ml-64"
+          )}>
+            <div className="p-6">
+              {children}
+            </div>
+          </main>
+        </div>
+      </InventoryProvider>
     </RouteGuard>
   )
 }

@@ -1,0 +1,27 @@
+
+> my-project@0.1.0 dev
+> next dev
+
+▲ Next.js 16.1.6 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.2.101:3000
+- Environments: .env.local
+
+✓ Starting...
+✓ Ready in 1793ms
+ GET /courts 200 in 2.5s (compile: 2.1s, render: 459ms)
+ GET / 200 in 97ms (compile: 65ms, render: 32ms)
+ GET /courts 200 in 33ms (compile: 7ms, render: 26ms)
+ GET /courts 200 in 253ms (compile: 7ms, render: 246ms)
+ GET / 200 in 38ms (compile: 8ms, render: 29ms)
+ GET /shop 200 in 1287ms (compile: 1244ms, render: 43ms)
+ GET /courts 200 in 31ms (compile: 5ms, render: 26ms)
+⚠ Fast Refresh had to perform a full reload when ./lib/api.ts changed. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+✓ Compiled in 303ms
+ GET /courts 200 in 323ms (compile: 60ms, render: 263ms)
+✓ Compiled in 286ms
+ GET /shop 200 in 97ms (compile: 61ms, render: 36ms)
+ GET / 200 in 98ms (compile: 71ms, render: 27ms)
+ GET /courts 200 in 30ms (compile: 4ms, render: 25ms)
+ GET /courts/6 200 in 880ms (compile: 840ms, render: 39ms)
+[?25h

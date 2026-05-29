@@ -168,7 +168,7 @@ export default function TomTomMap({ lat, lng, courtLat, courtLng, courtName, rou
       style: TOMTOM_RASTER_STYLE,
       center: [lng, lat],
       zoom: 15,
-      attributionControl: true,
+      attributionControl: false,
     })
     mapRef.current = map
 

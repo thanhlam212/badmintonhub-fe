@@ -50,7 +50,11 @@ export async function apiFetch<T = any>(
       return { success: false, message }
     }
 
-    // NestJS trả data trực tiếp (array hoặc object)
+    // TransformInterceptor bọc mọi response thành { success: true, data: ... }
+    // Unwrap để lấy data thực (tránh double-wrapping)
+    if (json && typeof json === 'object' && json.success === true && 'data' in json) {
+      return { success: true, data: json.data, pagination: json.pagination }
+    }
     return { success: true, data: json }
   } catch (err: any) {
     console.error('API Error:', err)
@@ -107,11 +111,13 @@ export interface ApiProduct {
   inStock: boolean
   gender: string | null
   badges: string[]
+  supplierName?: string | null
 }
 
 export interface ApiUser {
   id: string
   username: string
+  userCode?: string
   fullName: string
   email: string
   phone: string
@@ -120,7 +126,7 @@ export interface ApiUser {
   dateOfBirth: string | null
   role: 'user' | 'admin' | 'employee' | 'guest'
   warehouseId: number | null
-  branchId: number 
+  branchId: number
   createdAt: string
 }
 
@@ -142,7 +148,15 @@ export interface ApiBooking {
   note: string | null
   createdAt: string
   pricePerHour: number
-  fixedScheduleId: string | null 
+  fixedScheduleId: string | null
+  bookingCode?: string
+  placedBy?: string | null
+  placedByRole?: string | null
+  serviceLines?: any[] | null
+  servicePaidHash?: string | null
+  servicePaidAt?: string | null
+  invoice_id?: string | null
+  invoice_status?: string | null
 }
 
 export interface ApiOrder {
@@ -171,24 +185,26 @@ export interface ApiOrderItem {
 // ─── Transform helpers ──────────────────────────────────────
 
 function transformCourt(raw: any): ApiCourt {
+  // BE mapCourt() returns snake_case: branch_id, branch_name, branch_address, branch_lat, branch_lng
+  // Also handle legacy camelCase / nested branch object
   return {
     id: raw.id,
     name: raw.name,
 
-    branchId: Number(raw.branchId ?? raw.branch?.id ?? 0),
+    branchId: Number(raw.branch_id ?? raw.branchId ?? raw.branch?.id ?? 0),
 
-    branch: raw.branch?.name ?? raw.branchName ?? '',
-    address: raw.branch?.address ?? raw.address ?? '',
-    lat: parseFloat(String(raw.branch?.lat ?? raw.lat ?? 0)),
-    lng: parseFloat(String(raw.branch?.lng ?? raw.lng ?? 0)),
+    branch:  raw.branch_name  ?? raw.branch?.name  ?? raw.branchName  ?? '',
+    address: raw.branch_address ?? raw.branch?.address ?? raw.address ?? '',
+    lat: parseFloat(String(raw.branch_lat ?? raw.branch?.lat ?? raw.lat ?? 0)),
+    lng: parseFloat(String(raw.branch_lng ?? raw.branch?.lng ?? raw.lng ?? 0)),
 
     type: raw.type ?? 'standard',
     indoor: raw.indoor ?? true,
     price: parseFloat(String(raw.price ?? 0)),
     rating: parseFloat(String(raw.rating ?? 0)),
-    reviews: raw.reviewsCount ?? raw._count?.reviews ?? 0,
+    reviews: raw.reviews_count ?? raw.reviewsCount ?? raw._count?.reviews ?? 0,
     available: raw.available ?? true,
-    image: raw.image ?? raw.imageUrl ?? '',   // ← thêm dòng này
+    image: raw.image ?? raw.imageUrl ?? '',
 
     amenities: (raw.amenities ?? []).map((a: any) =>
       typeof a === 'string' ? a : (a.amenity ?? '')
@@ -199,7 +215,20 @@ function transformCourt(raw: any): ApiCourt {
   }
 }
 
+function extractProductMeta(description?: string | null) {
+  const raw = String(description || '')
+  const segments = raw.split('|').map(s => s.trim()).filter(Boolean)
+  let supplierName: string | null = null
+  const cleanSegments: string[] = []
+  for (const seg of segments) {
+    if (seg.startsWith('NCC:')) { supplierName = seg.slice(4).trim() || null; continue }
+    cleanSegments.push(seg)
+  }
+  return { supplierName, cleanDescription: cleanSegments.join(' | ') }
+}
+
 function transformProduct(raw: any): ApiProduct {
+  const meta = extractProductMeta(raw.description)
   return {
     id: raw.id,
     sku: raw.sku,
@@ -207,57 +236,69 @@ function transformProduct(raw: any): ApiProduct {
     brand: raw.brand,
     category: raw.category,
     price: parseFloat(raw.price),
-    originalPrice: raw.originalPrice ? parseFloat(raw.originalPrice) : null,
+    originalPrice: (raw.original_price ?? raw.originalPrice) ? parseFloat(raw.original_price ?? raw.originalPrice) : null,
     rating: parseFloat(raw.rating) || 0,
-    reviews: raw.reviewsCount || 0,
+    reviews: raw.reviews_count || raw.reviewsCount || 0,
     image: raw.image,
-    description: raw.description || '',
+    description: meta.cleanDescription,
     specs: raw.specs || {},
     features: raw.features || [],
-    inStock: raw.inStock,
+    inStock: raw.in_stock ?? raw.inStock ?? true,
     gender: raw.gender,
-    badges: raw.badges?.map((b: any) => b.badge) || [],
+    badges: raw.badges?.map((b: any) => typeof b === 'string' ? b : b.badge) || [],
+    supplierName: raw.supplier_name ?? meta.supplierName ?? null,
   }
 }
 
 function transformUser(raw: any): ApiUser {
-  // NestJS đã trả về camelCase, không cần convert nhiều
+  // BE trả về snake_case từ mapUser() — handle cả camelCase lẫn snake_case
   return {
     id: raw.id,
     username: raw.username,
-    fullName: raw.fullName,
-    email: raw.email,
-    phone: raw.phone,
+    userCode: raw.userCode || raw.user_code || undefined,
+    fullName: raw.fullName || raw.full_name || '',
+    email: raw.email || '',
+    phone: raw.phone || '',
     address: raw.address || null,
     gender: raw.gender || null,
-    dateOfBirth: raw.dateOfBirth || null,
-    role: raw.role,
-    warehouseId: raw.warehouseId || null,
-    branchId: raw.branchId ?? raw.branch_id ?? raw.warehouseId ?? 0,
-    createdAt: raw.createdAt?.split('T')[0] || '',
+    dateOfBirth: raw.dateOfBirth || raw.date_of_birth || null,
+    role: raw.role || 'user',
+    warehouseId: raw.warehouseId ?? raw.warehouse_id ?? null,
+    branchId: raw.branchId ?? raw.branch_id ?? raw.warehouseId ?? raw.warehouse_id ?? 0,
+    createdAt: (raw.createdAt || raw.created_at)?.split('T')[0] || '',
   }
 }
 
 function transformBooking(raw: any): ApiBooking {
+  // BE's mapBooking() trả về snake_case — handle cả hai dạng
   return {
     id: raw.id,
-    courtId: raw.courtId,
-    courtName: raw.court?.name || '',
-    branchName: raw.branch?.name || '',
-    userId: raw.userId,
-    customerName: raw.customerName,
-    customerPhone: raw.customerPhone,
-    bookingDate: raw.bookingDate,
-    timeStart: raw.timeStart,
-    timeEnd: raw.timeEnd,
-    slots: raw.people || raw.slots || 1,
-    amount: parseFloat(raw.amount),
-    status: raw.status,
-    paymentMethod: raw.paymentMethod,
-    note: raw.note || null,
-    createdAt: raw.createdAt,
+    courtId:     raw.courtId     ?? raw.court_id     ?? 0,
+    courtName:   raw.courtName   || raw.court_name   || raw.court?.name  || '',
+    branchName:  raw.branchName  || raw.branch_name  || raw.court?.branch?.name || raw.branch?.name || '',
+    userId:      raw.userId      ?? raw.user_id      ?? null,
+    customerName:  raw.customerName  || raw.customer_name  || '',
+    customerPhone: raw.customerPhone || raw.customer_phone || '',
+    bookingDate:   raw.bookingDate   || raw.booking_date   || '',
+    timeStart:     raw.timeStart     || raw.time_start     || '',
+    timeEnd:       raw.timeEnd       || raw.time_end       || '',
+    slots:   raw.people ?? raw.slots ?? 1,
+    amount:  parseFloat(String(raw.amount ?? 0)),
+    status:  raw.status || '',
+    paymentMethod: raw.paymentMethod || raw.payment_method || null,
+    note:    raw.note || null,
+    createdAt: raw.createdAt || raw.created_at || '',
     pricePerHour: parseFloat(String(raw.pricePerHour ?? raw.price_per_hour ?? 0)),
-    fixedScheduleId: raw.fixedScheduleId || null
+    fixedScheduleId: raw.fixedScheduleId || raw.fixed_schedule_id || null,
+    bookingCode: raw.bookingCode || raw.booking_code || undefined,
+    // BE dùng booked_by_* thay vì placed_by_*
+    placedBy:     raw.placedBy     || raw.placed_by     || raw.booked_by_name     || null,
+    placedByRole: raw.placedByRole || raw.placed_by_role || raw.booked_by_role    || null,
+    serviceLines:    raw.serviceLines    || raw.service_lines    || null,
+    servicePaidHash: raw.servicePaidHash || raw.service_paid_hash || null,
+    servicePaidAt:   raw.servicePaidAt   || raw.service_paid_at  || null,
+    invoice_id:      raw.invoice_id ?? raw.invoiceId ?? null,
+    invoice_status:  raw.invoice_status ?? null,
   }
 }
 
@@ -289,43 +330,45 @@ function transformOrder(raw: any): ApiOrder {
 // ═══════════════════════════════════════════════════════════════
 
 export const authApi = {
-  // NestJS: POST /auth/login — body dùng "identifier" (username hoặc email)
-  // Response: { message, user, accessToken }
+  // NestJS: POST /auth/login — body { username, password }
+  // Response (sau khi unwrap TransformInterceptor): { token, user (snake_case) }
   login: async (username: string, password: string) => {
-    const res = await apiFetch<{ message: string; user: any; accessToken: string }>('/auth/login', {
+    const res = await apiFetch<{ token: string; accessToken?: string; user: any }>('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ identifier: username, password }),
+      body: JSON.stringify({ username, password }),
     })
     if (res.success && res.data) {
-      setToken(res.data.accessToken)           // ← NestJS dùng accessToken (không phải token)
-      return { success: true, user: transformUser(res.data.user), token: res.data.accessToken }
+      const jwt = res.data.token || res.data.accessToken || ''
+      if (jwt) setToken(jwt)
+      return { success: true, user: transformUser(res.data.user), token: jwt }
     }
     return { success: false, error: res.message || 'Đăng nhập thất bại' }
   },
 
-  // NestJS: POST /auth/register — body dùng camelCase
-  // Response: { message, user, accessToken }
+  // NestJS: POST /auth/register — body snake_case (BE DTO: full_name, date_of_birth)
+  // Response (sau khi unwrap): { token, user (snake_case) }
   register: async (data: {
     username: string; password: string; fullName: string;
     email: string; phone: string; address?: string;
     gender?: string; dateOfBirth?: string
   }) => {
-    const res = await apiFetch<{ message: string; user: any; accessToken: string }>('/auth/register', {
+    const res = await apiFetch<{ token: string; accessToken?: string; user: any }>('/auth/register', {
       method: 'POST',
       body: JSON.stringify({
         username: data.username,
         password: data.password,
-        fullName: data.fullName,       
+        full_name: data.fullName,        // BE DTO: full_name (snake_case)
         email: data.email,
         phone: data.phone,
         address: data.address,
         gender: data.gender,
-        dateOfBirth: data.dateOfBirth, 
+        date_of_birth: data.dateOfBirth, // BE DTO: date_of_birth (snake_case)
       }),
     })
     if (res.success && res.data) {
-      setToken(res.data.accessToken)
-      return { success: true, user: transformUser(res.data.user), token: res.data.accessToken }
+      const jwt = res.data.token || res.data.accessToken || ''
+      if (jwt) setToken(jwt)
+      return { success: true, user: transformUser(res.data.user), token: jwt }
     }
     return { success: false, error: res.message || 'Đăng ký thất bại' }
   },
@@ -339,14 +382,21 @@ export const authApi = {
     return { success: false, error: res.message }
   },
 
-  // NestJS: chưa có endpoint này → cần thêm sau
+  // NestJS: PUT /auth/me — BE DTO dùng snake_case
   updateProfile: async (data: {
     fullName?: string; email?: string; phone?: string;
     address?: string; gender?: string; dateOfBirth?: string
   }) => {
-    const res = await apiFetch<any>('/auth/profile', {
-      method: 'PATCH',
-      body: JSON.stringify(data), // NestJS nhận camelCase
+    const res = await apiFetch<any>('/auth/me', {
+      method: 'PUT',
+      body: JSON.stringify({
+        ...(data.fullName   !== undefined && { full_name:    data.fullName }),
+        ...(data.email      !== undefined && { email:        data.email }),
+        ...(data.phone      !== undefined && { phone:        data.phone }),
+        ...(data.address    !== undefined && { address:      data.address }),
+        ...(data.gender     !== undefined && { gender:       data.gender }),
+        ...(data.dateOfBirth !== undefined && { date_of_birth: data.dateOfBirth }),
+      }),
     })
     if (res.success && res.data) {
       return { success: true, user: transformUser(res.data) }
@@ -354,11 +404,11 @@ export const authApi = {
     return { success: false, error: res.message }
   },
 
-  // NestJS: PATCH /auth/change-password
+  // NestJS: PUT /auth/change-password — BE DTO: { current_password, new_password }
   changePassword: async (currentPassword: string, newPassword: string) => {
     const res = await apiFetch('/auth/change-password', {
-      method: 'PATCH',
-      body: JSON.stringify({ oldPassword: currentPassword, newPassword }),
+      method: 'PUT',
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
     })
     return { success: res.success, error: res.message }
   },
@@ -440,12 +490,9 @@ export const productApi = {
     if (filters?.limit) params.set('limit', String(filters.limit))
     const qs = params.toString()
     const res = await apiFetch<any>(`/products${qs ? '?' + qs : ''}`)
-    if (res.success && res.data) {
-      const list = res.data.products || res.data
-      return {
-        products: list.map(transformProduct),
-        pagination: res.data.meta || null,
-      }
+    if (res.success) {
+      const list = Array.isArray(res.data) ? res.data : (res.data?.products || res.data || [])
+      return { products: list.map(transformProduct), pagination: res.pagination }
     }
     return { products: [] }
   },
@@ -456,7 +503,7 @@ export const productApi = {
     return null
   },
 
-   getCategories: async (): Promise<string[]> => {
+  getCategories: async (): Promise<string[]> => {
     const res = await apiFetch<string[]>('/products/categories')
     if (res.success && res.data) return res.data
     return []
@@ -466,6 +513,53 @@ export const productApi = {
     const res = await apiFetch<string[]>('/products/brands')
     if (res.success && res.data) return res.data
     return []
+  },
+
+  create: async (data: {
+    sku?: string; name: string; brand: string; category: string
+    price: number; original_price?: number | null; image?: string | null
+    description?: string; specs?: Record<string, string>; features?: string[]
+    in_stock?: boolean; gender?: string | null; badges?: string[]
+  }) => {
+    const res = await apiFetch<any>('/products', { method: 'POST', body: JSON.stringify(data) })
+    if (res.success && res.data) return { success: true, product: transformProduct(res.data) }
+    return { success: false, error: res.message || 'Không thể tạo sản phẩm', product: null }
+  },
+
+  update: async (id: number, data: {
+    name?: string; brand?: string; category?: string; price?: number
+    original_price?: number | null; image?: string | null; description?: string
+    specs?: Record<string, string>; features?: string[]; in_stock?: boolean; gender?: string | null
+  }) => {
+    const res = await apiFetch<any>(`/products/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+    if (res.success && res.data) return { success: true, product: transformProduct(res.data) }
+    return { success: false, error: res.message || 'Không thể cập nhật sản phẩm', product: null }
+  },
+
+  delete: async (id: number) => {
+    const res = await apiFetch<any>(`/products/${id}`, { method: 'DELETE' })
+    return { success: res.success, error: res.message }
+  },
+
+  uploadImage: async (file: File) => {
+    const token = getToken()
+    const formData = new FormData()
+    formData.append('image', file)
+    try {
+      const response = await fetch(`${API_BASE}/products/upload-image`, {
+        method: 'POST',
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+        body: formData,
+      })
+      const json = await response.json()
+      if (!response.ok) return { success: false, error: json.message || 'Không thể tải ảnh', url: null }
+      // Unwrap TransformInterceptor
+      const data = json.success === true && 'data' in json ? json.data : json
+      const url = data?.url ? String(data.url) : null
+      return url ? { success: true, url } : { success: false, error: 'Không có URL ảnh', url: null }
+    } catch {
+      return { success: false, error: 'Không thể kết nối server', url: null }
+    }
   },
 }
 
@@ -514,17 +608,43 @@ export const bookingApi = {
     return null
   },
 
-  // POST /api/bookings — Đặt sân (camelCase cho NestJS)
+  // POST /api/bookings — Đặt sân (hỗ trợ cả camelCase lẫn snake_case)
+  // BE DTO dùng snake_case: court_id, booking_date, time_start, time_end, customer_name, customer_phone
   create: async (data: {
-    courtId: number; bookingDate: string;
-    timeStart: string; timeEnd: string;
-    people?: number; paymentMethod: string;
-    customerName: string; customerPhone: string;
+    // camelCase (booking page)
+    courtId?: number; bookingDate?: string;
+    timeStart?: string; timeEnd?: string;
+    people?: number; paymentMethod?: string;
+    customerName?: string; customerPhone?: string;
     customerEmail?: string; userId?: string;
+    // snake_case (employee page / booking page)
+    court_id?: number; booking_date?: string;
+    time_start?: string; time_end?: string;
+    slots?: number; payment_method?: string;
+    customer_name?: string; customer_phone?: string; customer_email?: string;
+    note?: string; user_id?: string;
+    amount?: number;
   }) => {
+    // Normalize to snake_case for BE DTO (forbidNonWhitelisted=true)
+    const payload: Record<string, any> = {
+      court_id:       data.court_id      ?? data.courtId,
+      booking_date:   data.booking_date  ?? data.bookingDate,
+      time_start:     data.time_start    ?? data.timeStart,
+      time_end:       data.time_end      ?? data.timeEnd,
+      people:         data.people        ?? data.slots,
+      payment_method: data.payment_method ?? data.paymentMethod,
+      customer_name:  data.customer_name  ?? data.customerName ?? 'Khách',
+      customer_phone: data.customer_phone ?? data.customerPhone ?? '',
+      customer_email: data.customerEmail,
+      user_id:        data.user_id       ?? data.userId,
+      note:           data.note,
+      amount:         data.amount,
+    }
+    // Remove undefined fields (avoid forbidNonWhitelisted rejecting undefined-valued keys)
+    Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k])
     const res = await apiFetch<any>('/bookings', {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(payload),
     })
     if (res.success && res.data) {
       return { success: true, booking: transformBooking(res.data) }
@@ -567,6 +687,77 @@ export const bookingApi = {
   delete: async (id: string) => {
     const res = await apiFetch(`/bookings/${id}/cancel`, { method: 'PATCH' })
     return { success: res.success }
+  },
+
+  // POST /api/bookings/checkin — QR check-in
+  // BE returns: { message, booking: { camelCase } } wrapped by TransformInterceptor
+  // apiFetch unwraps to: { success, data: { message, booking } }
+  checkin: async (data: { bookingId?: string; bookingCode?: string }) => {
+    const res = await apiFetch<any>('/bookings/checkin', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+    if (res.success && res.data) {
+      const bookingRaw = (res.data as any).booking ?? res.data
+      const msg = (res.data as any).message || res.message
+      return { success: true, booking: transformBooking(bookingRaw), message: msg }
+    }
+    return { success: false, error: res.message }
+  },
+
+  // POST /api/bookings/recurring
+  createRecurring: async (data: {
+    court_id: number; time_start: string; time_end: string;
+    start_date: string; weeks: number;
+    slots?: number; customer_name: string; customer_phone: string;
+    amount: number; payment_method?: string; note?: string;
+    user_id?: string
+  }) => {
+    const res = await apiFetch<any>('/bookings/recurring', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+    return { success: res.success, message: res.message, data: res.data, errors: (res as any).errors }
+  },
+
+  // PATCH /api/bookings/:id/services
+  updateServices: async (id: string, data: Record<string, any>) => {
+    const res = await apiFetch<any>(`/bookings/${id}/services`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    })
+    if (res.success && res.data) {
+      return { success: true, booking: transformBooking(res.data), message: res.message }
+    }
+    return { success: false, error: res.message }
+  },
+
+  // POST /api/bookings (hold) — giữ chỗ
+  createHold: async (data: {
+    court_id: number; booking_date: string;
+    time_start: string; time_end: string; slots?: number;
+    customer_name: string; customer_phone: string;
+    amount: number; payment_method?: string; note?: string;
+  }) => {
+    const res = await apiFetch<any>('/bookings/hold', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+    if (res.success && res.data) {
+      return { success: true, booking: transformBooking(res.data), message: res.message }
+    }
+    return { success: false, error: res.message }
+  },
+
+  // PATCH /api/bookings/:id/confirm-payment
+  confirmPayment: async (id: string) => {
+    const res = await apiFetch<any>(`/bookings/${id}/confirm-payment`, {
+      method: 'PATCH',
+    })
+    if (res.success && res.data) {
+      return { success: true, booking: transformBooking(res.data), message: res.message }
+    }
+    return { success: false, error: res.message }
   },
 
   previewFixed: async (data: {
@@ -675,84 +866,53 @@ export const orderApi = {
 // ═══════════════════════════════════════════════════════════════
 
 export const inventoryApi = {
-  // GET /inventory → danh sách tồn kho
+  // GET /inventory
   getAll: async () => {
-    try {
-      const data = await apiFetch('/inventory')
-      const list = Array.isArray(data) ? data : (data as any)?.data ?? []
-      return { success: true, data: list }
-    } catch {
-      return { success: false, data: [] }
-    }
+    const res = await apiFetch('/inventory')
+    const list = Array.isArray(res.data) ? res.data : []
+    return { success: res.success, data: list }
   },
- 
-  // GET /inventory/transactions → lịch sử nhập/xuất
+
+  // GET /inventory/transactions
   getTransactions: async () => {
-    try {
-      const data = await apiFetch('/inventory/transactions')
-      const list = Array.isArray(data) ? data : (data as any)?.data ?? []
-      return { success: true, data: list }
-    } catch {
-      return { success: false, data: [] }
-    }
+    const res = await apiFetch('/inventory/transactions')
+    const list = Array.isArray(res.data) ? res.data : []
+    return { success: res.success, data: list }
   },
- 
-  // GET /warehouse/warehouses → danh sách kho (dùng để map tên → id)
+
+  // GET /inventory/warehouse/:id
+  getByWarehouse: async (warehouseId: number) => {
+    const res = await apiFetch(`/inventory/warehouse/${warehouseId}`)
+    const list = Array.isArray(res.data) ? res.data : []
+    return { success: res.success, data: list }
+  },
+
+  // GET /inventory/warehouse/warehouses — danh sách kho
   getWarehouses: async () => {
-    try {
-      const data = await apiFetch('/warehouse/warehouses')
-      const list = Array.isArray(data) ? data : (data as any)?.data ?? []
-      return { success: true, data: list }
-    } catch {
-      return { success: false, data: [] }
-    }
+    const res = await apiFetch('/warehouse/warehouses')
+    const list = Array.isArray(res.data) ? res.data : []
+    return { success: res.success, data: list }
   },
- 
-  // GET /inventory/low-stock → sản phẩm sắp hết hàng
+
+  // GET /inventory/low-stock
   getLowStock: async () => {
-    try {
-      const data = await apiFetch('/inventory/low-stock')
-      const list = Array.isArray(data) ? data : (data as any)?.data ?? []
-      return { success: true, data: list }
-    } catch {
-      return { success: false, data: [] }
-    }
+    const res = await apiFetch('/inventory/low-stock')
+    const list = Array.isArray(res.data) ? res.data : []
+    return { success: res.success, data: list }
   },
- 
-  // POST /inventory/import → nhập kho
-  importStock: async (payload: {
-    warehouse_id: number
-    sku: string
-    quantity: number
-    note?: string
-  }) => {
-    try {
-      const data = await apiFetch('/inventory/import', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      })
-      return { success: true, data }
-    } catch (e: any) {
-      return { success: false, error: e?.message }
-    }
+
+  // POST /inventory/import — BE DTO dùng camelCase: warehouseId, qty
+  importStock: async (payload: { warehouse_id: number; sku: string; quantity: number; cost?: number; note?: string }) => {
+    const body = { warehouseId: payload.warehouse_id, sku: payload.sku, qty: payload.quantity, cost: payload.cost, note: payload.note }
+    const res = await apiFetch('/inventory/import', { method: 'POST', body: JSON.stringify(body) })
+    return { success: res.success, data: res.data, error: res.message }
   },
- 
-  // POST /inventory/export → xuất kho
-  exportStock: async (payload: {
-    warehouse_id: number
-    sku: string
-    quantity: number
-    note?: string
-  }) => {
-    try {
-      const data = await apiFetch('/inventory/export', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      })
-      return { success: true, data }
-    } catch (e: any) {
-      return { success: false, error: e?.message }
-    }
+
+  // POST /inventory/export — BE DTO dùng camelCase: warehouseId, qty
+  exportStock: async (payload: { warehouse_id: number; sku: string; quantity: number; note?: string }) => {
+    const body = { warehouseId: payload.warehouse_id, sku: payload.sku, qty: payload.quantity, note: payload.note }
+    const res = await apiFetch('/inventory/export', { method: 'POST', body: JSON.stringify(body) })
+    return { success: res.success, data: res.data, error: res.message }
   },
 }
 // ═══════════════════════════════════════════════════════════════
@@ -760,151 +920,171 @@ export const inventoryApi = {
 // ═══════════════════════════════════════════════════════════════
 
 export const transferApi = {
-  // GET /transfers → danh sách phiếu chuyển kho
+  // GET /transfers
   getAll: async () => {
-    try {
-      const data = await apiFetch('/transfers')
-      const list = Array.isArray(data) ? data : (data as any)?.data ?? []
-      return { success: true, data: list }
-    } catch {
-      return { success: false, data: [] }
-    }
+    const res = await apiFetch('/transfers')
+    const list = Array.isArray(res.data) ? res.data : []
+    return { success: res.success, data: list }
   },
- 
-  // POST /transfers → tạo phiếu chuyển kho
+
+  // POST /transfers
   create: async (payload: {
-    from_warehouse_id: number
-    to_warehouse_id: number
-    note?: string
-    items: { sku: string; quantity: number }[]
+    from_warehouse_id: number; to_warehouse_id: number
+    note?: string; items: { sku: string; quantity: number }[]
   }) => {
-    try {
-      const data = await apiFetch('/transfers', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      })
-      return { success: true, data }
-    } catch (e: any) {
-      return { success: false, error: e?.message, data: null }
-    }
+    const res = await apiFetch('/transfers', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+    return { success: res.success, data: res.data, error: res.message }
   },
- 
-  // PATCH /transfers/:id/status → cập nhật trạng thái
+
+  // PATCH /transfers/:id/status — BE DTO chỉ chấp nhận: approved, rejected, in_transit, completed
   updateStatus: async (id: string, status: string) => {
-    try {
-      const data = await apiFetch(`/transfers/${id}/status`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status }),
-      })
-      return { success: true, data }
-    } catch (e: any) {
-      return { success: false, error: e?.message }
-    }
+    // Normalize "in-transit" → "in_transit" để match BE DTO
+    const normalizedStatus = status === 'in-transit' ? 'in_transit' : status
+    const res = await apiFetch(`/transfers/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: normalizedStatus }),
+    })
+    return { success: res.success, data: res.data, error: res.message }
   },
 }
 
 // ═══════════════════════════════════════════════════════════════
-// PURCHASE ORDERS API
+// PURCHASE ORDERS API  — BE: @Controller('purchase-orders')
 // ═══════════════════════════════════════════════════════════════
 
 export const purchaseOrderApi = {
+  // GET /purchase-orders
   getAll: async (filters?: { status?: string; supplierId?: number }) => {
     const params = new URLSearchParams()
-    if (filters?.status) params.set('status', filters.status)
+    if (filters?.status)     params.set('status', filters.status)
     if (filters?.supplierId) params.set('supplierId', String(filters.supplierId))
     const qs = params.toString()
-    return apiFetch(`/warehouse/purchase-orders${qs ? '?' + qs : ''}`)
+    return apiFetch(`/purchase-orders${qs ? '?' + qs : ''}`)
   },
 
-  getById: async (id: string) => apiFetch(`/warehouse/purchase-orders/${id}`),
+  // GET /purchase-orders/:id
+  getById: async (id: string) => apiFetch(`/purchase-orders/${id}`),
 
+  // POST /purchase-orders
   create: async (dto: {
-    supplier_id: number
-    warehouse_id: number
-    note?: string
+    supplier_id: number; warehouse_id: number; note?: string
     items: { sku: string; quantity: number; price: number }[]
   }) => {
-    try {
-      const data = await apiFetch('/purchase-orders', {
-        method: 'POST',
-        body: JSON.stringify({
-          supplierId: dto.supplier_id,
-          warehouseId: dto.warehouse_id,
-          note: dto.note || '',
-          items: dto.items.map(i => ({
-            sku: i.sku,
-            qty: i.quantity,
-            unitCost: i.price,
-          })),
-        }),
-      })
-      return { success: true, data }
-    } catch (e: any) {
-      return { success: false, error: e?.message }
-    }
+    const res = await apiFetch('/purchase-orders', {
+      method: 'POST',
+      body: JSON.stringify({
+        supplierId:  dto.supplier_id,
+        warehouseId: dto.warehouse_id,
+        note:        dto.note || '',
+        items:       dto.items.map(i => ({ sku: i.sku, qty: i.quantity, unitCost: i.price })),
+      }),
+    })
+    return { success: res.success, data: res.data, error: res.message }
   },
 
-   getSuppliers: async () => {
-    try {
-      const data = await apiFetch('/warehouse/suppliers')
-      const list = Array.isArray(data) ? data : (data as any)?.data ?? []
-      return { success: true, data: list }
-    } catch {
-      return { success: true, data: [] } // fallback rỗng nếu chưa có BE
-    }
+  // PATCH /purchase-orders/:id/status
+  updateStatus: async (id: string, status: string) => {
+    const res = await apiFetch(`/purchase-orders/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    })
+    return { success: res.success, error: res.message }
+  },
+
+  // GET /purchase-orders/suppliers
+  getSuppliers: async () => {
+    const res = await apiFetch('/purchase-orders/suppliers')
+    const list = Array.isArray(res.data) ? res.data : []
+    return { success: res.success, data: list }
   },
 }
 
 // ═══════════════════════════════════════════════════════════════
-// SALES ORDERS API
+// SALES ORDERS API  — BE: @Controller('sales-orders')
 // ═══════════════════════════════════════════════════════════════
 
 export const salesOrderApi = {
+  // GET /sales-orders
   getAll: async (filters?: { status?: string; branchId?: number }) => {
     const params = new URLSearchParams()
-    if (filters?.status) params.set('status', filters.status)
+    if (filters?.status)   params.set('status', filters.status)
     if (filters?.branchId) params.set('branchId', String(filters.branchId))
     const qs = params.toString()
-    return apiFetch(`/sales${qs ? '?' + qs : ''}`)
+    return apiFetch(`/sales-orders${qs ? '?' + qs : ''}`)
   },
 
-  getById: async (id: string) => apiFetch(`/sales/${id}`),
+  // GET /sales-orders/:id
+  getById: async (id: string) => apiFetch(`/sales-orders/${id}`),
 
+  // POST /sales-orders — BE DTO dùng snake_case
   create: async (dto: {
-    branch_id?: number
-    customer_name?: string
-    customer_phone?: string
-    note?: string
-    items: { sku: string; quantity: number; price: number }[]
+    branch_id?: number; customer_name?: string; customer_phone?: string
+    note?: string; order_type?: string; fulfillment_mode?: string
+    fulfill_warehouse_id?: number; payment_method?: string
+    items: { product_id?: number; product_name: string; price: number; quantity: number }[]
   }) => {
-    try {
-      const data = await apiFetch('/orders', {
-        method: 'POST',
-        body: JSON.stringify({
-          customerName: dto.customer_name || 'Khách lẻ',
-          customerPhone: dto.customer_phone || '',
-          note: dto.note || '',
-          paymentMethod: 'cash',
-          items: dto.items.map(i => ({
-            productId: i.sku,   // BE nhận productId
-            productName: '',
-            price: i.price,
-            qty: i.quantity,
-          })),
-        }),
-      })
-      return { success: true, data }
-    } catch (e: any) {
-      return { success: false, error: e?.message }
-    }
+    const res = await apiFetch('/sales-orders', {
+      method: 'POST',
+      body: JSON.stringify({
+        branch_id:            dto.branch_id,
+        customer_name:        dto.customer_name || 'Khách lẻ',
+        customer_phone:       dto.customer_phone || '',
+        note:                 dto.note || '',
+        order_type:           dto.order_type,
+        fulfillment_mode:     dto.fulfillment_mode,
+        fulfill_warehouse_id: dto.fulfill_warehouse_id,
+        payment_method:       dto.payment_method,
+        items: dto.items.map(i => ({
+          product_id:   i.product_id ?? null,
+          product_name: i.product_name || '',
+          price:        i.price,
+          qty:          i.quantity,
+        })),
+      }),
+    })
+    return { success: res.success, data: res.data, error: res.message }
   },
 
-  approve: async (id: string) => apiFetch(`/sales/${id}/approve`, { method: 'PATCH' }),
-  reject: async (id: string, reason?: string) => {
-    return apiFetch(`/sales/${id}/reject`, {
+  // PATCH /sales-orders/:id/approve
+  approve: async (id: string, payload?: Record<string, any>) => {
+    const res = await apiFetch(`/sales-orders/${id}/approve`, {
       method: 'PATCH',
-      body: JSON.stringify({ rejectReason: reason }),
+      body: JSON.stringify(payload || {}),
     })
+    return { success: res.success, data: res.data, error: res.message }
+  },
+
+  // PATCH /sales-orders/:id/reject
+  reject: async (id: string, reason?: string) => {
+    const res = await apiFetch(`/sales-orders/${id}/reject`, {
+      method: 'PATCH',
+      body: JSON.stringify({ reject_reason: reason }),
+    })
+    return { success: res.success, data: res.data, error: res.message }
+  },
+
+  // PATCH /sales-orders/:id/confirm-payment
+  confirmPayment: async (id: string, payload?: Record<string, any>) => {
+    const res = await apiFetch(`/sales-orders/${id}/confirm-payment`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload || {}),
+    })
+    return { success: res.success, data: res.data, error: res.message }
+  },
+
+  // PATCH /sales-orders/:id/complete
+  complete: async (id: string) => {
+    const res = await apiFetch(`/sales-orders/${id}/complete`, { method: 'PATCH' })
+    return { success: res.success, data: res.data, error: res.message }
+  },
+
+  // GET /sales-orders/customers?search=...
+  getCustomers: async (search: string) => {
+    const res = await apiFetch(`/sales-orders/customers?search=${encodeURIComponent(search)}`)
+    return { success: res.success, data: Array.isArray(res.data) ? res.data : [] }
   },
 }
 
@@ -991,7 +1171,7 @@ interface FixedScheduleConfirmPayload {
   adjustmentLimit?: number;
   decisions: {           // ← Đổi từ occurrences[] sang decisions[]
     date: string;
-    action: 'keep' | 'replace' | 'skip';
+    action: 'keep' | 'replace' | 'skip' | 'custom';
     replaceWithCourtId?: number;
     reason?: string;
   }[];
@@ -1046,3 +1226,99 @@ export const fixedScheduleApi = {
     return res.success ? res.data : null
   },
 };
+
+// ═══════════════════════════════════════════════════════════════
+// USER MANAGEMENT API (Admin)
+// ═══════════════════════════════════════════════════════════════
+
+export const userApi = {
+  getAll: async (filters?: { role?: string; search?: string; page?: number; limit?: number }) => {
+    const params = new URLSearchParams()
+    if (filters?.role)   params.set('role', filters.role)
+    if (filters?.search) params.set('search', filters.search)
+    if (filters?.page)   params.set('page', String(filters.page))
+    if (filters?.limit)  params.set('limit', String(filters.limit))
+    const qs = params.toString()
+    const res = await apiFetch<any>(`/users${qs ? '?' + qs : ''}`)
+    if (res.success) {
+      const raw = Array.isArray(res.data) ? res.data : (res.data?.users || res.data?.data || [])
+      return { users: raw.map(transformUser), pagination: res.pagination }
+    }
+    return { users: [], pagination: undefined }
+  },
+
+  getById: async (id: string): Promise<ApiUser | null> => {
+    const res = await apiFetch<any>(`/users/${id}`)
+    if (res.success && res.data) return transformUser(res.data)
+    return null
+  },
+
+  create: async (data: {
+    username: string; password: string; full_name: string;
+    email: string; phone: string; role?: string;
+    address?: string; gender?: string; date_of_birth?: string;
+    warehouse_id?: number;
+  }) => {
+    const res = await apiFetch<any>('/users', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+    if (res.success && res.data) return { success: true, user: transformUser(res.data) }
+    return { success: false, error: res.message }
+  },
+
+  update: async (id: string, data: Record<string, any>) => {
+    const res = await apiFetch<any>(`/users/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    })
+    if (res.success && res.data) return { success: true, user: transformUser(res.data) }
+    return { success: false, error: res.message }
+  },
+
+  resetPassword: async (id: string, new_password: string) => {
+    const res = await apiFetch<any>(`/users/${id}/password`, {
+      method: 'PUT',
+      body: JSON.stringify({ new_password }),
+    })
+    return { success: res.success, message: res.message }
+  },
+
+  delete: async (id: string) => {
+    return apiFetch(`/users/${id}`, { method: 'DELETE' })
+  },
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PAYMENT API
+// ═══════════════════════════════════════════════════════════════
+
+export const paymentApi = {
+  /**
+   * Tạo link thanh toán VNPay / MoMo
+   * POST /payment/create
+   * Returns: { paymentId, method, payUrl }
+   */
+  create: async (invoiceId: string, method: 'vnpay' | 'momo') => {
+    const res = await apiFetch<{ paymentId: string; method: string; payUrl: string }>('/payment/create', {
+      method: 'POST',
+      body: JSON.stringify({ invoiceId, method }),
+    })
+    if (res.success && res.data) {
+      return { success: true, paymentId: res.data.paymentId, payUrl: res.data.payUrl, method: res.data.method }
+    }
+    return { success: false, error: res.message || 'Không thể tạo liên kết thanh toán', paymentId: null, payUrl: null }
+  },
+
+  /**
+   * Lấy trạng thái thanh toán
+   * GET /payment/:id
+   */
+  getStatus: async (paymentId: string) => {
+    const res = await apiFetch<any>(`/payment/${paymentId}`)
+    if (res.success && res.data) {
+      return { success: true, data: res.data }
+    }
+    return { success: false, error: res.message, data: null }
+  },
+}

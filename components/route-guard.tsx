@@ -31,13 +31,13 @@ export function RouteGuard({ children, requiredRole }: RouteGuardProps) {
       return
     }
 
-    if (requiredRole === "admin" && user.role !== "admin") {
+    if (requiredRole === "admin" && (user.role as string) !== "admin") {
       router.replace("/")
       return
     }
 
     // Employee hoặc admin đều truy cập được trang employee
-    if (requiredRole === "employee" && user.role !== "employee" && user.role !== "admin") {
+    if (requiredRole === "employee" && (user.role as string) !== "employee" && (user.role as string) !== "admin") {
       router.replace("/")
       return
     }
@@ -55,9 +55,9 @@ export function RouteGuard({ children, requiredRole }: RouteGuardProps) {
   }
 
   if (!user) return null
-  if (user.role === "guest" && requiredRole) return null
-  if (requiredRole === "admin" && user.role !== "admin") return null
-  if (requiredRole === "employee" && user.role !== "employee" && user.role !== "admin") return null
+  if ((user.role as string) === "guest" && requiredRole) return null
+  if (requiredRole === "admin" && (user.role as string) !== "admin") return null
+  if (requiredRole === "employee" && (user.role as string) !== "employee" && (user.role as string) !== "admin") return null
 
   return <>{children}</>
 }

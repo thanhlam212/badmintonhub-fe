@@ -364,7 +364,7 @@ export default function AdminInventory() {
                 </TableHeader>
                 <TableBody>
                   {paginatedFiltered.map((item, idx) => (
-                    <TableRow key={`${item.sku}-${item.warehouse}`} className={cn(
+                    <TableRow key={`${item.sku}-${item.warehouseId ?? idx}`} className={cn(
                       "hover:bg-muted/50",
                       idx % 2 !== 0 && "bg-muted/20",
                       item.available === 0 && "bg-red-50/50",

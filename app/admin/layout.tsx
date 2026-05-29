@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import {
   LayoutDashboard, CalendarCheck, Package, FileText, BarChart3,
   ChevronLeft, ChevronRight, Menu, Truck, Settings, LogOut, User, FlaskConical,
-  Building2, ClipboardList
+  Building2, ClipboardList, Users, QrCode, FolderSearch, PackagePlus
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { RouteGuard } from "@/components/route-guard"
@@ -24,11 +24,19 @@ const navGroups = [
     ],
   },
   {
-    label: "Quản lý",
+    label: "Đặt sân",
     items: [
       { href: "/admin/bookings", icon: <CalendarCheck className="h-5 w-5" />, label: "Đặt sân" },
+      { href: "/admin/checkin", icon: <QrCode className="h-5 w-5" />, label: "QR Check-in" },
+    ],
+  },
+  {
+    label: "Quản lý",
+    items: [
       { href: "/admin/courts", icon: <Building2 className="h-5 w-5" />, label: "Quản lý sân" },
+      { href: "/admin/accounts", icon: <Users className="h-5 w-5" />, label: "Tài khoản" },
       { href: "/admin/inventory", icon: <Package className="h-5 w-5" />, label: "Tồn kho" },
+      { href: "/admin/products/import", icon: <PackagePlus className="h-5 w-5" />, label: "Import SP" },
       { href: "/admin/purchase-orders", icon: <Truck className="h-5 w-5" />, label: "Đặt hàng" },
       { href: "/admin/orders", icon: <ClipboardList className="h-5 w-5" />, label: "Quản lý đơn" },
     ],
@@ -37,6 +45,7 @@ const navGroups = [
     label: "Báo cáo",
     items: [
       { href: "/admin/reports", icon: <BarChart3 className="h-5 w-5" />, label: "Báo cáo" },
+      { href: "/admin/document-audit", icon: <FolderSearch className="h-5 w-5" />, label: "Rà soát chứng từ" },
     ],
   },
   {
@@ -131,9 +140,15 @@ function AdminTopbar({ collapsed, onMobileMenu }: { collapsed: boolean; onMobile
   const breadcrumbMap: Record<string, string> = {
     '/admin': 'Dashboard',
     '/admin/bookings': 'Đặt sân',
+    '/admin/checkin': 'QR Check-in',
+    '/admin/courts': 'Quản lý sân',
+    '/admin/accounts': 'Tài khoản',
     '/admin/inventory': 'Tồn kho',
+    '/admin/products/import': 'Import Sản phẩm',
     '/admin/purchase-orders': 'Đặt hàng',
+    '/admin/orders': 'Quản lý đơn',
     '/admin/reports': 'Báo cáo',
+    '/admin/document-audit': 'Rà soát chứng từ',
     '/admin/api-test': 'Test API',
   }
 

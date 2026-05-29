@@ -57,13 +57,32 @@ interface InventoryContextType {
 const InventoryContext = createContext<InventoryContextType | undefined>(undefined)
 
 function txItem(r: any): InventoryItem {
-  return { id: r.id, sku: r.sku, name: r.name, category: r.category||"", warehouse: r.warehouse_name||r.warehouse||"", warehouseId: r.warehouse_id, onHand: r.on_hand??r.onHand??0, reserved: r.reserved??0, available: r.available??0, reorderPoint: r.reorder_point??r.reorderPoint??10, unitCost: r.unit_cost??r.unitCost??0, image: r.product_image||r.image||"" }
+  // BE trả về camelCase warehouseName + warehouse object (Prisma include)
+  const warehouseStr = r.warehouseName || r.warehouse_name
+    || (typeof r.warehouse === 'string' ? r.warehouse : r.warehouse?.name)
+    || ""
+  return {
+    id: r.id, sku: r.sku, name: r.name, category: r.category||"",
+    warehouse: warehouseStr,
+    warehouseId: r.warehouseId ?? r.warehouse_id ?? r.warehouse?.id,
+    onHand: r.onHand ?? r.on_hand ?? 0,
+    reserved: r.reserved ?? 0,
+    available: r.available ?? 0,
+    reorderPoint: r.reorderPoint ?? r.reorder_point ?? 10,
+    unitCost: Number(r.unitCost ?? r.unit_cost ?? 0),
+    image: r.productImage || r.product_image || r.image || "",
+  }
 }
 function txTxn(r: any): InventoryTransaction {
   return { id: String(r.id), type: r.type, date: r.date?new Date(r.date).toISOString().split("T")[0]:"", sku: r.sku||"", productName: r.product_name||r.productName||r.name||"", qty: r.qty||r.quantity||0, cost: r.cost||0, note: r.note||"", warehouse: r.warehouse_name||r.warehouse||"", operator: r.operator||"" }
 }
+function normalizeTransferStatus(s: string): TransferRequest["status"] {
+  // BE trả về "in_transit" (underscore), FE dùng "in-transit" (hyphen)
+  if (s === "in_transit") return "in-transit"
+  return (s || "pending") as TransferRequest["status"]
+}
 function txTfr(r: any): TransferRequest {
-  return { id: String(r.id), date: r.created_at?new Date(r.created_at).toISOString().split("T")[0]:r.date||"", fromWarehouse: r.from_warehouse_name||r.fromWarehouse||"", toWarehouse: r.to_warehouse_name||r.toWarehouse||"", fromWarehouseId: r.from_warehouse_id, toWarehouseId: r.to_warehouse_id, items: (r.items||[]).map((i: any)=>({sku:i.sku,name:i.name||i.product_name||"",qty:i.qty||i.quantity||0,available:i.available||0})), reason: r.reason||r.note||"", note: r.note||"", status: r.status||"pending", pickupMethod: r.pickup_method||r.pickupMethod||"employee", createdBy: r.created_by_name||r.createdBy||"", customerName: r.customer_name, customerPhone: r.customer_phone, approvedBy: r.approved_by_name, approvedAt: r.approved_at, completedAt: r.completed_at }
+  return { id: String(r.id), date: r.created_at?new Date(r.created_at).toISOString().split("T")[0]:r.date||"", fromWarehouse: r.from_warehouse_name||r.fromWarehouse||"", toWarehouse: r.to_warehouse_name||r.toWarehouse||"", fromWarehouseId: r.from_warehouse_id, toWarehouseId: r.to_warehouse_id, items: (r.items||[]).map((i: any)=>({sku:i.sku,name:i.name||i.product_name||"",qty:i.qty||i.quantity||0,available:i.available||0})), reason: r.reason||r.note||"", note: r.note||"", status: normalizeTransferStatus(r.status), pickupMethod: r.pickup_method||r.pickupMethod||"employee", createdBy: r.created_by_name||r.createdBy||"", customerName: r.customer_name, customerPhone: r.customer_phone, approvedBy: r.approved_by_name, approvedAt: r.approved_at, completedAt: r.completed_at }
 }
 function txPO(r: any): PurchaseOrder {
   return { id: String(r.id), supplier: r.supplier_name||r.supplier||"", status: r.status||"", createdDate: r.created_at?new Date(r.created_at).toISOString().split("T")[0]:r.createdDate||"", totalValue: r.total_value??r.totalValue??0, items: r.item_count??r.items??0, warehouse: r.warehouse_name||r.warehouse||"", poItems: (r.po_items||r.poItems||[]).map((i:any)=>({sku:i.sku,name:i.name||i.product_name||"",qty:i.qty||i.quantity||0,unitCost:i.unit_cost||i.unitCost||i.price||0})) }
@@ -111,7 +130,7 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     await ensureWhMap(); const fid=whMap[request.fromWarehouse]||request.fromWarehouseId; const tid=whMap[request.toWarehouse]||request.toWarehouseId
     if(!fid||!tid)throw new Error("Kho not found")
     const r=await transferApi.create({from_warehouse_id:fid,to_warehouse_id:tid,note:`${request.reason||""} | ${request.note||""}`.trim(),items:request.items.map(i=>({sku:i.sku,quantity:i.qty}))})
-    await fetchTfr(); return r.data?.id?String(r.data.id):""
+    await fetchTfr(); return r.data?.id ? String(r.data.id) : (r.data as any)?.data?.id ? String((r.data as any).data.id) : ""
   }, [fetchTfr])
 
   const updateTransferStatus = useCallback(async(id:string,status:TransferRequest["status"])=>{await transferApi.updateStatus(id,status);await fetchTfr()}, [fetchTfr])

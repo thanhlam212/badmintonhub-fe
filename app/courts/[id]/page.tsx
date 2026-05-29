@@ -240,12 +240,26 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
     fetchSlots()
   }, [court?.id, weekKey])
 
+  // Ngày hiện đang được chọn (chỉ cho phép chọn 1 ngày tại một thời điểm)
+  const selectedDay = selectedSlots.length > 0
+    ? selectedSlots[0].substring(0, selectedSlots[0].lastIndexOf('-'))
+    : null
+
   const toggleSlot = (dayLabel: string, time: string) => {
     if (isClosed) return // Block slot selection on closed courts
     const key = `${dayLabel}-${time}`
-    setSelectedSlots(prev =>
-      prev.includes(key) ? prev.filter(s => s !== key) : [...prev, key]
-    )
+    setSelectedSlots(prev => {
+      if (prev.includes(key)) {
+        // Bỏ chọn slot này
+        return prev.filter(s => s !== key)
+      }
+      // Nếu đang chọn ngày khác — reset và chỉ giữ slot mới
+      const prevDay = prev.length > 0 ? prev[0].substring(0, prev[0].lastIndexOf('-')) : null
+      if (prevDay && prevDay !== dayLabel) {
+        return [key] // Chuyển sang ngày mới, xóa các slot cũ
+      }
+      return [...prev, key]
+    })
   }
 
   const totalPrice = selectedSlots.length * (court?.price || 0)
@@ -278,6 +292,11 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
   }, [selectedSlots])
 
   const handleBooking = () => {
+    // Yêu cầu đăng nhập để đặt sân
+    if (!user) {
+      router.push('/login?redirect=/booking&msg=Vui+lòng+đăng+nhập+để+đặt+sân')
+      return
+    }
     const { date, timeRange, slots } = getBookingTimeRange()
     const bookingData = {
       courtId: court!.id,
@@ -555,13 +574,38 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
 
           {/* Image Gallery */}
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-2 rounded-xl overflow-hidden">
-            <div className="lg:col-span-3 aspect-video bg-gradient-to-br from-secondary/20 to-secondary/5 flex items-center justify-center">
-              <div className="text-4xl text-secondary/30 font-serif font-bold">{court.name}</div>
+            {/* Main "photo" */}
+            <div className="lg:col-span-3 aspect-video bg-gradient-to-br from-[#0A2416] via-[#0F3D2A] to-[#1A5C35] relative overflow-hidden flex items-center justify-center">
+              {/* Court line art */}
+              <div className="absolute inset-0 flex items-center justify-center opacity-15">
+                <div className="w-3/4 h-3/4 border-2 border-white/70 relative">
+                  <div className="absolute inset-x-0 top-1/2 h-0.5 bg-white/70" />
+                  <div className="absolute inset-y-0 left-1/2 w-0.5 bg-white/40" />
+                  <div className="absolute top-1/4 left-0 right-0 h-0.5 bg-white/40" />
+                  <div className="absolute bottom-1/4 left-0 right-0 h-0.5 bg-white/40" />
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-16 w-16 border-2 border-white/50 rounded-full" />
+                </div>
+              </div>
+              {/* Court name overlay */}
+              <div className="relative z-10 text-center">
+                <p className="text-white/60 text-sm font-medium tracking-widest uppercase mb-2">Sân cầu lông</p>
+                <p className="text-white font-serif font-extrabold text-3xl drop-shadow-lg">{court.name}</p>
+                <p className="text-white/50 text-sm mt-1">{court.branch}</p>
+              </div>
             </div>
+            {/* Side thumbnails */}
             <div className="hidden lg:grid grid-rows-4 gap-2">
-              {[1, 2, 3, 4].map(i => (
-                <div key={i} className="bg-gradient-to-br from-muted to-background flex items-center justify-center rounded-md">
-                  <span className="text-muted-foreground/30 text-sm font-medium">Ảnh {i}</span>
+              {[
+                { label: "Khu vực sân", opacity: 0.9 },
+                { label: "Phòng thay đồ", opacity: 0.7 },
+                { label: "Khu vực nghỉ", opacity: 0.85 },
+                { label: "Bãi đỗ xe", opacity: 0.75 },
+              ].map((item, i) => (
+                <div key={i} className="bg-gradient-to-br from-[#0F3D2A] to-[#0A2416] rounded-md flex items-end p-2 overflow-hidden relative">
+                  <div className="absolute inset-0 opacity-10">
+                    <div className="w-full h-full border border-white/30" />
+                  </div>
+                  <span className="text-white/50 text-xs font-medium relative z-10">{item.label}</span>
                 </div>
               ))}
             </div>
@@ -761,11 +805,16 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
                       </Button>
                     </div>
                   </div>
-                  <div className="flex gap-4 mt-2">
+                  <div className="flex flex-wrap gap-4 mt-2">
                     <span className="flex items-center gap-1 text-xs"><span className="h-3 w-3 rounded bg-court-available" /> Trống</span>
                     <span className="flex items-center gap-1 text-xs"><span className="h-3 w-3 rounded bg-court-booked" /> Đã đặt</span>
                     <span className="flex items-center gap-1 text-xs"><span className="h-3 w-3 rounded bg-court-hold" /> Giữ chỗ</span>
                     <span className="flex items-center gap-1 text-xs"><span className="h-3 w-3 rounded bg-primary" /> Đã chọn</span>
+                    {selectedDay && (
+                      <span className="text-xs text-primary font-medium flex items-center gap-1">
+                        📅 Đang chọn ngày <strong>{selectedDay}</strong> — bấm ngày khác để đổi ngày
+                      </span>
+                    )}
                   </div>
                 </CardHeader>
                 <CardContent>
@@ -775,9 +824,19 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
                       <div className="grid grid-cols-[60px_repeat(7,1fr)] gap-1 mb-1">
                         <div />
                         {weekDays.map(d => (
-                          <div key={d.label} className="text-center text-xs font-medium text-muted-foreground py-1">
+                          <div
+                            key={d.label}
+                            className={cn(
+                              "text-center text-xs font-medium py-1 rounded-md transition-colors",
+                              selectedDay && selectedDay !== d.label
+                                ? "text-muted-foreground/40"
+                                : selectedDay === d.label
+                                  ? "text-primary font-bold bg-primary/5"
+                                  : "text-muted-foreground"
+                            )}
+                          >
                             <div>{d.dayName}</div>
-                            <div className="font-semibold text-foreground">{d.label}</div>
+                            <div className={cn("font-semibold", selectedDay === d.label ? "text-primary" : "text-foreground")}>{d.label}</div>
                           </div>
                         ))}
                       </div>
@@ -790,21 +849,29 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
                             const slotKey = `${d.label}-${time}`
                             const isSelected = selectedSlots.includes(slotKey)
                             const isDisabled = status !== 'available'
+                            const isOtherDay = selectedDay !== null && selectedDay !== d.label
 
                             return (
                               <button
                                 key={slotKey}
                                 disabled={isDisabled}
                                 onClick={() => toggleSlot(d.label, time)}
+                                title={isOtherDay && !isDisabled ? "Bấm để chọn ngày khác (sẽ xóa slot hiện tại)" : undefined}
                                 className={cn(
                                   "h-8 rounded text-xs font-medium transition-all duration-150",
                                   isSelected
                                     ? "bg-primary text-primary-foreground scale-[0.95] shadow-sm shadow-primary/40 ring-2 ring-primary/30"
-                                    : status === 'available'
-                                      ? "bg-court-available hover:bg-green-200 hover:scale-[0.97] text-green-700 cursor-pointer active:scale-95"
-                                      : status === 'booked'
-                                        ? "bg-court-booked text-red-400 cursor-not-allowed opacity-60"
-                                        : "bg-court-hold text-amber-400 cursor-not-allowed opacity-70"
+                                    : isOtherDay
+                                      ? status === 'available'
+                                        ? "bg-court-available opacity-30 hover:opacity-70 cursor-pointer"
+                                        : status === 'booked'
+                                          ? "bg-court-booked opacity-20 cursor-not-allowed"
+                                          : "bg-court-hold opacity-20 cursor-not-allowed"
+                                      : status === 'available'
+                                        ? "bg-court-available hover:bg-green-200 hover:scale-[0.97] text-green-700 cursor-pointer active:scale-95"
+                                        : status === 'booked'
+                                          ? "bg-court-booked text-red-400 cursor-not-allowed opacity-60"
+                                          : "bg-court-hold text-amber-400 cursor-not-allowed opacity-70"
                                 )}
                               >
                                 {isSelected && <Check className="h-3 w-3 mx-auto" />}

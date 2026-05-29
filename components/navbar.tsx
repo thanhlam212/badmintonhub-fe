@@ -95,7 +95,7 @@ export function Navbar() {
             </span>
             <span className="flex items-center gap-1.5">
               <MapPin className="h-3 w-3" />
-              3 cơ sở tại TP.HCM
+              3 cơ sở tại Hà Nội
             </span>
           </div>
           <div className="flex items-center gap-4">
@@ -321,8 +321,20 @@ export function Navbar() {
               </Link>
             )}
 
+            {/* Cart */}
+            <Link href="/shop">
+              <Button variant="ghost" size="icon" className="h-9 w-9 rounded-lg text-gray-600 hover:text-[#0A2416] hover:bg-gray-100 relative transition-all duration-200">
+                <ShoppingCart className="h-5 w-5" />
+                {totalItems > 0 && (
+                  <span className="absolute -top-1 -right-1 h-4 w-4 flex items-center justify-center rounded-full bg-primary text-[9px] text-primary-foreground font-bold">
+                    {totalItems > 9 ? '9+' : totalItems}
+                  </span>
+                )}
+              </Button>
+            </Link>
+
             <div className="w-px h-6 bg-gray-200 mx-1" />
-            
+
             {/* Primary CTA */}
             <Link href="/courts">
               <Button className="bg-[#1F6B3A] text-white hover:bg-[#185a30] font-semibold rounded-lg px-5 h-9 text-sm shadow-md shadow-green-900/15 transition-all duration-200 hover:shadow-lg hover:shadow-green-900/20 hover:-translate-y-0.5">
@@ -543,7 +555,7 @@ export function Navbar() {
                 <Phone className="h-3.5 w-3.5" /> Hotline: <strong className="text-gray-700">1900 1234</strong>
               </span>
               <span className="flex items-center gap-2">
-                <MapPin className="h-3.5 w-3.5" /> 3 cơ sở tại TP.HCM
+                <MapPin className="h-3.5 w-3.5" /> 3 cơ sở tại Hà Nội
               </span>
             </div>
           </div>

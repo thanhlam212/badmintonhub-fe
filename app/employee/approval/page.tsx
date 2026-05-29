@@ -100,7 +100,7 @@ export default function ApprovalPage() {
           time: o.created_at ? new Date(o.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "",
           customer: o.customer_name || "Khách lẻ", phone: o.customer_phone || "",
           items: (o.items || []).map((i: any) => ({ productId: i.product_id, name: i.product_name || i.name || "", price: i.price || 0, qty: i.qty || i.quantity || 0 })),
-          total: o.amount || 0, discount: 0, finalTotal: o.amount || 0,
+          total: o.total || 0, discount: o.discount || 0, finalTotal: o.final_total || o.total || 0,
           paymentMethod: o.payment_method || "", note: o.note || "",
           status: o.status || "pending", createdBy: o.created_by || "",
           approvedAt: o.approved_at, approvedBy: o.approved_by,
@@ -146,11 +146,12 @@ export default function ApprovalPage() {
     .filter(o => o.status === "approved" || o.status === "exported")
     .reduce((s, o) => s + o.finalTotal, 0)
 
-  // Approve order → generate export slip
+  // Approve order → call API then generate export slip
   const handleApprove = async (order: SalesOrder) => {
     try {
-      await salesOrderApi.approve(order.id)
-    } catch {}
+      const res = await salesOrderApi.approve(order.id)
+      if (!res.success) { console.error("Approve failed:", res.error); return }
+    } catch (err) { console.error("Approve error:", err); return }
     const now = new Date()
     const slipId = `PXK-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${String(exportSlips.length + 1).padStart(3, "0")}`
 
@@ -194,8 +195,10 @@ export default function ApprovalPage() {
   }
 
   // Complete export slip → update order status to "exported"
-  const handleCompleteSlip = (slip: ExportSlip) => {
+  const handleCompleteSlip = async (slip: ExportSlip) => {
     const now = new Date()
+    // Call BE to mark order as exported
+    try { await salesOrderApi.complete(slip.orderId) } catch {}
 
     const updatedSlips = exportSlips.map(s =>
       s.id === slip.id

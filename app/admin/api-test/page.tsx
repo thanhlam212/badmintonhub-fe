@@ -23,7 +23,7 @@ const TomTomMap = dynamic<{ lat: number; lng: number; courtLat?: number; courtLn
 
 interface ApiResult {
   status: "idle" | "loading" | "success" | "error"
-  data: unknown
+  data: any
   time?: number
   statusCode?: number
 }

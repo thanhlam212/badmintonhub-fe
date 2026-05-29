@@ -63,19 +63,21 @@ const WAREHOUSE_NAMES: Record<number, string> = {
 }
 
 function apiUserToUser(apiUser: any): User {
+  // Handle cả camelCase (từ transformUser) lẫn snake_case (trực tiếp từ BE mapUser)
+  const warehouseId = apiUser.warehouseId ?? apiUser.warehouse_id ?? undefined
   return {
     id: apiUser.id,
     username: apiUser.username,
-    fullName: apiUser.fullName,
-    email: apiUser.email,
-    phone: apiUser.phone,
+    fullName: apiUser.fullName || apiUser.full_name || '',
+    email: apiUser.email || '',
+    phone: apiUser.phone || '',
     address: apiUser.address || undefined,
-    gender: apiUser.gender || undefined,
-    dateOfBirth: apiUser.dateOfBirth || undefined,
-    role: apiUser.role,
-    warehouseId: apiUser.warehouseId,
-    warehouse: apiUser.warehouseId ? WAREHOUSE_NAMES[apiUser.warehouseId] || undefined : undefined,
-    createdAt: apiUser.createdAt?.split("T")[0] || "",
+    gender: (apiUser.gender || undefined) as "nam" | "nữ" | undefined,
+    dateOfBirth: apiUser.dateOfBirth || apiUser.date_of_birth || undefined,
+    role: apiUser.role || 'user',
+    warehouseId: warehouseId ?? undefined,
+    warehouse: warehouseId ? WAREHOUSE_NAMES[warehouseId] || undefined : undefined,
+    createdAt: (apiUser.createdAt || apiUser.created_at)?.split("T")[0] || "",
   }
 }
 

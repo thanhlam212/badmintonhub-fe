@@ -145,7 +145,14 @@ export default function CheckinPage() {
         method: "POST",
         body: JSON.stringify({ bookingId: id }),
       })
-      setResult((data as any).booking)
+      if (!data.success) {
+        setErrorMsg(data.message || "Check-in thất bại")
+        setStatus("error")
+        return
+      }
+      // Response: { success: true, data: { booking: { camelCase fields } } }
+      const booking = (data.data as any)?.booking ?? null
+      setResult(booking)
       setStatus("success")
     } catch (err: any) {
       setErrorMsg(err?.message || "Check-in thất bại")

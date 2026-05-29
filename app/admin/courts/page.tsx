@@ -12,7 +12,7 @@ import { Switch } from "@/components/ui/switch"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from "@/components/ui/dialog"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip"
 import { formatVND, generateTimeSlots, getWeekDays, isSlotPast } from "@/lib/utils"
 import { branchApi, courtApi, bookingApi, ApiBooking, type ApiCourt } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -103,11 +103,11 @@ export default function AdminCourtsPage() {
   const weekKey = weekDays.map(d => d.label).join(",")
 
   // Build availability from API bookings
-  const [allBookings, setAllBookings] = useState<{bookingId: string; courtId: number; dateLabel: string; time: string; status: string; bookedBy?: string; phone?: string; bookingCode?: string}[]>([])
+  const [allBookings, setAllBookings] = useState<{bookingId: string; courtId: number; dateLabel: string; time: string; status: string; bookedBy?: string; placedBy?: string; placedByRole?: 'admin' | 'employee' | ''; phone?: string; bookingCode?: string}[]>([])
   useEffect(() => {
     bookingApi.getAll({ limit: 1000 }).then((res: any) => {
       const bookings = res.bookings || []
-      const slots: {bookingId: string; courtId: number; dateLabel: string; time: string; status: string; bookedBy?: string; phone?: string; bookingCode?: string}[] = []
+      const slots: {bookingId: string; courtId: number; dateLabel: string; time: string; status: string; bookedBy?: string; placedBy?: string; placedByRole?: 'admin' | 'employee' | ''; phone?: string; bookingCode?: string}[] = []
       for (const b of bookings) {
         if (!b.courtId || !b.timeStart || b.status === "cancelled") continue
         const start = parseInt(b.timeStart.split(":")[0])
@@ -122,6 +122,8 @@ export default function AdminCourtsPage() {
             time: `${h.toString().padStart(2, '0')}:00`,
             status: b.status === "hold" ? "hold" : "booked",
             bookedBy: b.customerName || "",
+            placedBy: b.placedBy || "",
+            placedByRole: (b.placedByRole || "") as 'admin' | 'employee' | '',
             phone: b.customerPhone || "",
             bookingCode: b.bookingCode || "",
           })
@@ -147,15 +149,13 @@ export default function AdminCourtsPage() {
 
   /* Admin click handler: toggle slot status */
   const handleAdminSlotClick = useCallback(async (courtId: number, dateLabel: string, time: string, currentStatus: string) => {
-    // Check if slot is past
     const parts = dateLabel.split("/")
     const slotDate = new Date(new Date().getFullYear(), parseInt(parts[1]) - 1, parseInt(parts[0]))
-    if (isSlotPast(dateLabel, time) && currentStatus === "available") {
+    if (isSlotPast(slotDate, time) && currentStatus === "available") {
       toast.error("Không thể đặt chỗ cho khung giờ đã qua")
       return
     }
     if (adminAction === "remove") {
-      // Remove mode: clicking a booked/hold slot → show confirmation to cancel
       if (currentStatus !== "available") {
         const matching = allBookings.find(b => b.courtId === courtId && b.dateLabel === dateLabel && b.time === time)
         if (matching) {
@@ -164,7 +164,6 @@ export default function AdminCourtsPage() {
       }
       return
     }
-    // Booked/Hold mode: clicking an existing booked/hold slot → show confirmation to cancel first
     if (currentStatus !== "available") {
       const matching = allBookings.find(b => b.courtId === courtId && b.dateLabel === dateLabel && b.time === time)
       if (matching) {
@@ -172,42 +171,30 @@ export default function AdminCourtsPage() {
       }
       return
     }
-    // Available slot → create booking directly
     try {
-      const parts = dateLabel.split("/")
-      const bookingDate = parts.length >= 2 ? `${new Date().getFullYear()}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}` : new Date().toISOString().split("T")[0]
+      const bookingDate = parts.length >= 2
+        ? `${new Date().getFullYear()}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`
+        : new Date().toISOString().split("T")[0]
       const result = await bookingApi.create({
-        courtId: courtId,        // ← đổi id → courtId
-        bookingDate: bookingDate, // ← booking_date → bookingDate (camelCase)
-        timeStart: time,          // ← time_start → timeStart
-        timeEnd: `${String(parseInt(time.split(":")[0]) + 1).padStart(2, "0")}:00`, // ← time_end → timeEnd
-        people: 1,                // ← slots → people
-        paymentMethod: "cash",    // ← thêm field bắt buộc
-        customerName: "Admin",    // ← customer_name → customerName
-        customerPhone: "0000000000", // ← customer_phone → customerPhone
+        court_id: courtId, booking_date: bookingDate,
+        time_start: time, time_end: `${String(parseInt(time.split(":")[0]) + 1).padStart(2, "0")}:00`,
+        slots: 1, customer_name: "Admin", customer_phone: "0000000000", amount: 0,
       })
-      if (result.success) {
-        toast.success("Đã đặt chỗ thành công")
-      } else {
-        toast.error(result.error || "Không thể đặt chỗ")
-      }
+      if (result.success) toast.success("Đã đặt chỗ thành công")
+      else toast.error(result.error || "Không thể đặt chỗ")
     } catch {
       toast.error("Lỗi khi đặt chỗ")
     }
     setBookingsVersion(v => v + 1)
   }, [adminAction, allBookings])
 
-  /* Confirm cancel/delete booking from slot */
   const handleConfirmCancelSlot = useCallback(async () => {
     if (!slotConfirm) return
     setSlotLoading(true)
     try {
       const res = await bookingApi.updateStatus(slotConfirm.bookingId, "cancelled")
-      if (res.success) {
-        toast.success("Đã hủy đặt chỗ thành công")
-      } else {
-        toast.error(res.error || "Không thể hủy đặt chỗ")
-      }
+      if (res.success) toast.success("Đã hủy đặt chỗ thành công")
+      else toast.error(res.error || "Không thể hủy đặt chỗ")
     } catch {
       toast.error("Lỗi khi hủy đặt chỗ")
     }
@@ -222,7 +209,6 @@ export default function AdminCourtsPage() {
   const premiumVip = courtsData.filter(c => c.type === "premium" || c.type === "vip").length
   const avgPrice = totalCourts > 0 ? Math.round(courtsData.reduce((s, c) => s + c.price, 0) / totalCourts) : 0
 
-  /* ─── Slot stats for selected court/week ─── */
   const slotStats = useMemo(() => {
     const s = { total: 0, available: 0, booked: 0, hold: 0 }
     if (!selectedCourt) return s
@@ -232,7 +218,7 @@ export default function AdminCourtsPage() {
       timeSlots.forEach(t => {
         s.total++
         const st = day[t] || "available"
-        s[st]++
+        s[st as keyof typeof s]++
       })
     })
     return s
@@ -249,23 +235,16 @@ export default function AdminCourtsPage() {
   const [editDesc, setEditDesc] = useState("")
 
   const openEdit = useCallback((court: Court) => {
-    setEditCourt(court)
-    setEditName(court.name)
-    setEditType(court.type)
-    setEditPrice(court.price)
-    setEditAvailable(court.available)
-    setEditIndoor(court.indoor)
-    setEditHours(court.hours)
-    setEditDesc(court.description)
-    setShowEdit(true)
+    setEditCourt(court); setEditName(court.name); setEditType(court.type)
+    setEditPrice(court.price); setEditAvailable(court.available); setEditIndoor(court.indoor)
+    setEditHours(court.hours); setEditDesc(court.description); setShowEdit(true)
   }, [])
 
   const handleSaveEdit = () => {
     if (!editCourt) return
-    persist(courtsData.map(c => c.id === editCourt.id ? {
-      ...c, name: editName, type: editType, price: editPrice,
-      available: editAvailable, indoor: editIndoor, hours: editHours, description: editDesc,
-    } : c))
+    persist(courtsData.map(c => c.id === editCourt.id
+      ? { ...c, name: editName, type: editType, price: editPrice, available: editAvailable, indoor: editIndoor, hours: editHours, description: editDesc }
+      : c))
     setShowEdit(false)
   }
 
@@ -302,11 +281,10 @@ export default function AdminCourtsPage() {
         ))}
       </div>
 
-      {/* ─── Combo-box Filters ─── */}
+      {/* ─── Filters ─── */}
       <Card className="mb-6">
         <CardContent className="p-4">
           <div className="flex flex-wrap items-end gap-4">
-            {/* Branch combo */}
             <div className="w-[220px]">
               <Label className="text-xs text-muted-foreground mb-1 block">Chi nhánh</Label>
               <Select value={branchFilter} onValueChange={setBranchFilter}>
@@ -317,7 +295,6 @@ export default function AdminCourtsPage() {
                 </SelectContent>
               </Select>
             </div>
-            {/* Type combo */}
             <div className="w-[160px]">
               <Label className="text-xs text-muted-foreground mb-1 block">Loại sân</Label>
               <Select value={typeFilter} onValueChange={setTypeFilter}>
@@ -330,24 +307,16 @@ export default function AdminCourtsPage() {
                 </SelectContent>
               </Select>
             </div>
-            {/* Court combo */}
             <div className="flex-1 min-w-[220px]">
               <Label className="text-xs text-muted-foreground mb-1 block">Chọn sân</Label>
-              <Select
-                value={selectedCourtId?.toString() || ""}
-                onValueChange={(v) => setSelectedCourtId(parseInt(v))}
-              >
-                <SelectTrigger className="h-9">
-                  <SelectValue placeholder="Chọn sân..." />
-                </SelectTrigger>
+              <Select value={selectedCourtId?.toString() || ""} onValueChange={(v) => setSelectedCourtId(parseInt(v))}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Chọn sân..." /></SelectTrigger>
                 <SelectContent>
                   {filteredCourts.map(c => (
                     <SelectItem key={c.id} value={c.id.toString()}>
                       <span className="flex items-center gap-2">
                         {c.name}
-                        <span className="text-muted-foreground text-xs">
-                          — {c.branch.replace("BadmintonHub ", "")}
-                        </span>
+                        <span className="text-muted-foreground text-xs">— {c.branch.replace("BadmintonHub ", "")}</span>
                         {!c.available && <XCircle className="h-3 w-3 text-red-500" />}
                       </span>
                     </SelectItem>
@@ -355,7 +324,6 @@ export default function AdminCourtsPage() {
                 </SelectContent>
               </Select>
             </div>
-            {/* Actions */}
             {selectedCourt && (
               <div className="flex items-center gap-2">
                 <Button variant="outline" size="sm" className="h-9" onClick={() => openEdit(selectedCourt)}>
@@ -370,7 +338,9 @@ export default function AdminCourtsPage() {
                       : "bg-red-50 text-red-700 border-red-200 hover:bg-red-100"
                   )}
                 >
-                  {selectedCourt.available ? <><CheckCircle2 className="h-3.5 w-3.5" /> Hoạt động</> : <><XCircle className="h-3.5 w-3.5" /> Tạm đóng</>}
+                  {selectedCourt.available
+                    ? <><CheckCircle2 className="h-3.5 w-3.5" /> Hoạt động</>
+                    : <><XCircle className="h-3.5 w-3.5" /> Tạm đóng</>}
                 </button>
               </div>
             )}
@@ -400,18 +370,16 @@ export default function AdminCourtsPage() {
       {/* ─── Slot statistics strip ─── */}
       {selectedCourt && (
         <div className="flex flex-wrap gap-3 mb-4">
-          <Badge variant="outline" className="gap-1.5 py-1 px-2.5 text-xs bg-muted/50">
-            <CalendarDays className="h-3.5 w-3.5" /> Tổng slot: <strong>{slotStats.total}</strong>
-          </Badge>
-          <Badge variant="outline" className="gap-1.5 py-1 px-2.5 text-xs bg-green-50 text-green-700 border-green-200">
-            <Check className="h-3.5 w-3.5" /> Trống: <strong>{slotStats.available}</strong>
-          </Badge>
-          <Badge variant="outline" className="gap-1.5 py-1 px-2.5 text-xs bg-red-50 text-red-700 border-red-200">
-            <Lock className="h-3.5 w-3.5" /> Đã đặt: <strong>{slotStats.booked}</strong>
-          </Badge>
-          <Badge variant="outline" className="gap-1.5 py-1 px-2.5 text-xs bg-amber-50 text-amber-700 border-amber-200">
-            <Users className="h-3.5 w-3.5" /> Giữ chỗ: <strong>{slotStats.hold}</strong>
-          </Badge>
+          {[
+            { label: "Tổng slot", value: slotStats.total, cls: "bg-muted/50", icon: <CalendarDays className="h-3.5 w-3.5" /> },
+            { label: "Trống", value: slotStats.available, cls: "bg-green-50 text-green-700 border-green-200", icon: <Check className="h-3.5 w-3.5" /> },
+            { label: "Đã đặt", value: slotStats.booked, cls: "bg-red-50 text-red-700 border-red-200", icon: <Lock className="h-3.5 w-3.5" /> },
+            { label: "Giữ chỗ", value: slotStats.hold, cls: "bg-amber-50 text-amber-700 border-amber-200", icon: <Users className="h-3.5 w-3.5" /> },
+          ].map(s => (
+            <Badge key={s.label} variant="outline" className={cn("gap-1.5 py-1 px-2.5 text-xs", s.cls)}>
+              {s.icon} {s.label}: <strong>{s.value}</strong>
+            </Badge>
+          ))}
           <span className="text-xs text-muted-foreground ml-auto self-center">
             Tỉ lệ lấp đầy: <strong>{slotStats.total ? Math.round(((slotStats.booked + slotStats.hold) / slotStats.total) * 100) : 0}%</strong>
           </span>
@@ -427,11 +395,7 @@ export default function AdminCourtsPage() {
                 <CalendarDays className="h-5 w-5 text-primary" /> Lịch đặt sân
               </CardTitle>
               <div className="flex items-center gap-2">
-                <Button
-                  variant="outline" size="icon" className="h-8 w-8"
-                  onClick={() => setWeekOffset(Math.max(0, weekOffset - 1))}
-                  disabled={weekOffset === 0}
-                >
+                <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setWeekOffset(Math.max(0, weekOffset - 1))} disabled={weekOffset === 0}>
                   <ChevronLeft className="h-4 w-4" />
                 </Button>
                 <span className="text-sm font-medium min-w-[140px] text-center">
@@ -442,12 +406,11 @@ export default function AdminCourtsPage() {
                 </Button>
               </div>
             </div>
-            {/* Legend + Admin action */}
             <div className="flex flex-wrap items-center gap-4 mt-2">
-              <span className="flex items-center gap-1.5 text-xs"><span className="h-3 w-3 rounded bg-court-available" /> Trống</span>
-              <span className="flex items-center gap-1.5 text-xs"><span className="h-3 w-3 rounded bg-court-booked" /> Đã đặt</span>
-              <span className="flex items-center gap-1.5 text-xs"><span className="h-3 w-3 rounded bg-court-hold" /> Giữ chỗ</span>
-              <span className="flex items-center gap-1.5 text-xs"><span className="h-3 w-3 rounded bg-court-past" /> Đã qua</span>
+              <span className="flex items-center gap-1.5 text-xs"><span className="h-3 w-3 rounded bg-green-100" /> Trống</span>
+              <span className="flex items-center gap-1.5 text-xs"><span className="h-3 w-3 rounded bg-red-100" /> Đã đặt</span>
+              <span className="flex items-center gap-1.5 text-xs"><span className="h-3 w-3 rounded bg-amber-100" /> Giữ chỗ</span>
+              <span className="flex items-center gap-1.5 text-xs"><span className="h-3 w-3 rounded bg-slate-100" /> Đã qua</span>
               <span className="border-l pl-4 ml-2 flex items-center gap-2">
                 <span className="text-xs text-muted-foreground">Click ô:</span>
                 <Select value={adminAction} onValueChange={(v: "booked" | "hold" | "remove") => setAdminAction(v)}>
@@ -464,7 +427,6 @@ export default function AdminCourtsPage() {
           <CardContent className="p-0 pb-4">
             <div className="overflow-x-auto px-4">
               <div className="min-w-[700px]">
-                {/* Day headers */}
                 <div className="grid grid-cols-[56px_repeat(7,1fr)] gap-1 mb-1 sticky top-0 bg-background z-10 pb-1 border-b">
                   <div className="text-center text-[10px] text-muted-foreground font-medium py-1">Giờ</div>
                   {weekDays.map(d => (
@@ -474,69 +436,57 @@ export default function AdminCourtsPage() {
                     </div>
                   ))}
                 </div>
-                {/* Rows */}
-                {timeSlots.map(time => (
-                  <div key={time} className="grid grid-cols-[56px_repeat(7,1fr)] gap-1 mb-[3px]">
-                    <div className="text-[11px] text-muted-foreground flex items-center justify-end pr-2 font-mono">{time}</div>
-                    {weekDays.map(d => {
-                      const status = courtAvailability[d.label]?.[time] || "available"
-                      const past = isSlotPast(d.label, time)
-                      const bookingEntry = (status === "booked" || status === "hold")
-                        ? allBookings.find(b => b.courtId === selectedCourt!.id && b.dateLabel === d.label && b.time === time)
-                        : null
-                      if (past && status === "available") {
-                        return (
-                          <div
+                <TooltipProvider>
+                  {timeSlots.map(time => (
+                    <div key={time} className="grid grid-cols-[56px_repeat(7,1fr)] gap-1 mb-[3px]">
+                      <div className="text-[11px] text-muted-foreground flex items-center justify-end pr-2 font-mono">{time}</div>
+                      {weekDays.map(d => {
+                        const status = courtAvailability[d.label]?.[time] || "available"
+                        const past = isSlotPast(d.date, time)
+                        const bookingEntry = (status === "booked" || status === "hold")
+                          ? allBookings.find(b => b.courtId === selectedCourt!.id && b.dateLabel === d.label && b.time === time)
+                          : null
+
+                        const slotBtn = (
+                          <button
                             key={`${d.label}-${time}`}
-                            className="h-8 w-full rounded-[4px] flex items-center justify-center text-[10px] font-medium bg-court-past text-slate-400 cursor-not-allowed select-none"
+                            onClick={() => !past && selectedCourt && handleAdminSlotClick(selectedCourt.id, d.label, time, status)}
+                            disabled={past && status === "available"}
+                            className={cn(
+                              "h-8 w-full rounded-[4px] flex items-center justify-center text-[10px] font-medium transition-colors select-none",
+                              past ? "bg-slate-100 text-slate-400 cursor-not-allowed" : status === "available" ? "bg-green-100 text-green-700 hover:bg-green-200 cursor-pointer" : "",
+                              !past && status === "booked" && "bg-red-100 text-red-600 hover:bg-red-200 cursor-pointer",
+                              !past && status === "hold" && "bg-amber-100 text-amber-700 hover:bg-amber-200 cursor-pointer",
+                              past && status === "booked" && "bg-red-50 text-red-400 cursor-not-allowed",
+                              past && status === "hold" && "bg-amber-50 text-amber-500 cursor-not-allowed",
+                            )}
                           >
-                            <Lock className="h-3 w-3" />
-                          </div>
+                            {past && status === "available" ? <Lock className="h-3 w-3" /> : status === "booked" ? "Đã đặt" : status === "hold" ? "Giữ chỗ" : ""}
+                          </button>
                         )
-                      }
-                      const slotBtn = (
-                        <button
-                          key={`${d.label}-${time}`}
-                          onClick={() => !past && selectedCourt && handleAdminSlotClick(selectedCourt.id, d.label, time, status)}
-                          disabled={past && status === "available"}
-                          className={cn(
-                            "h-8 w-full rounded-[4px] flex items-center justify-center text-[10px] font-medium transition-colors select-none",
-                            past
-                              ? "bg-court-past text-slate-400 cursor-not-allowed"
-                              : status === "available" ? "bg-court-available text-green-700 hover:bg-green-200 cursor-pointer" : "",
-                            !past && status === "booked" && "bg-court-booked text-red-600 hover:bg-red-200 cursor-pointer",
-                            !past && status === "hold" && "bg-court-hold text-amber-700 hover:bg-amber-200 cursor-pointer",
-                            past && status === "booked" && "bg-court-booked/60 text-red-400 cursor-not-allowed",
-                            past && status === "hold" && "bg-court-hold/60 text-amber-500 cursor-not-allowed",
-                          )}
-                        >
-                          {status === "booked" ? "Đã đặt" : status === "hold" ? "Giữ chỗ" : ""}
-                        </button>
-                      )
-                      if (bookingEntry && (bookingEntry.bookedBy || bookingEntry.phone)) {
-                        return (
-                          <Tooltip key={`${d.label}-${time}`}>
-                            <TooltipTrigger asChild>
-                              {slotBtn}
-                            </TooltipTrigger>
-                            <TooltipContent side="top" className="bg-foreground text-background rounded-lg px-3 py-2 text-xs shadow-lg max-w-[200px]">
-                              <div className="space-y-0.5">
-                                {bookingEntry.bookedBy && (
-                                  <p className="font-semibold">{bookingEntry.bookedBy}</p>
-                                )}
-                                {bookingEntry.phone && (
-                                  <p className="text-background/80">📞 {bookingEntry.phone}</p>
-                                )}
-                                <p className="text-background/60 text-[10px]">{d.dayName} {d.label} • {time}</p>
-                              </div>
-                            </TooltipContent>
-                          </Tooltip>
-                        )
-                      }
-                      return slotBtn
-                    })}
-                  </div>
-                ))}
+
+                        if (bookingEntry && (bookingEntry.bookedBy || bookingEntry.phone)) {
+                          return (
+                            <Tooltip key={`${d.label}-${time}`}>
+                              <TooltipTrigger asChild>{slotBtn}</TooltipTrigger>
+                              <TooltipContent side="top" className="text-xs max-w-[200px]">
+                                <div className="space-y-0.5">
+                                  {bookingEntry.bookedBy && <p className="font-semibold">{bookingEntry.bookedBy}</p>}
+                                  <p className={cn("opacity-80", bookingEntry.placedByRole === "admin" && "text-sky-500", bookingEntry.placedByRole === "employee" && "text-amber-500")}>
+                                    Đặt bởi: {bookingEntry.placedBy || "Khách"}
+                                  </p>
+                                  {bookingEntry.phone && <p className="opacity-80">📞 {bookingEntry.phone}</p>}
+                                  <p className="opacity-60 text-[10px]">{d.dayName} {d.label} • {time}</p>
+                                </div>
+                              </TooltipContent>
+                            </Tooltip>
+                          )
+                        }
+                        return <div key={`${d.label}-${time}`}>{slotBtn}</div>
+                      })}
+                    </div>
+                  ))}
+                </TooltipProvider>
               </div>
             </div>
           </CardContent>
@@ -561,10 +511,7 @@ export default function AdminCourtsPage() {
           {filteredCourts.map(court => (
             <Card
               key={court.id}
-              className={cn(
-                "cursor-pointer transition-all hover:-translate-y-0.5",
-                selectedCourtId === court.id && "ring-2 ring-primary shadow-md"
-              )}
+              className={cn("cursor-pointer transition-all hover:-translate-y-0.5", selectedCourtId === court.id && "ring-2 ring-primary shadow-md")}
               onClick={() => setSelectedCourtId(court.id)}
             >
               <CardContent className="p-4">
@@ -590,16 +537,11 @@ export default function AdminCourtsPage() {
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                   <span>{court.branch.replace("BadmintonHub ", "")}</span>
                   <span className="font-semibold text-primary">{formatVND(court.price)}/h</span>
-                  <span className="flex items-center gap-0.5">
-                    <Star className="h-3 w-3 text-amber-500 fill-amber-500" /> {court.rating}
-                  </span>
+                  <span className="flex items-center gap-0.5"><Star className="h-3 w-3 text-amber-500 fill-amber-500" /> {court.rating}</span>
                   {court.indoor
                     ? <Badge variant="outline" className="text-[9px] py-0 h-4 bg-sky-50 text-sky-600 border-sky-200">Indoor</Badge>
                     : <Badge variant="outline" className="text-[9px] py-0 h-4 bg-orange-50 text-orange-600 border-orange-200">Outdoor</Badge>}
-                  <span className={cn(
-                    "ml-auto inline-flex items-center gap-1 text-[10px] font-medium",
-                    court.available ? "text-green-600" : "text-red-500"
-                  )}>
+                  <span className={cn("ml-auto inline-flex items-center gap-1 text-[10px] font-medium", court.available ? "text-green-600" : "text-red-500")}>
                     {court.available ? <><CheckCircle2 className="h-3 w-3" /> Hoạt động</> : <><XCircle className="h-3 w-3" /> Tạm đóng</>}
                   </span>
                 </div>
@@ -612,9 +554,7 @@ export default function AdminCourtsPage() {
       {/* ─── Edit Dialog ─── */}
       <Dialog open={showEdit} onOpenChange={setShowEdit}>
         <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="font-serif">Chỉnh sửa sân</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle className="font-serif">Chỉnh sửa sân</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div>
               <Label className="text-sm">Tên sân</Label>
@@ -663,13 +603,12 @@ export default function AdminCourtsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Confirm cancel/delete booking dialog */}
+      {/* ─── Confirm cancel booking ─── */}
       <AlertDialog open={!!slotConfirm} onOpenChange={open => { if (!open) setSlotConfirm(null) }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
-              <Trash2 className="h-5 w-5 text-destructive" />
-              Hủy đặt chỗ
+              <Trash2 className="h-5 w-5 text-destructive" /> Hủy đặt chỗ
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2">
@@ -694,7 +633,6 @@ export default function AdminCourtsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
     </div>
   )
 }
@@ -703,9 +641,7 @@ export default function AdminCourtsPage() {
 function CourtDetailSheet({ court }: { court: Court }) {
   return (
     <SheetContent className="w-full sm:max-w-[480px] overflow-y-auto">
-      <SheetHeader>
-        <SheetTitle className="font-serif">Chi tiết sân</SheetTitle>
-      </SheetHeader>
+      <SheetHeader><SheetTitle className="font-serif">Chi tiết sân</SheetTitle></SheetHeader>
       <div className="mt-6 space-y-4">
         <div className="flex items-center justify-between">
           <div>
@@ -716,38 +652,25 @@ function CourtDetailSheet({ court }: { court: Court }) {
         </div>
         <Card>
           <CardContent className="p-4 space-y-2">
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Giá / giờ</span>
-              <span className="font-bold text-primary">{formatVND(court.price)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Loại</span>
-              <span>{court.indoor ? "Indoor" : "Outdoor"}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Giờ mở cửa</span>
-              <span>{court.hours}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Đánh giá</span>
-              <span className="flex items-center gap-1">
-                <Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />{court.rating} ({court.reviews} reviews)
-              </span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Trạng thái</span>
-              <span className={court.available ? "text-green-600" : "text-red-600"}>
-                {court.available ? "Hoạt động" : "Tạm đóng"}
-              </span>
-            </div>
+            {[
+              { label: "Giá / giờ", value: <span className="font-bold text-primary">{formatVND(court.price)}</span> },
+              { label: "Loại", value: court.indoor ? "Indoor" : "Outdoor" },
+              { label: "Giờ mở cửa", value: court.hours },
+              { label: "Đánh giá", value: <span className="flex items-center gap-1"><Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />{court.rating} ({court.reviews})</span> },
+              { label: "Trạng thái", value: <span className={court.available ? "text-green-600" : "text-red-600"}>{court.available ? "Hoạt động" : "Tạm đóng"}</span> },
+            ].map(r => (
+              <div key={r.label} className="flex justify-between text-sm">
+                <span className="text-muted-foreground">{r.label}</span>
+                <span>{r.value}</span>
+              </div>
+            ))}
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm">Địa chỉ</CardTitle></CardHeader>
           <CardContent className="p-4 pt-0">
             <div className="flex items-start gap-2 text-sm text-muted-foreground">
-              <MapPin className="h-4 w-4 shrink-0 mt-0.5" />
-              {court.address}
+              <MapPin className="h-4 w-4 shrink-0 mt-0.5" />{court.address}
             </div>
           </CardContent>
         </Card>

@@ -246,8 +246,6 @@ function CourtCardSkeleton() {
 }
 
 function CourtCard({ court, index = 0 }: { court: ApiCourt; index?: number }) {
-  const slotStatuses = ['available', 'available', 'booked', 'available', 'hold', 'booked'] as const
-  const slotTimes = ['06:00', '07:00', '08:00', '14:00', '17:00', '19:00']
   const ref = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(false)
 
@@ -274,13 +272,25 @@ function CourtCard({ court, index = 0 }: { court: ApiCourt; index?: number }) {
     >
       <Link href={`/courts/${court.id}`}>
         <Card className="group overflow-hidden hover:-translate-y-1.5 transition-all duration-300 hover:shadow-xl cursor-pointer">
-          <div className="relative aspect-video bg-gradient-to-br from-secondary/20 to-secondary/5 flex items-center justify-center overflow-hidden">
-            <div className="text-center text-secondary/25 font-serif font-bold text-2xl group-hover:scale-110 transition-transform duration-500">
-              {court.name.split(' - ')[0]}
+          <div className="relative aspect-video overflow-hidden bg-gradient-to-br from-[#0A2416] via-[#0F3D2A] to-[#1A5C35]">
+            {/* Court lines decoration */}
+            <div className="absolute inset-0 flex items-center justify-center opacity-20">
+              <div className="w-4/5 h-4/5 border-2 border-white/60 relative">
+                <div className="absolute inset-x-0 top-1/2 h-px bg-white/60" />
+                <div className="absolute inset-y-0 left-1/2 w-px bg-white/30" />
+                <div className="absolute top-1/4 left-0 right-0 h-px bg-white/30" />
+                <div className="absolute bottom-1/4 left-0 right-0 h-px bg-white/30" />
+              </div>
+            </div>
+            {/* Court name */}
+            <div className="absolute inset-0 flex items-center justify-center">
+              <p className="text-white/70 font-serif font-bold text-xl text-center px-4 drop-shadow-lg group-hover:scale-110 transition-transform duration-500">
+                {court.name.split(' - ')[0]}
+              </p>
             </div>
             {/* Hover overlay */}
-            <div className="absolute inset-0 bg-foreground/0 group-hover:bg-foreground/40 transition-colors duration-300 flex items-center justify-center">
-              <span className="flex items-center gap-2 text-white font-semibold opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-2 group-hover:translate-y-0">
+            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors duration-300 flex items-center justify-center">
+              <span className="flex items-center gap-2 text-white font-semibold opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-2 group-hover:translate-y-0 bg-primary/80 px-4 py-2 rounded-full text-sm">
                 Xem lịch <ChevronRight className="h-4 w-4" />
               </span>
             </div>
@@ -315,32 +325,19 @@ function CourtCard({ court, index = 0 }: { court: ApiCourt; index?: number }) {
               </div>
             </div>
 
-            {/* Slot pills */}
-            <div className="mt-3 flex flex-wrap gap-1">
-              {slotTimes.map((t, i) => (
-                <span key={t} className={cn(
-                  "text-[10px] px-2 py-0.5 rounded-full font-medium border",
-                  slotStatuses[i] === 'available'
-                    ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:border-green-800"
-                    : slotStatuses[i] === 'booked'
-                    ? "bg-red-50 text-red-600 border-red-200 dark:bg-red-900/20 dark:border-red-800"
-                    : "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:border-amber-800"
-                )}>
-                  {t}
-                </span>
-              ))}
-            </div>
-
             <div className="mt-3 flex items-center justify-between">
               <span className="font-serif font-bold text-primary">
                 {formatVND(court.price)}<span className="text-xs text-muted-foreground font-normal">/h</span>
               </span>
-              {court.available && (
-                <span className="flex items-center gap-1.5 text-xs text-green-600 font-medium">
-                  <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-                  Còn trống
-                </span>
-              )}
+              <span className="flex items-center gap-1.5 text-xs text-green-600 font-medium">
+                <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+                Còn trống hôm nay
+              </span>
+            </div>
+            <div className="mt-3">
+              <span className="inline-flex items-center w-full justify-center rounded-lg bg-primary/5 border border-primary/20 text-primary text-xs font-semibold py-1.5 group-hover:bg-primary group-hover:text-primary-foreground transition-colors duration-200">
+                Xem lịch &amp; đặt sân
+              </span>
             </div>
           </CardContent>
         </Card>

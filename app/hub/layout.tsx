@@ -12,6 +12,7 @@ import {
 import { cn } from "@/lib/utils"
 import { RouteGuard } from "@/components/route-guard"
 import { useAuth } from "@/lib/auth-context"
+import { InventoryProvider } from "@/lib/inventory-context"
 
 const navGroups = [
   {
@@ -158,18 +159,20 @@ export default function HubLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <RouteGuard requiredRole="employee">
-      <div className="min-h-screen bg-background">
-        <HubSidebar collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
-        <HubTopbar collapsed={collapsed} onMobileMenu={() => { }} />
-        <main className={cn(
-          "pt-16 min-h-screen transition-all duration-300",
-          collapsed ? "ml-16" : "ml-64"
-        )}>
-          <div className="p-6">
-            {children}
-          </div>
-        </main>
-      </div>
+      <InventoryProvider>
+        <div className="min-h-screen bg-background">
+          <HubSidebar collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
+          <HubTopbar collapsed={collapsed} onMobileMenu={() => { }} />
+          <main className={cn(
+            "pt-16 min-h-screen transition-all duration-300",
+            collapsed ? "ml-16" : "ml-64"
+          )}>
+            <div className="p-6">
+              {children}
+            </div>
+          </main>
+        </div>
+      </InventoryProvider>
     </RouteGuard>
   )
 }

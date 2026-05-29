@@ -54,9 +54,9 @@ function getPOStep(status: string) {
 const ALL_WAREHOUSES = ["Kho Hub", "Kho Cầu Giấy", "Kho Thanh Xuân", "Kho Long Biên"]
 
 // ── PO Detail Sheet ────────────────────────────────────────────────────────
-function PODetailSheet({ po, onUpdateStatus }: { po: PurchaseOrder; onUpdateStatus: (id: string, status: string) => void }) {
+function PODetailSheet({ po, suppliers, onUpdateStatus }: { po: PurchaseOrder; suppliers: any[]; onUpdateStatus: (id: string, status: string) => void }) {
   const step = getPOStep(po.status)
-  const supplier = suppliers.find(s => s.name === po.supplier)
+  const supplier = suppliers.find((s: any) => s.name === po.supplier)
   const safeItems = Array.isArray(po.items) ? po.items : []
   const subtotal = safeItems.reduce((s, i) => s + i.qty * i.unitCost, 0)
   const vat = subtotal * 0.08
@@ -683,7 +683,7 @@ export default function AdminPurchaseOrders() {
                           <Eye className="h-3.5 w-3.5" />
                         </Button>
                       </SheetTrigger>
-                      <PODetailSheet po={po} onUpdateStatus={handleUpdateStatus} />
+                      <PODetailSheet po={po} suppliers={suppliers} onUpdateStatus={handleUpdateStatus} />
                     </Sheet>
                   </TableCell>
                 </TableRow>

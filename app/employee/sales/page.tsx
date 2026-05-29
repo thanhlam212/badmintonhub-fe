@@ -366,7 +366,12 @@ export default function EmployeeSales() {
       customer_name: customerName || "Khách lẻ",
       customer_phone: customerPhone || undefined,
       note: note || undefined,
-      items: cart.map(c => ({ sku: String(c.productId), quantity: c.qty, price: c.price })),
+      items: cart.map(c => ({
+        product_id: c.productId > 0 ? c.productId : undefined,
+        product_name: c.name,
+        price: c.price,
+        quantity: c.qty,
+      })),
     }).catch(() => {})
 
     setSalesHistory(prev => [sale, ...prev])
