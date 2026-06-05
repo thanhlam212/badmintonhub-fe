@@ -21,7 +21,7 @@ import {
 
 const supplierPOs = [
   {
-    id: "PO-2026-004", status: "pending", createdDate: "2026-02-20",
+    id: "PO-20260220-0004", status: "pending", createdDate: "2026-02-20",
     totalValue: 56000000, items: [
       { name: "Vot Yonex Astrox 88D Pro", qty: 10, unitCost: 3200000 },
       { name: "Cuoc Yonex BG65", qty: 100, unitCost: 85000 },
@@ -32,7 +32,7 @@ const supplierPOs = [
     notes: "Ưu tiên giao hàng trước ngày 05/03. Liên hệ trước khi giao.",
   },
   {
-    id: "PO-2026-002", status: "in-transit", createdDate: "2026-02-10",
+    id: "PO-20260210-0002", status: "in-transit", createdDate: "2026-02-10",
     totalValue: 32000000, items: [
       { name: "Vot Victor Thruster K 9900", qty: 8, unitCost: 2700000 },
       { name: "Tui vot Lining ABJT059", qty: 10, unitCost: 620000 },
@@ -40,12 +40,12 @@ const supplierPOs = [
     buyer: "BadmintonHub",
     deliveryDate: "2026-02-28",
     notes: "",
-    tracking: "VN-2026-88432",
+    tracking: "VD-20260210-8843",
     carrier: "Giao hàng nhanh",
     batch: "BATCH-VCT-2026-02",
   },
   {
-    id: "PO-2026-001", status: "delivered", createdDate: "2026-02-01",
+    id: "PO-20260201-0001", status: "delivered", createdDate: "2026-02-01",
     totalValue: 48000000, items: [
       { name: "Vot Yonex Astrox 88D Pro", qty: 15, unitCost: 3200000 },
     ],
@@ -84,7 +84,7 @@ function DeliveryUpdateDialog() {
           </div>
           <div>
             <Label className="text-sm">Mã vận đơn</Label>
-            <Input className="mt-1" placeholder="VN-2026-XXXXX" />
+            <Input className="mt-1" placeholder="VD-YYYYMMDD-XXXX" />
           </div>
           <div>
             <Label className="text-sm">Tài liệu đính kèm</Label>

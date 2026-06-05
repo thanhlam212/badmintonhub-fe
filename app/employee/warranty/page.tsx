@@ -12,7 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { salesOrderApi } from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
-import { cn } from "@/lib/utils"
+import { cn, formatSalesOrderReference } from "@/lib/utils"
 import { Search, ShieldCheck, Clock, CheckCircle2, XCircle, Wrench } from "lucide-react"
 
 type WarrantyCaseStatus = "new" | "processing" | "resolved" | "rejected" | "expired"
@@ -246,7 +246,7 @@ export default function EmployeeWarrantyPage() {
           phone,
           issuedAt,
           expiresAt,
-          orderCode: String(slip?.orderCode || order?.sales_code || order?.id || slip?.orderId || ""),
+          orderCode: formatSalesOrderReference(slip?.orderCode || order?.sales_code || order?.orderCode || order?.order_code || order?.invoiceCode || order?.invoice_code || order?.code || order?.id || slip?.orderId || "", order?.created_at || order?.createdAt || slip?.date || today),
           slipId: String(slip?.id || ""),
           status: savedState?.status || baseStatus,
           note: savedState?.note || "",

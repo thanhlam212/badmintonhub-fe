@@ -13,8 +13,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { POStatusBadge } from "@/components/shared"
-import { formatVND } from "@/lib/utils"
-import { purchaseOrderApi } from "@/lib/api"
+import { formatPOReference, formatVND } from "@/lib/utils"
+import { inventoryApi, purchaseOrderApi } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import {
   Search, Plus, Eye, FileText, Truck, Package, Clock,
@@ -26,8 +26,9 @@ import { useInventory } from "@/lib/inventory-context"
 // ── Types ──────────────────────────────────────────────────────────────────
 interface POItemData { sku: string; name: string; qty: number; unitCost: number }
 interface PurchaseOrder {
-  id: string; supplier: string; status: string; createdDate: string;
+  id: string; code: string; supplier: string; status: string; createdDate: string;
   totalValue: number; items: POItemData[]; warehouse: string; note: string;
+  warehouseId?: number;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -42,16 +43,40 @@ const poStepperSteps = [
 function getPOStep(status: string) {
   switch (status) {
     case "draft": return 0
-    case "pending": return 1
+    case "sent": return 1
     case "confirmed": return 2
-    case "in-transit": return 3
-    case "delivered": return 4
+    case "shipping": return 3
+    case "received": return 4
     case "cancelled": return -1
     default: return 0
   }
 }
 
 const ALL_WAREHOUSES = ["Kho Hub", "Kho Cầu Giấy", "Kho Thanh Xuân", "Kho Long Biên"]
+
+function mapPurchaseOrder(p: any): PurchaseOrder {
+  const rawId = String(p.id || "")
+  const createdAt = p.createdAt || p.created_at || null
+  const items = p.items || p.po_items || []
+
+  return {
+    id: rawId,
+    code: formatPOReference(p.poCode || p.po_code || p.orderCode || p.order_code || rawId, createdAt),
+    supplier: p.supplierName || p.supplier_name || p.supplier || "",
+    status: p.status || "draft",
+    createdDate: createdAt ? new Date(createdAt).toISOString().split("T")[0] : "",
+    totalValue: Number(p.totalValue ?? p.total_value ?? 0),
+    items: items.map((i: any) => ({
+      sku: i.sku,
+      name: i.name || i.product_name || "",
+      qty: i.qty || i.quantity || 0,
+      unitCost: i.unitCost || i.unit_cost || i.price || 0,
+    })),
+    warehouse: p.warehouseName || p.warehouse_name || p.warehouse || "Kho Hub",
+    warehouseId: p.warehouseId ?? p.warehouse_id,
+    note: p.note || "",
+  }
+}
 
 // ── PO Detail Sheet ────────────────────────────────────────────────────────
 function PODetailSheet({ po, suppliers, onUpdateStatus }: { po: PurchaseOrder; suppliers: any[]; onUpdateStatus: (id: string, status: string) => void }) {
@@ -61,8 +86,26 @@ function PODetailSheet({ po, suppliers, onUpdateStatus }: { po: PurchaseOrder; s
   const subtotal = safeItems.reduce((s, i) => s + i.qty * i.unitCost, 0)
   const vat = subtotal * 0.08
   const total = subtotal + vat
-  const [receiveWarehouse, setReceiveWarehouse] = useState(po.warehouse || "Kho Hub")
-  const { createAdminSlip } = useInventory()
+  const { adminSlips, createAdminSlip } = useInventory()
+  const poImportSlip = adminSlips.find(s => s.type === "import" && (s.poRawId === po.id || s.poId === po.code))
+
+  const handleCreateImportSlip = () => {
+    if (poImportSlip) return
+    createAdminSlip({
+      type: "import",
+      source: "admin",
+      poId: po.code,
+      poRawId: po.id,
+      supplier: po.supplier,
+      date: new Date().toISOString().split("T")[0],
+      warehouse: po.warehouse,
+      items: safeItems.map(i => ({ sku: i.sku, name: i.name, qty: i.qty, unitCost: i.unitCost })),
+      note: `Nhap kho theo PO ${po.code} - ${po.supplier}`,
+      status: "pending",
+      createdBy: "Admin",
+      assignedTo: po.warehouse,
+    })
+  }
 
   return (
     <SheetContent className="w-full sm:max-w-[540px] overflow-y-auto">
@@ -74,7 +117,7 @@ function PODetailSheet({ po, suppliers, onUpdateStatus }: { po: PurchaseOrder; s
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <p className="font-mono text-sm text-primary font-semibold">{po.id}</p>
+            <p className="font-mono text-sm text-primary font-semibold">{po.code}</p>
             <p className="text-muted-foreground text-sm mt-0.5">{po.supplier}</p>
           </div>
           <POStatusBadge status={po.status} />
@@ -190,12 +233,12 @@ function PODetailSheet({ po, suppliers, onUpdateStatus }: { po: PurchaseOrder; s
               <Button variant="outline" className="flex-1" onClick={() => onUpdateStatus(po.id, "cancelled")}>
                 <XCircle className="h-4 w-4 mr-1" /> Huỷ
               </Button>
-              <Button className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground" onClick={() => onUpdateStatus(po.id, "pending")}>
+              <Button className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground" onClick={() => onUpdateStatus(po.id, "sent")}>
                 <Send className="h-4 w-4 mr-1" /> Gửi NCC
               </Button>
             </>
           )}
-          {po.status === "pending" && (
+          {po.status === "sent" && (
             <>
               <Button variant="outline" className="flex-1" onClick={() => onUpdateStatus(po.id, "cancelled")}>
                 <XCircle className="h-4 w-4 mr-1" /> Huỷ
@@ -206,45 +249,30 @@ function PODetailSheet({ po, suppliers, onUpdateStatus }: { po: PurchaseOrder; s
             </>
           )}
           {po.status === "confirmed" && (
-            <Button className="flex-1 bg-blue-600 hover:bg-blue-700 text-white" onClick={() => onUpdateStatus(po.id, "in-transit")}>
+            <Button className="flex-1 bg-blue-600 hover:bg-blue-700 text-white" onClick={() => onUpdateStatus(po.id, "shipping")}>
               <Truck className="h-4 w-4 mr-1" /> Đánh dấu vận chuyển
             </Button>
           )}
-          {po.status === "in-transit" && (
+          {po.status === "shipping" && (
             <div className="flex-1 space-y-2">
               <div className="flex items-center gap-2">
                 <Warehouse className="h-4 w-4 text-muted-foreground" />
                 <Label className="text-sm">Nhập vào kho:</Label>
-                <Select value={receiveWarehouse} onValueChange={setReceiveWarehouse}>
-                  <SelectTrigger className="flex-1 h-8"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {ALL_WAREHOUSES.map(w => <SelectItem key={w} value={w}>{w}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <span className="text-sm font-medium">{po.warehouse}</span>
               </div>
-              <Button className="w-full bg-secondary hover:bg-secondary/90 text-secondary-foreground"
-                onClick={() => {
-                  const today = new Date().toISOString().slice(0, 10)
-                  createAdminSlip({
-                    type: "import",
-                    source: "admin",
-                    poId: po.id,
-                    supplier: po.supplier,
-                    date: today,
-                    warehouse: receiveWarehouse,
-                    items: safeItems.map(i => ({ sku: i.sku, name: i.name, qty: i.qty, unitCost: i.unitCost })),
-                    note: `Nhập từ PO ${po.id} - ${po.supplier}`,
-                    status: "pending",
-                    createdBy: "Admin",
-                    assignedTo: receiveWarehouse,
-                  })
-                  onUpdateStatus(po.id, "delivered")
-                }}>
-                <Package className="h-4 w-4 mr-1" /> Tạo phiếu nhập kho → {receiveWarehouse}
-              </Button>
+              {poImportSlip ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  Đã tạo phiếu nhập kho <span className="font-mono font-semibold">{poImportSlip.id}</span>. Chờ kho xác nhận nhập.
+                </div>
+              ) : (
+                <Button className="w-full bg-secondary hover:bg-secondary/90 text-secondary-foreground"
+                  onClick={handleCreateImportSlip}>
+                  <Package className="h-4 w-4 mr-1" /> Tạo phiếu nhập kho → {po.warehouse}
+                </Button>
+              )}
             </div>
           )}
-          {po.status === "delivered" && (
+          {po.status === "received" && (
             <div className="flex items-center gap-2 text-sm text-green-600 w-full justify-center py-2">
               <CheckCircle2 className="h-4 w-4" /> Đã nhận hàng và nhập kho
             </div>
@@ -268,26 +296,23 @@ export default function AdminPurchaseOrders() {
   // PO list state (API-backed)
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([])
   const [suppliers, setSuppliers] = useState<any[]>([])
+  const [warehouses, setWarehouses] = useState<{ id: number; name: string }[]>([])
   const [inventoryItems, setInventoryItems] = useState<any[]>([])
   const ctx = useInventory()
 
   useEffect(() => {
     const init = async () => {
       try {
-        const [poRes, supRes] = await Promise.all([
+        const [poRes, supRes, whRes] = await Promise.all([
           purchaseOrderApi.getAll(),
           purchaseOrderApi.getSuppliers(),
+          inventoryApi.getWarehouses(),
         ])
         if (poRes.success && poRes.data) {
-          setPurchaseOrders(poRes.data.map((p: any) => ({
-            id: String(p.id), supplier: p.supplier_name || p.supplier || "",
-            status: p.status || "draft",
-            createdDate: p.created_at ? new Date(p.created_at).toISOString().split("T")[0] : "",
-            totalValue: p.total_value ?? 0, items: p.po_items || [],
-            warehouse: p.warehouse_name || "Kho Hub", note: p.note || "",
-          })))
+          setPurchaseOrders(poRes.data.map(mapPurchaseOrder))
         }
         if (supRes.success && supRes.data) setSuppliers(supRes.data)
+        if (whRes.success && whRes.data) setWarehouses(whRes.data)
       } catch {}
       // Use inventory from context for SKU lookup
       setInventoryItems(ctx.inventory)
@@ -299,13 +324,7 @@ export default function AdminPurchaseOrders() {
     try {
       const res = await purchaseOrderApi.getAll()
       if (res.success && res.data) {
-        setPurchaseOrders(res.data.map((p: any) => ({
-          id: String(p.id), supplier: p.supplier_name || p.supplier || "",
-          status: p.status || "draft",
-          createdDate: p.created_at ? new Date(p.created_at).toISOString().split("T")[0] : "",
-          totalValue: p.total_value ?? 0, items: p.po_items || [],
-          warehouse: p.warehouse_name || "Kho Hub", note: p.note || "",
-        })))
+        setPurchaseOrders(res.data.map(mapPurchaseOrder))
       }
     } catch {}
   }
@@ -327,8 +346,10 @@ export default function AdminPurchaseOrders() {
     })
   }, [inventoryItems])
 
+  const warehouseOptions = warehouses.length > 0 ? warehouses : ALL_WAREHOUSES.map((name, idx) => ({ id: idx + 1, name }))
+
   const filteredSuppliers = suppliers.filter(s =>
-    !supplierSearch || s.name.toLowerCase().includes(supplierSearch.toLowerCase()) || s.contact.toLowerCase().includes(supplierSearch.toLowerCase())
+    !supplierSearch || s.name.toLowerCase().includes(supplierSearch.toLowerCase()) || String(s.contact || s.contactPerson || "").toLowerCase().includes(supplierSearch.toLowerCase())
   )
 
   const poSubtotal = poItems.reduce((s, i) => s + i.qty * i.unitCost, 0)
@@ -366,13 +387,23 @@ export default function AdminPurchaseOrders() {
 
   const handleCreatePO = async () => {
     if (poItems.length === 0 || !selectedSupplier) return
+    const selectedWarehouse = warehouses.find(w => w.name === poWarehouse)
+    const warehouseId = selectedWarehouse?.id ?? inventoryItems.find((i: any) => i.warehouse === poWarehouse)?.warehouseId
+    if (!warehouseId) {
+      alert("Không tìm thấy kho nhận hàng")
+      return
+    }
     try {
-      await purchaseOrderApi.create({
+      const res = await purchaseOrderApi.create({
         supplier_id: selectedSupplier.id,
-        warehouse_id: 1, // default hub
+        warehouse_id: warehouseId,
         note: poNote,
         items: poItems.map(i => ({ sku: i.sku, quantity: i.qty, price: i.unitCost })),
       })
+      if (!res.success) {
+        alert(res.error || "Loi tao PO")
+        return
+      }
       await refreshPOs()
       setShowCreate(false)
     } catch { alert("Lỗi tạo PO") }
@@ -380,14 +411,19 @@ export default function AdminPurchaseOrders() {
 
   const handleUpdateStatus = async (id: string, status: string) => {
     try {
-      await purchaseOrderApi.updateStatus(id, status)
+      const res = await purchaseOrderApi.updateStatus(id, status)
+      if (!res.success) {
+        alert(res.error || "Loi cap nhat trang thai")
+        return
+      }
+      await ctx.refreshInventory()
       await refreshPOs()
     } catch { alert("Lỗi cập nhật trạng thái") }
   }
 
   const filtered = purchaseOrders.filter(po => {
     if (activeTab !== "all" && po.status !== activeTab) return false
-    if (search && !po.id.toLowerCase().includes(search.toLowerCase()) && !po.supplier.toLowerCase().includes(search.toLowerCase())) return false
+    if (search && !po.code.toLowerCase().includes(search.toLowerCase()) && !po.id.toLowerCase().includes(search.toLowerCase()) && !po.supplier.toLowerCase().includes(search.toLowerCase())) return false
     return true
   })
 
@@ -579,8 +615,8 @@ export default function AdminPurchaseOrders() {
                   <Select value={poWarehouse} onValueChange={setPoWarehouse}>
                     <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {ALL_WAREHOUSES.map(w => (
-                        <SelectItem key={w} value={w}>{w}</SelectItem>
+                      {warehouseOptions.map(w => (
+                        <SelectItem key={w.id} value={w.name}>{w.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -604,8 +640,8 @@ export default function AdminPurchaseOrders() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-6">
         {[
           { title: "Tổng PO", value: purchaseOrders.length.toString(), icon: <FileText className="h-5 w-5" />, color: "bg-primary/10 text-primary" },
-          { title: "Chờ duyệt", value: purchaseOrders.filter(p => p.status === "pending").length.toString(), icon: <Clock className="h-5 w-5" />, color: "bg-amber-100 text-amber-600" },
-          { title: "Đang vận chuyển", value: purchaseOrders.filter(p => p.status === "in-transit").length.toString(), icon: <Truck className="h-5 w-5" />, color: "bg-blue-100 text-blue-600" },
+          { title: "Đã gửi NCC", value: purchaseOrders.filter(p => p.status === "sent").length.toString(), icon: <Clock className="h-5 w-5" />, color: "bg-amber-100 text-amber-600" },
+          { title: "Đang vận chuyển", value: purchaseOrders.filter(p => p.status === "shipping").length.toString(), icon: <Truck className="h-5 w-5" />, color: "bg-blue-100 text-blue-600" },
           { title: "Tổng giá trị", value: formatVND(purchaseOrders.reduce((s, p) => s + p.totalValue, 0)), icon: <Package className="h-5 w-5" />, color: "bg-secondary/10 text-secondary" },
         ].map((card, i) => (
           <Card key={i} className="hover:-translate-y-0.5 transition-all">
@@ -626,10 +662,10 @@ export default function AdminPurchaseOrders() {
           {[
             { value: "all", label: "Tất cả", count: purchaseOrders.length },
             { value: "draft", label: "Nháp", count: purchaseOrders.filter(p => p.status === "draft").length },
-            { value: "pending", label: "Chờ duyệt", count: purchaseOrders.filter(p => p.status === "pending").length },
+            { value: "sent", label: "Đã gửi", count: purchaseOrders.filter(p => p.status === "sent").length },
             { value: "confirmed", label: "Đã xác nhận", count: purchaseOrders.filter(p => p.status === "confirmed").length },
-            { value: "in-transit", label: "Vận chuyển", count: purchaseOrders.filter(p => p.status === "in-transit").length },
-            { value: "delivered", label: "Đã nhận", count: purchaseOrders.filter(p => p.status === "delivered").length },
+            { value: "shipping", label: "Vận chuyển", count: purchaseOrders.filter(p => p.status === "shipping").length },
+            { value: "received", label: "Đã nhận", count: purchaseOrders.filter(p => p.status === "received").length },
           ].map(tab => (
             <TabsTrigger key={tab.value} value={tab.value} className="text-xs gap-1.5 data-[state=active]:text-primary">
               {tab.label}
@@ -670,7 +706,7 @@ export default function AdminPurchaseOrders() {
             <TableBody>
               {filtered.map((po, idx) => (
                 <TableRow key={po.id} className={cn("hover:bg-muted/50", idx % 2 !== 0 && "bg-muted/20")}>
-                  <TableCell className="font-mono text-xs text-primary font-semibold">{po.id}</TableCell>
+                  <TableCell className="font-mono text-xs text-primary font-semibold">{po.code}</TableCell>
                   <TableCell className="text-sm">{po.supplier}</TableCell>
                   <TableCell className="text-sm">{po.createdDate}</TableCell>
                   <TableCell className="text-center text-sm">{Array.isArray(po.items) ? po.items.length : 0}</TableCell>

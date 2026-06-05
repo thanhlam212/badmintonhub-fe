@@ -90,7 +90,11 @@ ORDER BY (i.reorder_point - i.available) DESC;
 CREATE OR REPLACE VIEW v_sales_summary AS
 SELECT
     so.id,
-    so.id::TEXT          AS order_code,          -- Dùng UUID làm mã (hoặc thêm cột order_code sau)
+    COALESCE(
+        inv.code,
+        'OD-' || TO_CHAR(so.created_at, 'YYYYMMDD') || '-' ||
+        LPAD((ABS(hashtext(so.id::TEXT)) % 10000)::TEXT, 4, '0')
+    ) AS order_code,
     u.full_name          AS employee_name,
     br.name              AS branch_name,
     so.customer_name,
@@ -101,6 +105,13 @@ SELECT
 FROM sales_orders so
 JOIN users    u  ON u.id  = so.created_by
 LEFT JOIN branches br ON br.id = so.branch_id
+LEFT JOIN LATERAL (
+    SELECT i.code
+      FROM invoices i
+     WHERE i.sales_order_id = so.id
+     ORDER BY i.created_at DESC
+     LIMIT 1
+) inv ON TRUE
 ORDER BY so.created_at DESC;
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -115,8 +126,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
--- Tạo mã đơn tự động: BH-YYYYMMDD-XXXX
-CREATE OR REPLACE FUNCTION fn_generate_order_code(p_prefix VARCHAR DEFAULT 'BH')
+-- Tạo mã đơn tự động: OD-YYYYMMDD-XXXX
+CREATE OR REPLACE FUNCTION fn_generate_order_code(p_prefix VARCHAR DEFAULT 'OD')
 RETURNS VARCHAR AS $$
 DECLARE
     v_date   VARCHAR;

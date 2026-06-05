@@ -13,9 +13,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Textarea } from "@/components/ui/textarea"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { formatVND } from "@/lib/utils"
+import { formatVND, formatSalesOrderReference, formatHDReference } from "@/lib/utils"
 import { productApi, salesOrderApi, orderApi } from "@/lib/api"
 import { useInventory } from "@/lib/inventory-context"
+import { printWarehouseSlip, printWarrantyCard } from "@/lib/print-utils"
 import { cn } from "@/lib/utils"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
@@ -23,7 +24,7 @@ import {
   Search, ShoppingCart, Plus, Trash2, CheckCircle2, AlertTriangle,
   DollarSign, Receipt, Printer, User, CreditCard, Banknote, Smartphone,
   FileText, ArrowDownToLine, ArrowUpFromLine, Package, Clock, XCircle,
-  Eye, Truck, MapPin, Phone, ClipboardList, Filter, ChevronsUpDown, Check, Warehouse
+  Eye, Truck, MapPin, Phone, ClipboardList, Filter, ChevronsUpDown, Check, Warehouse, Award
 } from "lucide-react"
 
 interface CartItem {
@@ -48,6 +49,7 @@ interface SaleRecord {
 
 interface SalesOrder {
   id: string
+  rawId?: string
   date: string
   time: string
   customer: string
@@ -84,6 +86,7 @@ interface ExportSlip {
 
 interface OnlineOrder {
   id: string
+  rawId?: string
   items: { productId: number; name: string; price: number; qty: number }[]
   customer: { name: string; phone: string; email: string; address: string }
   note: string
@@ -95,6 +98,7 @@ interface OnlineOrder {
   createdAt: string
   userId: string
   type: "online"
+  fulfillingWarehouseId?: number | null
 }
 
 const orderStatusConfig: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
@@ -158,13 +162,18 @@ export default function EmployeeSales() {
         const soRes = await salesOrderApi.getAll()
         if (soRes.success && soRes.data) {
           setSalesOrders(soRes.data.map((o: any) => ({
-            id: String(o.id), date: o.created_at ? new Date(o.created_at).toISOString().split("T")[0] : "",
+            id: formatSalesOrderReference(o.sales_code || o.orderCode || o.order_code || o.code || o.id, o.created_at),
+            rawId: String(o.id),
+            date: o.created_at ? new Date(o.created_at).toISOString().split("T")[0] : "",
             time: o.created_at ? new Date(o.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "",
             customer: o.customer_name || "Khách lẻ", phone: o.customer_phone || "",
             items: (o.items || []).map((i: any) => ({ productId: i.product_id, name: i.product_name || i.name || "", price: i.price || 0, qty: i.qty || i.quantity || 0 })),
-            total: o.amount || 0, discount: 0, finalTotal: o.amount || 0,
+            total: o.total || o.amount || 0,
+            discount: o.discount || 0,
+            finalTotal: o.final_total || o.amount || o.total || 0,
             paymentMethod: o.payment_method || "", note: o.note || "",
-            status: o.status || "pending", createdBy: o.created_by || "",
+            status: o.status || "pending",
+            createdBy: o.creator_name || o.created_by || "",
           })))
         }
       } catch {}
@@ -172,11 +181,17 @@ export default function EmployeeSales() {
         const orRes = await orderApi.getAll()
         if (orRes.orders) {
           setOnlineOrders(orRes.orders.map((o: any) => ({
-            id: String(o.id), items: (o.items || []).map((i: any) => ({ productId: i.productId || i.product_id, name: i.productName || i.name || "", price: i.price || 0, qty: i.quantity || i.qty || 0 })),
+            id: formatHDReference(o.orderCode || o.order_code || o.invoiceCode || o.invoice_code || o.sales_code || o.id, o.createdAt),
+            rawId: String(o.id),
+            items: (o.items || []).map((i: any) => ({ productId: i.productId || i.product_id, name: i.productName || i.name || "", price: i.price || 0, qty: i.quantity || i.qty || 0 })),
             customer: { name: o.customerName || "", phone: o.customerPhone || "", email: o.customerEmail || "", address: o.shippingAddress || "" },
-            note: o.note || "", subtotal: o.totalAmount || 0, shippingFee: 0, total: o.totalAmount || 0,
+            note: o.note || "",
+            subtotal: o.subtotal || o.amount || o.totalAmount || o.total || 0,
+            shippingFee: o.shippingFee || 0,
+            total: o.amount || o.totalAmount || o.total || 0,
             paymentMethod: o.paymentMethod || "", status: o.status || "", createdAt: o.createdAt || "",
             userId: o.userId || "", type: "online" as const, deliveryMethod: "delivery" as const,
+            fulfillingWarehouseId: o.fulfillingWarehouseId || null,
           })))
         }
       } catch {}
@@ -198,13 +213,18 @@ export default function EmployeeSales() {
       salesOrderApi.getAll().then((res: any) => {
         if (res.success && res.data) {
           setSalesOrders(res.data.map((o: any) => ({
-            id: String(o.id), date: o.created_at ? new Date(o.created_at).toISOString().split("T")[0] : "",
+            id: formatSalesOrderReference(o.sales_code || o.orderCode || o.order_code || o.code || o.id, o.created_at),
+            rawId: String(o.id),
+            date: o.created_at ? new Date(o.created_at).toISOString().split("T")[0] : "",
             time: o.created_at ? new Date(o.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "",
             customer: o.customer_name || "Khách lẻ", phone: o.customer_phone || "",
             items: (o.items || []).map((i: any) => ({ productId: i.product_id, name: i.product_name || i.name || "", price: i.price || 0, qty: i.qty || i.quantity || 0 })),
-            total: o.amount || 0, discount: 0, finalTotal: o.amount || 0,
+            total: o.total || o.amount || 0,
+            discount: o.discount || 0,
+            finalTotal: o.final_total || o.amount || o.total || 0,
             paymentMethod: o.payment_method || "", note: o.note || "",
-            status: o.status || "pending", createdBy: o.created_by || "",
+            status: o.status || "pending",
+            createdBy: o.creator_name || o.created_by || "",
           })))
         }
       }).catch(() => {})
@@ -236,61 +256,82 @@ export default function EmployeeSales() {
     !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.brand.toLowerCase().includes(search.toLowerCase())
   )
 
-  // ─── Tổng kho: aggregate inventory items by SKU across all warehouses ────
+  // ─── Kho: filter by selected warehouse (default = employee's warehouse) ────
   const { inventory: inventoryItems } = useInventory()
   const [categoryFilter, setCategoryFilter] = useState("all")
+  const [selectedWarehouse, setSelectedWarehouse] = useState<string>("")
   const [comboOpen, setComboOpen] = useState(false)
   const [comboSku, setComboSku] = useState("")
 
-  /** All unique categories from inventory */
-  const inventoryCategories = useMemo(() => {
-    const cats = new Set(inventoryItems.map(i => i.category))
-    return Array.from(cats).sort()
+  /** All unique warehouses from inventory */
+  const allWarehouses = useMemo(() => {
+    const whs = new Set(inventoryItems.map(i => i.warehouse))
+    return Array.from(whs).sort()
   }, [inventoryItems])
 
-  /** Aggregated view: one row per SKU with totals across all warehouses */
-  interface AggregatedItem {
+  // Auto-select employee's warehouse on first load
+  useEffect(() => {
+    if (!selectedWarehouse && user?.warehouse) {
+      // Match employee's warehouse (e.g., "Kho Cầu Giấy")
+      const match = allWarehouses.find(w => w === user.warehouse)
+      if (match) setSelectedWarehouse(match)
+      else if (allWarehouses.length > 0) setSelectedWarehouse(allWarehouses[0])
+    } else if (!selectedWarehouse && allWarehouses.length > 0) {
+      setSelectedWarehouse(allWarehouses[0])
+    }
+  }, [allWarehouses, user?.warehouse, selectedWarehouse])
+
+  /** All unique categories from inventory (filtered by warehouse) */
+  const warehouseItems = useMemo(() => {
+    if (selectedWarehouse === "__all__") return inventoryItems
+    return inventoryItems.filter(i => i.warehouse === selectedWarehouse)
+  }, [inventoryItems, selectedWarehouse])
+
+  const inventoryCategories = useMemo(() => {
+    const cats = new Set(warehouseItems.map(i => i.category))
+    return Array.from(cats).sort()
+  }, [warehouseItems])
+
+  /** Per-warehouse view: each item shows stock of selected warehouse */
+  interface WarehouseItem {
     sku: string
     name: string
     category: string
-    totalOnHand: number
-    totalAvailable: number
+    onHand: number
+    available: number
     unitCost: number
     retailPrice: number
-    warehouses: { name: string; available: number }[]
+    warehouse: string
+    otherWarehouses: { name: string; available: number }[]
   }
 
-  const aggregatedInventory: AggregatedItem[] = useMemo(() => {
-    const map = new Map<string, AggregatedItem>()
-    for (const item of inventoryItems) {
-      const existing = map.get(item.sku)
-      if (existing) {
-        existing.totalOnHand += item.onHand
-        existing.totalAvailable += item.available
-        existing.warehouses.push({ name: item.warehouse, available: item.available })
-      } else {
-        // Match to retail product if available
-        const retail = products.find(p =>
-          p.name.toLowerCase().includes(item.name.toLowerCase().split(" ").slice(0, 3).join(" ")) ||
-          item.name.toLowerCase().includes(p.name.toLowerCase().split(" ").slice(0, 3).join(" "))
-        )
-        map.set(item.sku, {
-          sku: item.sku,
-          name: item.name,
-          category: item.category,
-          totalOnHand: item.onHand,
-          totalAvailable: item.available,
-          unitCost: item.unitCost,
-          retailPrice: retail?.price ?? Math.round(item.unitCost * 1.4),
-          warehouses: [{ name: item.warehouse, available: item.available }],
-        })
+  const warehouseInventory: WarehouseItem[] = useMemo(() => {
+    return warehouseItems.map(item => {
+      // Match to retail product if available
+      const retail = products.find(p =>
+        p.name.toLowerCase().includes(item.name.toLowerCase().split(" ").slice(0, 3).join(" ")) ||
+        item.name.toLowerCase().includes(p.name.toLowerCase().split(" ").slice(0, 3).join(" "))
+      )
+      // Find same SKU in other warehouses for reference
+      const otherWarehouses = inventoryItems
+        .filter(i => i.sku === item.sku && i.warehouse !== item.warehouse)
+        .map(i => ({ name: i.warehouse, available: i.available }))
+      return {
+        sku: item.sku,
+        name: item.name,
+        category: item.category,
+        onHand: item.onHand,
+        available: item.available,
+        unitCost: item.unitCost,
+        retailPrice: retail?.price ?? Math.round(item.unitCost * 1.4),
+        warehouse: item.warehouse,
+        otherWarehouses,
       }
-    }
-    return Array.from(map.values())
-  }, [inventoryItems])
+    })
+  }, [warehouseItems, inventoryItems, products])
 
   const filteredInventory = useMemo(() => {
-    return aggregatedInventory.filter(item => {
+    return warehouseInventory.filter(item => {
       if (categoryFilter !== "all" && item.category !== categoryFilter) return false
       if (search) {
         const s = search.toLowerCase()
@@ -298,9 +339,9 @@ export default function EmployeeSales() {
       }
       return true
     })
-  }, [aggregatedInventory, categoryFilter, search])
+  }, [warehouseInventory, categoryFilter, search])
 
-  const addInventoryItemToCart = (item: AggregatedItem) => {
+  const addInventoryItemToCart = (item: WarehouseItem) => {
     setCart(prev => {
       const existing = prev.find(c => c.name === item.name)
       if (existing) {
@@ -343,12 +384,12 @@ export default function EmployeeSales() {
     setCart(prev => prev.filter(item => item.productId !== productId))
   }
 
-  const handleConfirmSale = () => {
+  const handleConfirmSale = async () => {
     if (cart.length === 0) return
 
     const now = new Date()
     const sale: SaleRecord = {
-      id: `HD-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${String(Math.floor(Math.random() * 999) + 1).padStart(3, "0")}`,
+      id: "",
       date: now.toISOString().split("T")[0],
       time: `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
       customer: customerName || "Khách lẻ",
@@ -360,19 +401,26 @@ export default function EmployeeSales() {
       note,
     }
 
+    const saleWarehouseId = selectedWarehouse && selectedWarehouse !== "__all__"
+      ? inventoryItems.find(i => i.warehouse === selectedWarehouse)?.warehouseId
+      : user?.warehouseId
+
     // Save as pending sales order via API
-    salesOrderApi.create({
-      branch_id: 1,
+    const res = await salesOrderApi.create({
+      fulfill_warehouse_id: saleWarehouseId ?? user?.warehouseId ?? undefined,
       customer_name: customerName || "Khách lẻ",
       customer_phone: customerPhone || undefined,
       note: note || undefined,
+      payment_method: paymentMethod,
       items: cart.map(c => ({
         product_id: c.productId > 0 ? c.productId : undefined,
         product_name: c.name,
         price: c.price,
         quantity: c.qty,
       })),
-    }).catch(() => {})
+    }).catch(() => null)
+    sale.id = res?.success && res?.data?.id ? formatSalesOrderReference(res.data.id, res.data.created_at) : ""
+    if (!res?.success || !sale.id) return
 
     setSalesHistory(prev => [sale, ...prev])
     setLastSale(sale)
@@ -394,6 +442,22 @@ export default function EmployeeSales() {
     { value: "vnpay", label: "VNPay", icon: <CreditCard className="h-4 w-4" /> },
     { value: "bank", label: "Chuyển khoản", icon: <DollarSign className="h-4 w-4" /> },
   ]
+
+  const productIdToSku = useMemo(() => {
+    const map: Record<number, string> = {}
+    for (const inv of inventoryItems) {
+      if (inv.productId && inv.sku) {
+        map[inv.productId] = inv.sku
+      }
+    }
+    return map
+  }, [inventoryItems])
+
+  const selectedOnlineOrderWarehouse = useMemo(() => {
+    if (!selectedOnlineOrder?.fulfillingWarehouseId) return "—"
+    const wh = inventoryItems.find(inv => inv.warehouseId === selectedOnlineOrder.fulfillingWarehouseId)
+    return wh ? wh.warehouse : "—"
+  }, [selectedOnlineOrder, inventoryItems])
 
   return (
     <div>
@@ -441,19 +505,41 @@ export default function EmployeeSales() {
 
         <TabsContent value="pos">
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
-            {/* Product List — Tổng kho */}
+            {/* Product List — Per-warehouse */}
             <div className="lg:col-span-3">
               <Card>
                 <CardHeader className="pb-3">
                   <CardTitle className="font-serif text-lg flex items-center gap-2">
-                    <Warehouse className="h-5 w-5 text-blue-600" /> Tổng kho — Chọn sản phẩm
+                    <Warehouse className="h-5 w-5 text-blue-600" />
+                    {selectedWarehouse === "__all__" ? "Tất cả kho" : selectedWarehouse?.replace("Kho ", "") || "Kho"} — Chọn sản phẩm
                     <Badge variant="secondary" className="ml-auto text-xs font-normal">
-                      {aggregatedInventory.length} SKU • {inventoryItems.length} bản ghi
+                      {filteredInventory.length} SKU
                     </Badge>
                   </CardTitle>
 
-                  {/* Filters row: Search + Category combobox */}
+                  {/* Filters row: Warehouse + Search + Category */}
                   <div className="flex items-center gap-2 mt-2">
+                    {/* Warehouse selector */}
+                    <Select value={selectedWarehouse} onValueChange={setSelectedWarehouse}>
+                      <SelectTrigger className="w-[180px] h-9 text-xs">
+                        <Warehouse className="h-3.5 w-3.5 mr-1.5 shrink-0" />
+                        <SelectValue placeholder="Chọn kho..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {allWarehouses.map(wh => (
+                          <SelectItem key={wh} value={wh} className="text-xs">
+                            {wh}
+                            {wh === user?.warehouse && <span className="ml-1 text-blue-600">(Kho bạn)</span>}
+                          </SelectItem>
+                        ))}
+                        {allWarehouses.length > 1 && (
+                          <SelectItem value="__all__" className="text-xs font-medium border-t mt-1 pt-1">
+                            📦 Xem tất cả kho
+                          </SelectItem>
+                        )}
+                      </SelectContent>
+                    </Select>
+
                     <div className="relative flex-1">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
@@ -497,7 +583,7 @@ export default function EmployeeSales() {
                                   <Check className={cn("mr-2 h-3.5 w-3.5", categoryFilter === cat ? "opacity-100" : "opacity-0")} />
                                   {cat}
                                   <Badge variant="secondary" className="ml-auto text-[10px] h-4 px-1">
-                                    {aggregatedInventory.filter(i => i.category === cat).length}
+                                    {warehouseInventory.filter(i => i.category === cat).length}
                                   </Badge>
                                 </CommandItem>
                               ))}
@@ -524,10 +610,10 @@ export default function EmployeeSales() {
                       <TableBody>
                         {filteredInventory.map(item => {
                           const inCart = cart.find(c => c.name === item.name)
-                          const isLow = item.totalAvailable <= 5
-                          const isOut = item.totalAvailable === 0
+                          const isLow = item.available <= 5
+                          const isOut = item.available === 0
                           return (
-                            <TableRow key={item.sku} className={cn(
+                            <TableRow key={`${item.sku}-${item.warehouse}`} className={cn(
                               "hover:bg-muted/50",
                               inCart && "bg-blue-50/50",
                               isOut && "opacity-50"
@@ -537,13 +623,21 @@ export default function EmployeeSales() {
                               </TableCell>
                               <TableCell>
                                 <p className="text-sm font-medium">{item.name}</p>
-                                <div className="flex items-center gap-1 mt-0.5">
-                                  {item.warehouses.map(w => (
-                                    <span key={w.name} className="text-[10px] text-muted-foreground">
-                                      {w.name.replace("Kho ", "")}: <strong className={w.available === 0 ? "text-red-500" : ""}>{w.available}</strong>
-                                    </span>
-                                  ))}
-                                </div>
+                                {selectedWarehouse !== "__all__" && item.otherWarehouses.length > 0 && (
+                                  <div className="flex items-center gap-1.5 mt-0.5">
+                                    <span className="text-[10px] text-muted-foreground">Kho khác:</span>
+                                    {item.otherWarehouses.map(w => (
+                                      <span key={w.name} className="text-[10px] text-muted-foreground">
+                                        {w.name.replace("Kho ", "")}: <strong className={w.available === 0 ? "text-red-500" : ""}>{w.available}</strong>
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                                {selectedWarehouse === "__all__" && (
+                                  <span className="text-[10px] text-muted-foreground">
+                                    {item.warehouse.replace("Kho ", "")}
+                                  </span>
+                                )}
                               </TableCell>
                               <TableCell>
                                 <Badge variant="outline" className="text-xs">{item.category}</Badge>
@@ -553,7 +647,7 @@ export default function EmployeeSales() {
                                   "text-sm font-semibold",
                                   isOut ? "text-red-500" : isLow ? "text-amber-600" : "text-green-600"
                                 )}>
-                                  {item.totalAvailable}
+                                  {item.available}
                                 </span>
                               </TableCell>
                               <TableCell className="text-right text-sm font-semibold text-primary">
@@ -1113,6 +1207,56 @@ export default function EmployeeSales() {
                         <span className="text-primary">{formatVND(selectedOnlineOrder.total)}</span>
                       </div>
                     </div>
+
+                    {/* Print actions bar - only when order is past pending */}
+                    {selectedOnlineOrder.status !== "pending" && selectedOnlineOrder.status !== "cancelled" && (
+                      <div className="flex items-center gap-2 p-3 bg-muted/50 rounded-lg border">
+                        <Printer className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <span className="text-xs text-muted-foreground mr-auto">In chứng từ:</span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1 text-xs h-7"
+                          onClick={() => printWarehouseSlip({
+                            id: selectedOnlineOrder.id,
+                            type: "export",
+                            date: new Date(selectedOnlineOrder.createdAt).toLocaleDateString("vi-VN"),
+                            warehouse: selectedOnlineOrderWarehouse || "—",
+                            note: selectedOnlineOrder.note || "",
+                            createdBy: "Hệ thống",
+                            assignedTo: selectedOnlineOrder.customer.name,
+                            items: selectedOnlineOrder.items.map(i => ({
+                              sku: productIdToSku[i.productId] || String(i.productId),
+                              name: i.name,
+                              qty: i.qty,
+                              unitCost: i.price,
+                            })),
+                          })}
+                        >
+                          <ArrowUpFromLine className="h-3.5 w-3.5" /> Phiếu xuất kho
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1 text-xs h-7"
+                          onClick={() => printWarrantyCard({
+                            orderCode: selectedOnlineOrder.id,
+                            date: selectedOnlineOrder.createdAt,
+                            customerName: selectedOnlineOrder.customer.name,
+                            customerPhone: selectedOnlineOrder.customer.phone,
+                            customerEmail: selectedOnlineOrder.customer.email,
+                            items: selectedOnlineOrder.items.map(i => ({
+                              sku: productIdToSku[i.productId] || undefined,
+                              name: i.name,
+                              qty: i.qty,
+                              price: i.price,
+                            })),
+                          })}
+                        >
+                          <Award className="h-3.5 w-3.5" /> Phiếu bảo hành
+                        </Button>
+                      </div>
+                    )}
                   </div>
                   <DialogFooter>
                     <Button variant="outline" onClick={() => setSelectedOnlineOrder(null)}>Đóng</Button>
@@ -1303,7 +1447,7 @@ export default function EmployeeSales() {
                       <TableHead className="text-xs text-center">Số SP</TableHead>
                       <TableHead className="text-xs text-right">Tổng tiền</TableHead>
                       <TableHead className="text-xs text-right">Giảm giá</TableHead>
-                      <TableHead className="text-xs text-right">Thanh toán</TableHead>
+                      <TableHead className="text-xs text-right">Thành tiền</TableHead>
                       <TableHead className="text-xs">PTTT</TableHead>
                       <TableHead className="text-xs">Ghi chú</TableHead>
                     </TableRow>

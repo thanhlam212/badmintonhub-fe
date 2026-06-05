@@ -1,4 +1,4 @@
-﻿"use client"
+"use client"
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react"
 import { inventoryApi, transferApi, purchaseOrderApi, getToken } from "@/lib/api"
@@ -6,7 +6,7 @@ import { useAuth } from "@/lib/auth-context"
 
 export interface InventoryItem {
   id: number; sku: string; name: string; category: string; warehouse: string
-  warehouseId?: number; onHand: number; reserved: number; available: number
+  warehouseId?: number; productId?: number; onHand: number; reserved: number; available: number
   reorderPoint: number; unitCost: number; image: string
 }
 export interface InventoryTransaction {
@@ -25,7 +25,7 @@ export interface TransferRequest {
   approvedBy?: string; approvedAt?: string; completedAt?: string
 }
 export interface AdminWarehouseSlip {
-  id: string; type: "import" | "export"; source: "admin"; poId?: string
+  id: string; type: "import" | "export"; source: "admin"; poId?: string; poRawId?: string
   supplier?: string; date: string; warehouse: string
   items: { sku: string; name: string; qty: number; unitCost: number }[]
   note: string; status: "pending" | "processed"; createdBy: string
@@ -56,15 +56,27 @@ interface InventoryContextType {
 
 const InventoryContext = createContext<InventoryContextType | undefined>(undefined)
 
+function textValue(value: any, fallback = ""): string {
+  if (value === null || value === undefined) return fallback
+  if (typeof value === "string") return value
+  if (typeof value === "number" || typeof value === "boolean") return String(value)
+  if (typeof value === "object") {
+    const named = value.name ?? value.full_name ?? value.fullName
+    if (named !== undefined && named !== null) return textValue(named, fallback)
+  }
+  return fallback
+}
+
 function txItem(r: any): InventoryItem {
   // BE trả về camelCase warehouseName + warehouse object (Prisma include)
   const warehouseStr = r.warehouseName || r.warehouse_name
     || (typeof r.warehouse === 'string' ? r.warehouse : r.warehouse?.name)
     || ""
   return {
-    id: r.id, sku: r.sku, name: r.name, category: r.category||"",
-    warehouse: warehouseStr,
+    id: r.id, sku: textValue(r.sku), name: textValue(r.name), category: textValue(r.category),
+    warehouse: textValue(warehouseStr),
     warehouseId: r.warehouseId ?? r.warehouse_id ?? r.warehouse?.id,
+    productId: r.productId ?? r.product_id ?? undefined,
     onHand: r.onHand ?? r.on_hand ?? 0,
     reserved: r.reserved ?? 0,
     available: r.available ?? 0,
@@ -74,7 +86,7 @@ function txItem(r: any): InventoryItem {
   }
 }
 function txTxn(r: any): InventoryTransaction {
-  return { id: String(r.id), type: r.type, date: r.date?new Date(r.date).toISOString().split("T")[0]:"", sku: r.sku||"", productName: r.product_name||r.productName||r.name||"", qty: r.qty||r.quantity||0, cost: r.cost||0, note: r.note||"", warehouse: r.warehouse_name||r.warehouse||"", operator: r.operator||"" }
+  return { id: String(r.id), type: r.type, date: r.date?new Date(r.date).toISOString().split("T")[0]:"", sku: textValue(r.sku), productName: textValue(r.product_name||r.productName||r.name), qty: r.qty||r.quantity||0, cost: r.cost||0, note: textValue(r.note), warehouse: textValue(r.warehouse_name||r.warehouse), operator: textValue(r.operator) }
 }
 function normalizeTransferStatus(s: string): TransferRequest["status"] {
   // BE trả về "in_transit" (underscore), FE dùng "in-transit" (hyphen)
@@ -82,10 +94,10 @@ function normalizeTransferStatus(s: string): TransferRequest["status"] {
   return (s || "pending") as TransferRequest["status"]
 }
 function txTfr(r: any): TransferRequest {
-  return { id: String(r.id), date: r.created_at?new Date(r.created_at).toISOString().split("T")[0]:r.date||"", fromWarehouse: r.from_warehouse_name||r.fromWarehouse||"", toWarehouse: r.to_warehouse_name||r.toWarehouse||"", fromWarehouseId: r.from_warehouse_id, toWarehouseId: r.to_warehouse_id, items: (r.items||[]).map((i: any)=>({sku:i.sku,name:i.name||i.product_name||"",qty:i.qty||i.quantity||0,available:i.available||0})), reason: r.reason||r.note||"", note: r.note||"", status: normalizeTransferStatus(r.status), pickupMethod: r.pickup_method||r.pickupMethod||"employee", createdBy: r.created_by_name||r.createdBy||"", customerName: r.customer_name, customerPhone: r.customer_phone, approvedBy: r.approved_by_name, approvedAt: r.approved_at, completedAt: r.completed_at }
+  return { id: String(r.id), date: r.created_at?new Date(r.created_at).toISOString().split("T")[0]:r.date||"", fromWarehouse: textValue(r.from_warehouse_name||r.fromWarehouse||r.fromWarehouseName||r.from_warehouse), toWarehouse: textValue(r.to_warehouse_name||r.toWarehouse||r.toWarehouseName||r.to_warehouse), fromWarehouseId: r.from_warehouse_id, toWarehouseId: r.to_warehouse_id, items: (r.items||[]).map((i: any)=>({sku:textValue(i.sku),name:textValue(i.name||i.product_name||i.productName||i.product),qty:i.qty||i.quantity||0,available:i.available||0})), reason: textValue(r.reason||r.note), note: textValue(r.note), status: normalizeTransferStatus(r.status), pickupMethod: r.pickup_method||r.pickupMethod||"employee", createdBy: textValue(r.created_by_name||r.createdBy||r.created_by), customerName: textValue(r.customer_name||r.customerName), customerPhone: textValue(r.customer_phone||r.customerPhone), approvedBy: textValue(r.approved_by_name||r.approvedBy||r.approved_by), approvedAt: r.approved_at, completedAt: r.completed_at }
 }
 function txPO(r: any): PurchaseOrder {
-  return { id: String(r.id), supplier: r.supplier_name||r.supplier||"", status: r.status||"", createdDate: r.created_at?new Date(r.created_at).toISOString().split("T")[0]:r.createdDate||"", totalValue: r.total_value??r.totalValue??0, items: r.item_count??r.items??0, warehouse: r.warehouse_name||r.warehouse||"", poItems: (r.po_items||r.poItems||[]).map((i:any)=>({sku:i.sku,name:i.name||i.product_name||"",qty:i.qty||i.quantity||0,unitCost:i.unit_cost||i.unitCost||i.price||0})) }
+  return { id: String(r.id), supplier: textValue(r.supplier_name||r.supplier), status: r.status||"", createdDate: r.created_at?new Date(r.created_at).toISOString().split("T")[0]:r.createdDate||"", totalValue: r.total_value??r.totalValue??0, items: r.item_count??r.items??0, warehouse: textValue(r.warehouse_name||r.warehouse), poItems: (r.po_items||r.poItems||[]).map((i:any)=>({sku:textValue(i.sku),name:textValue(i.name||i.product_name||i.productName||i.product),qty:i.qty||i.quantity||0,unitCost:i.unit_cost||i.unitCost||i.price||0})) }
 }
 
 const SLIP_KEY = "bh_admin_slips"
@@ -116,7 +128,7 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
 
   const importItems = useCallback(async({items,warehouse,note,date,operator}:{items:{sku:string;name:string;qty:number;cost:number}[];warehouse:string;note:string;date:string;operator:string})=>{
     await ensureWhMap(); const wid=whMap[warehouse]; if(!wid)throw new Error("Kho not found: "+warehouse)
-    for(const item of items){await inventoryApi.importStock({warehouse_id:wid,sku:item.sku,quantity:item.qty,note:`${note} | ${operator}`})}
+    for(const item of items){await inventoryApi.importStock({warehouse_id:wid,sku:item.sku,quantity:item.qty,cost:item.cost,note:`${note} | ${operator}`})}
     await Promise.all([fetchInv(),fetchTxn()])
   }, [fetchInv,fetchTxn])
 
@@ -139,6 +151,7 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     const tf=transferRequests.find(t=>t.id===transferId);if(!tf)return
     await ensureWhMap();const fid=whMap[tf.fromWarehouse]||tf.fromWarehouseId;if(!fid)return
     for(const item of tf.items){const eq=qtys[item.sku]||0;if(eq<=0)continue;await inventoryApi.exportStock({warehouse_id:fid,sku:item.sku,quantity:eq,note:`XK DC ${transferId} | ${note} | ${operator}`})}
+    if(tf.status==="pending"){await transferApi.updateStatus(transferId,"approved")}
     await transferApi.updateStatus(transferId,"in-transit");await Promise.all([fetchInv(),fetchTxn(),fetchTfr()])
   }, [transferRequests,fetchInv,fetchTxn,fetchTfr])
 

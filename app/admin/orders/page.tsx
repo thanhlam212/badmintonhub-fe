@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationPrevious, PaginationNext, PaginationEllipsis } from "@/components/ui/pagination"
-import { formatVND } from "@/lib/utils"
+import { formatVND, formatSalesOrderReference, formatHDReference } from "@/lib/utils"
 import { useInventory } from "@/lib/inventory-context"
 import { orderApi, purchaseOrderApi, salesOrderApi } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -29,7 +29,7 @@ interface PurchaseOrder {
 
 interface OrderItem { productId: number; name: string; price: number; qty: number }
 interface SalesOrder {
-  id: string; items: OrderItem[]; customer: { name: string; phone: string; email: string; address: string }
+  id: string; rawId?: string; items: OrderItem[]; customer: { name: string; phone: string; email: string; address: string }
   note: string; subtotal: number; shippingFee: number; total: number; paymentMethod: string
   status: string; createdAt: string; userId: string; type: string
   fulfillingWarehouse?: string; approvedBy?: string
@@ -111,7 +111,9 @@ export default function AdminAllOrdersPage() {
         const soRes = await salesOrderApi.getAll()
         if (soRes.success && soRes.data) {
           setSalesOrders(soRes.data.map((o: any) => ({
-            id: String(o.id), items: (o.items || []).map((i: any) => ({ productId: i.product_id, name: i.product_name || i.name || "", price: i.price || 0, qty: i.qty || i.quantity || 0 })),
+            id: formatSalesOrderReference(o.sales_code || o.orderCode || o.order_code || o.code || o.id, o.created_at),
+            rawId: String(o.id),
+            items: (o.items || []).map((i: any) => ({ productId: i.product_id, name: i.product_name || i.name || "", price: i.price || 0, qty: i.qty || i.quantity || 0 })),
             customer: { name: o.customer_name || "", phone: o.customer_phone || "", email: o.customer_email || "", address: o.shipping_address || "" },
             note: o.note || "", subtotal: o.amount || 0, shippingFee: 0, total: o.amount || 0,
             paymentMethod: o.payment_method || "", status: o.status || "", createdAt: o.created_at || "",
@@ -124,9 +126,11 @@ export default function AdminAllOrdersPage() {
         const orRes = await orderApi.getAll()
         if (orRes.orders && orRes.orders.length > 0) {
           setSalesOrders(prev => {
-            const existingIds = new Set(prev.map(s => s.id))
+            const existingIds = new Set(prev.map(s => s.rawId || s.id))
             const newOrders = orRes.orders.filter((o: any) => !existingIds.has(String(o.id))).map((o: any) => ({
-              id: String(o.id), items: (o.items || []).map((i: any) => ({ productId: i.productId || i.product_id, name: i.productName || i.name || "", price: i.price || 0, qty: i.quantity || i.qty || 0 })),
+              id: formatHDReference(o.orderCode || o.order_code || o.invoiceCode || o.invoice_code || o.sales_code || o.id, o.createdAt || o.created_at),
+              rawId: String(o.id),
+              items: (o.items || []).map((i: any) => ({ productId: i.productId || i.product_id, name: i.productName || i.name || "", price: i.price || 0, qty: i.quantity || i.qty || 0 })),
               customer: { name: o.customerName || "", phone: o.customerPhone || "", email: o.customerEmail || "", address: o.shippingAddress || "" },
               note: o.note || "", subtotal: o.totalAmount || 0, shippingFee: 0, total: o.totalAmount || 0,
               paymentMethod: o.paymentMethod || "", status: o.status || "", createdAt: o.createdAt || "",

@@ -7,11 +7,11 @@ import { Switch } from "@/components/ui/switch"
 import {
   Check, Minus, Plus, Clock, CreditCard, Wallet, Building2,
   Smartphone, Lock, Loader2, AlertCircle, ChevronRight, Tag,
-  Users, FileText, Bell, BadgePercent,
+  Users, FileText, Bell, BadgePercent, QrCode, Copy,
 } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useState, useEffect } from "react"
-import { formatVND } from "@/lib/utils"
+import { formatVND, isSlotPast } from "@/lib/utils"
 import { bookingApi, paymentApi } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
@@ -25,6 +25,15 @@ interface PendingBooking {
   slotCount: number; totalPrice: number
 }
 
+interface SepayPaymentState {
+  paymentId: string
+  qrImageUrl: string
+  bankCode: string
+  accountNumber: string
+  transferContent: string
+  amount: number
+}
+
 // ─── Stepper ──────────────────────────────────────────────────────────────────
 function Stepper({ step }: { step: number }) {
   const steps = [
@@ -34,6 +43,8 @@ function Stepper({ step }: { step: number }) {
   ]
   return (
     <div className="flex items-center justify-center">
+
+
       {steps.map((s, i) => (
         <div key={i} className="flex items-center">
           <div className="flex flex-col items-center gap-1.5">
@@ -111,7 +122,7 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   )
 }
 
-// ─── Field ────────────────────────────────────────────────────────────────────
+// ─── Payment method option ────────────────────────────────────────────────────────────────────────────────────────────
 function Field({
   label, required, error, children, className,
 }: { label: string; required?: boolean; error?: string; children: React.ReactNode; className?: string }) {
@@ -154,6 +165,7 @@ function TextInput({
 
 // ─── Payment method option ────────────────────────────────────────────────────
 const PAY_METHODS = [
+  { value: "sepay",  label: "SePay",            icon: Building2,   desc: "Cong thanh toan SePay / VietQR" },
   { value: "vnpay",  label: "VNPay",            icon: CreditCard,  desc: "Thanh toán qua cổng VNPay" },
   { value: "momo",   label: "MoMo",             icon: Smartphone,  desc: "Ví điện tử MoMo" },
   { value: "bank",   label: "Chuyển khoản",     icon: Building2,   desc: "Chuyển khoản ngân hàng" },
@@ -179,6 +191,10 @@ export default function BookingPage() {
   const [submitting, setSubmitting]         = useState(false)
   const [submitError, setSubmitError]       = useState("")
   const [booking, setBooking]               = useState<PendingBooking | null>(null)
+  const [sepayPayment, setSepayPayment]     = useState<SepayPaymentState | null>(null)
+  const [sepayStatus, setSepayStatus]       = useState<'waiting' | 'failed' | 'expired'>('waiting')
+  const [sepayCountdown, setSepayCountdown] = useState(600) // 10 minutes
+  const [copied, setCopied]                 = useState(false)
 
   // Contact info
   const [contactName, setContactName]       = useState(user?.fullName === "Khách" ? "" : (user?.fullName || ""))
@@ -203,6 +219,46 @@ export default function BookingPage() {
       catch { router.push('/courts') }
     } else { router.push('/courts') }
   }, [router])
+
+  // ─── SePay polling: check payment status every 3s ──────────────
+  useEffect(() => {
+    if (!sepayPayment?.paymentId || sepayStatus !== 'waiting') return
+
+    const checkStatus = async () => {
+      try {
+        const status = await paymentApi.getStatus(sepayPayment.paymentId)
+        const paymentStatus = status.data?.status
+        const invoiceStatus = status.data?.invoiceStatus
+        if (status.success && (paymentStatus === 'success' || invoiceStatus === 'paid')) {
+          router.push('/booking/success')
+        } else if (status.success && paymentStatus === 'failed') {
+          setSepayStatus('failed')
+        }
+      } catch {
+        // Network error — keep polling silently
+      }
+    }
+
+    checkStatus()
+    const timer = window.setInterval(checkStatus, 3000)
+    return () => window.clearInterval(timer)
+  }, [router, sepayPayment?.paymentId, sepayStatus])
+
+  // ─── SePay countdown: 10 minute timeout ────────────────────────
+  useEffect(() => {
+    if (!sepayPayment || sepayStatus !== 'waiting') return
+
+    const timer = window.setInterval(() => {
+      setSepayCountdown(prev => {
+        if (prev <= 1) {
+          setSepayStatus('expired')
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [sepayPayment, sepayStatus])
 
   // Show loading while auth initialises or redirecting unauthenticated user
   if (authLoading || !user) {
@@ -237,6 +293,148 @@ export default function BookingPage() {
   const discountAmount = discountApplied ? Math.floor(booking.totalPrice * 0.1) : 0
   const total          = booking.totalPrice + racketPrice - discountAmount
 
+  // ─── SePay QR Payment Screen ───────────────────────────────────
+  if (sepayPayment) {
+    const copyTransferContent = () => {
+      if (typeof navigator !== 'undefined') {
+        navigator.clipboard?.writeText(sepayPayment.transferContent)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      }
+    }
+
+    const handleRetryPayment = () => {
+      setSepayPayment(null)
+      setSepayStatus('waiting')
+      setSepayCountdown(600)
+      setSubmitting(false)
+    }
+
+    const countdownMin = Math.floor(sepayCountdown / 60).toString().padStart(2, '0')
+    const countdownSec = (sepayCountdown % 60).toString().padStart(2, '0')
+    const isUrgent = sepayCountdown <= 60 && sepayStatus === 'waiting'
+
+    return (
+      <div className="min-h-screen flex flex-col bg-[#F7F8FA]">
+        <Navbar />
+        <main className="flex-1 px-4 py-10">
+          <div className="mx-auto max-w-2xl space-y-5">
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 text-center">
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#FF6B35]/10 text-[#FF6B35]">
+                <QrCode className="h-7 w-7" />
+              </div>
+              <h1 className="font-serif text-2xl font-bold text-[#0A2416]">Thanh toán SePay</h1>
+              <p className="mt-2 text-sm text-gray-500">
+                Quét mã QR hoặc chuyển khoản đúng nội dung bên dưới. Hệ thống sẽ tự xác nhận khi SePay báo tiền về.
+              </p>
+              {sepayStatus === 'waiting' && (
+                <div className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold font-mono border mt-3",
+                  isUrgent
+                    ? "bg-red-50 text-red-600 border-red-200 animate-pulse"
+                    : "bg-amber-50 text-amber-600 border-amber-200",
+                )}>
+                  <Clock className="h-3.5 w-3.5" />
+                  Còn lại: {countdownMin}:{countdownSec}
+                </div>
+              )}
+            </div>
+
+            {sepayStatus === 'failed' && (
+              <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 px-5 py-4">
+                <AlertCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-bold text-red-800">Thanh toán không thành công</p>
+                  <p className="text-xs text-red-700 mt-0.5">
+                    Số tiền chuyển không đủ hoặc nội dung chuyển khoản không đúng. Vui lòng thử lại.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {sepayStatus === 'expired' && (
+              <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4">
+                <Clock className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-bold text-amber-800">Hết thời gian thanh toán</p>
+                  <p className="text-xs text-amber-700 mt-0.5">
+                    Mã QR đã hết hạn sau 10 phút. Vui lòng tạo lại giao dịch thanh toán.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {sepayStatus === 'waiting' && (
+              <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+                  <img
+                    src={sepayPayment.qrImageUrl}
+                    alt="SePay VietQR"
+                    className="mx-auto aspect-square w-full rounded-xl border border-gray-100 bg-white object-contain"
+                  />
+                </div>
+
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
+                  <InfoRow label="Số tiền" value={formatVND(sepayPayment.amount)} />
+                  <InfoRow label="Ngân hàng" value={sepayPayment.bankCode || "SePay"} />
+                  <InfoRow label="Tài khoản" value={sepayPayment.accountNumber || "Theo cấu hình SePay"} />
+                  <div>
+                    <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold">Nội dung chuyển khoản</p>
+                    <div className="mt-1.5 flex items-center gap-2 rounded-xl border border-orange-100 bg-orange-50 px-3 py-2">
+                      <span className="flex-1 break-all font-mono text-sm font-bold text-[#FF6B35]">
+                        {sepayPayment.transferContent}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={copyTransferContent}
+                        className={cn(
+                          "inline-flex h-9 w-9 items-center justify-center rounded-lg shadow-sm transition-colors",
+                          copied
+                            ? "bg-green-100 text-green-600"
+                            : "bg-white text-gray-600 hover:text-[#FF6B35]"
+                        )}
+                        aria-label="Copy transfer content"
+                      >
+                        {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 rounded-xl border border-green-100 bg-green-50 px-4 py-3 text-sm text-green-700">
+                    <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                    Đang chờ SePay xác thực thanh toán...
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              {(sepayStatus === 'failed' || sepayStatus === 'expired') && (
+                <button
+                  type="button"
+                  onClick={handleRetryPayment}
+                  className="flex-1 flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-[#FF6B35] to-[#e85a28] py-3.5 text-sm font-bold text-white shadow-lg shadow-[#FF6B35]/30 hover:shadow-xl hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200"
+                >
+                  Thử lại thanh toán
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => router.push('/my-bookings')}
+                className={cn(
+                  "rounded-2xl border-2 border-gray-200 bg-white px-5 py-3 text-sm font-bold text-gray-600 hover:bg-gray-50",
+                  (sepayStatus === 'failed' || sepayStatus === 'expired') ? "flex-1" : "w-full"
+                )}
+              >
+                Xem lịch đặt của tôi
+              </button>
+            </div>
+          </div>
+        </main>
+      </div>
+    )
+  }
+
   const validateStep1 = () => {
     const e: Record<string, string> = {}
     if (!contactName.trim())    e.contactName    = "Vui lòng nhập họ tên"
@@ -267,6 +465,13 @@ export default function BookingPage() {
       const year       = new Date().getFullYear()
       const bookingDate = `${year}-${monthStr.padStart(2, '0')}-${dayStr.padStart(2, '0')}`
       const [timeStart, timeEnd] = booking.timeRange.split(' - ').map((t: string) => t.trim())
+      const slotDate = new Date(year, Number(monthStr) - 1, Number(dayStr))
+      if (isSlotPast(slotDate, timeStart)) {
+        localStorage.removeItem('pendingBooking')
+        setSubmitError('Khung giờ đã qua, vui lòng chọn lại lịch trống')
+        setSubmitting(false)
+        return
+      }
 
       // Map FE payment method to BE payment_method
       const bePaymentMethod = paymentMethod === 'bank' ? 'bank_transfer'
@@ -291,22 +496,60 @@ export default function BookingPage() {
           courtAddress: booking.courtAddress, courtLat: booking.courtLat, courtLng: booking.courtLng,
           date: booking.date, timeRange: booking.timeRange,
           people, amount: total, paymentMethod,
+          status: result.booking.status,
           contact: { name: contactName, phone: contactPhone, email: contactEmail, address: contactAddress },
           racketRental, note,
         }
         localStorage.setItem('completedBooking', JSON.stringify(completedData))
         localStorage.removeItem('pendingBooking')
 
-        // For VNPay / MoMo: redirect to payment gateway
-        if ((paymentMethod === 'vnpay' || paymentMethod === 'momo') && result.booking.invoice_id) {
-          const payResult = await paymentApi.create(result.booking.invoice_id, paymentMethod as 'vnpay' | 'momo')
-          if (payResult.success && payResult.payUrl) {
+        // For payment gateways: redirect or submit checkout form
+        if ((paymentMethod === 'vnpay' || paymentMethod === 'momo' || paymentMethod === 'sepay') && result.booking.invoice_id) {
+          if (result.booking.status === 'confirmed' || result.booking.invoice_status === 'paid') {
+            setTimeout(() => router.push('/booking/success'), 800)
+            return
+          }
+          const payResult = await paymentApi.create(result.booking.invoice_id, paymentMethod as 'vnpay' | 'momo' | 'sepay')
+          if (paymentMethod === 'sepay' && payResult.success && payResult.paymentId) {
+            // Prefer QR mode (VietQR) — works with just bank info
+            if (payResult.qrImageUrl) {
+              setSepayPayment({
+                paymentId: payResult.paymentId,
+                qrImageUrl: payResult.qrImageUrl,
+                bankCode: payResult.bankCode || '',
+                accountNumber: payResult.accountNumber || '',
+                transferContent: payResult.transferContent || result.booking.invoice_id,
+                amount: payResult.amount || total,
+              })
+              setSubmitting(false)
+              return
+            }
+            // Fallback: checkout form POST (requires merchant config)
+            if (payResult.checkoutUrl && payResult.formFields) {
+              const form = document.createElement("form")
+              form.method = "POST"
+              form.action = payResult.checkoutUrl
+              Object.entries(payResult.formFields).forEach(([name, value]) => {
+                const input = document.createElement("input")
+                input.type = "hidden"
+                input.name = name
+                input.value = String(value)
+                form.appendChild(input)
+              })
+              document.body.appendChild(form)
+              form.submit()
+              return
+            }
+            // Neither QR nor checkout available
+            setSubmitError('SePay chưa được cấu hình đầy đủ. Vui lòng chọn phương thức thanh toán khác.')
+            setSubmitting(false)
+            return
+          } else if (payResult.success && payResult.payUrl) {
             window.location.href = payResult.payUrl
             return
           } else {
-            // Payment link creation failed — still go to success page (booking was created)
             setSubmitError(payResult.error || 'Không thể tạo liên kết thanh toán. Vui lòng thanh toán tại quầy.')
-            setTimeout(() => router.push('/booking/success'), 2500)
+            setSubmitting(false)
             return
           }
         }

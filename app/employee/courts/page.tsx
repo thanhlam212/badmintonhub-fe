@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
-import { formatVND, generateTimeSlots, getWeekDays } from "@/lib/utils"
+import { formatDateLabel, formatVND, generateTimeSlots, getWeekDays } from "@/lib/utils"
 import { branchApi, courtApi, bookingApi, type ApiCourt } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
@@ -60,18 +60,50 @@ export default function EmployeeCourtsPage() {
 
   // Load bookings from API
   useEffect(() => {
-    bookingApi.getAll({ limit: 1000 }).then((res: any) => {
-      if (res.success && res.data) {
-        const slots = res.data.map((b: any) => ({
-          courtId: b.court_id,
-          dateLabel: b.booking_date ? new Date(b.booking_date).toLocaleDateString("vi-VN", { weekday: "short", day: "2-digit", month: "2-digit" }) : "",
-          time: b.start_time?.slice(0, 5) || "",
-          status: b.status === "confirmed" ? "booked" : b.status === "hold" ? "hold" : "booked",
-          bookedBy: b.customer_name || "",
-        }))
+    let cancelled = false
+
+    const fetchBookings = () => {
+      bookingApi.getAll({ limit: 1000 }).then((res: any) => {
+        if (cancelled) return
+        const bookings = res.bookings || []
+        const slots: typeof allBookings = []
+        for (const b of bookings) {
+          // Skip cancelled bookings
+          if (b.status === "cancelled") continue
+          if (!b.courtId || !b.timeStart) continue
+
+          let dateLabel = ""
+          if (b.bookingDate) {
+            const d = new Date(b.bookingDate)
+            dateLabel = formatDateLabel(d)
+          }
+          if (!dateLabel) continue
+
+          // Expand time range into hourly slots (e.g., 06:00-08:00 → [06:00, 07:00])
+          const startHour = parseInt(b.timeStart.split(":")[0])
+          const endHour = b.timeEnd ? parseInt(b.timeEnd.split(":")[0]) : startHour + 1
+          for (let h = startHour; h < endHour; h++) {
+            slots.push({
+              courtId: b.courtId,
+              dateLabel,
+              time: `${String(h).padStart(2, "0")}:00`,
+              status: b.status === "hold" ? "hold" : "booked",
+              bookedBy: b.customerName || "",
+              phone: b.customerPhone || "",
+            })
+          }
+        }
         setAllBookings(slots)
-      }
-    }).catch(() => {})
+      }).catch(() => {})
+    }
+
+    fetchBookings()
+    const refreshTimer = window.setInterval(fetchBookings, 60_000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(refreshTimer)
+    }
   }, [bookingsVersion])
 
   /* Helper: convert warehouse name → branch name */
@@ -145,32 +177,43 @@ export default function EmployeeCourtsPage() {
       // Find matching booking and cancel it
       const matching = allBookings.find(b => b.courtId === courtId && b.dateLabel === dateLabel && b.time === time)
       if (matching) {
-        // For now, update local state; backend cancel would need booking ID
         setAllBookings(prev => prev.filter(b => !(b.courtId === courtId && b.dateLabel === dateLabel && b.time === time)))
       }
     } else {
       if (currentStatus !== "available") {
+        // Slot already booked → toggle off (remove local)
         setAllBookings(prev => prev.filter(b => !(b.courtId === courtId && b.dateLabel === dateLabel && b.time === time)))
       } else {
-        // Add new booking via API
+        // Add new booking via API — only update local state if API succeeds
         try {
-          // Parse date from dateLabel (e.g., "T2, 01/07")
-          const parts = dateLabel.split(", ")[1]?.split("/")
-          const bookingDate = parts ? `${new Date().getFullYear()}-${parts[1]}-${parts[0]}` : new Date().toISOString().split("T")[0]
-          await bookingApi.create({
-          courtId: courtId,
-          bookingDate: bookingDate,
-          timeStart: time,
-          timeEnd: `${String(parseInt(time.split(":")[0]) + 1).padStart(2, "0")}:00`,
-          people: 1,
-          paymentMethod: "cash",
-          customerName: user?.fullName || "Nhân viên",
-          customerPhone: "0000000000",
-        })
-        } catch {}
-        setAllBookings(prev => [...prev, { courtId, dateLabel, time, status: employeeAction, bookedBy: user?.fullName || "Nhân viên" }])
+          const parts = dateLabel.split("/")
+          const day = parts[0]?.padStart(2, "0")
+          const month = parts[1]?.padStart(2, "0")
+          const bookingDate = parts.length >= 2 ? `${new Date().getFullYear()}-${month}-${day}` : new Date().toISOString().split("T")[0]
+          const res = await bookingApi.create({
+            court_id: courtId,
+            booking_date: bookingDate,
+            time_start: time,
+            time_end: `${String(parseInt(time.split(":")[0]) + 1).padStart(2, "0")}:00`,
+            slots: 1,
+            customer_name: user?.fullName || "Nhân viên",
+            customer_phone: "0000000000",
+            payment_method: "cash",
+          })
+          if (res && (res as any).success !== false) {
+            // API succeeded → add to local state
+            setAllBookings(prev => [...prev, { courtId, dateLabel, time, status: employeeAction, bookedBy: user?.fullName || "Nhân viên" }])
+          } else {
+            // API returned error (e.g., conflict)
+            alert((res as any)?.error || "Slot đã được đặt bởi người khác. Vui lòng tải lại trang.")
+          }
+        } catch (err: any) {
+          // API threw (conflict / network error)
+          alert(err?.message || "Slot đã được đặt bởi người khác hoặc có lỗi xảy ra.")
+        }
       }
     }
+    // Always re-fetch from API to get latest state
     setBookingsVersion(v => v + 1)
   }, [employeeAction, user?.fullName, allBookings])
 

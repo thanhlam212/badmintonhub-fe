@@ -11,7 +11,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { inventoryApi, orderApi, purchaseOrderApi, salesOrderApi, transferApi } from "@/lib/api"
 import { printOrderInvoice, printTransferSlip, printWarehouseSlip } from "@/lib/print-utils"
-import { formatHDReference, formatPOReference, formatVND } from "@/lib/utils"
+import { formatHDReference, formatPOReference, formatVND, formatTransferReference } from "@/lib/utils"
 import { Eye, Printer, Search } from "lucide-react"
 
 export type AuditDocCategory = "invoice" | "export" | "import" | "transfer" | "purchase" | "other"
@@ -317,12 +317,9 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
           return String(left?.id || "").localeCompare(String(right?.id || ""))
         })
 
-        const transferCountByDay: Record<string, number> = {}
         for (const transfer of sortedTransfers) {
           const date = formatLocalDate(transfer?.created_at || transfer?.date)
-          const dayToken = date.replace(/-/g, "")
-          transferCountByDay[dayToken] = (transferCountByDay[dayToken] || 0) + 1
-          const transferCode = String(transfer?.code || `DC-${dayToken}-${String(transferCountByDay[dayToken]).padStart(3, "0")}`)
+          const transferCode = formatTransferReference(transfer?.code || transfer?.id, transfer?.created_at || transfer?.date)
 
           pushDoc({
             id: `transfer-${String(transfer?.id || transferCode)}`,

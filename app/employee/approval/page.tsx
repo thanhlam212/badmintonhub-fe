@@ -9,10 +9,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose, DialogTrigger } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
-import { formatVND } from "@/lib/utils"
+import { formatVND, formatSalesOrderReference } from "@/lib/utils"
 import { salesOrderApi } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
+import { useInventory } from "@/lib/inventory-context"
 import {
   Search, CheckCircle2, XCircle, Clock, Eye, FileText,
   ArrowUpFromLine, Receipt, Package, AlertTriangle, Printer,
@@ -29,6 +30,7 @@ interface CartItem {
 
 interface SalesOrder {
   id: string
+  rawId?: string
   date: string
   time: string
   customer: string
@@ -52,6 +54,7 @@ interface SalesOrder {
 interface ExportSlip {
   id: string
   orderId: string
+  orderRawId?: string
   date: string
   items: { name: string; qty: number; price: number }[]
   total: number
@@ -83,6 +86,7 @@ function StatusBadge({ status }: { status: string }) {
 /* ─── Main Page ─── */
 export default function ApprovalPage() {
   const { user } = useAuth()
+  const { refreshInventory } = useInventory()
   const [orders, setOrders] = useState<SalesOrder[]>([])
   const [exportSlips, setExportSlips] = useState<ExportSlip[]>([])
   const [search, setSearch] = useState("")
@@ -96,7 +100,9 @@ export default function ApprovalPage() {
       const res = await salesOrderApi.getAll()
       if ((res as any).success && (res as any).data) {
         setOrders((res as any).data.map((o: any) => ({
-          id: String(o.id), date: o.created_at ? new Date(o.created_at).toISOString().split("T")[0] : "",
+          id: formatSalesOrderReference(o.sales_code || o.orderCode || o.order_code || o.code || o.id, o.created_at),
+          rawId: String(o.id),
+          date: o.created_at ? new Date(o.created_at).toISOString().split("T")[0] : "",
           time: o.created_at ? new Date(o.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "",
           customer: o.customer_name || "Khách lẻ", phone: o.customer_phone || "",
           items: (o.items || []).map((i: any) => ({ productId: i.product_id, name: i.product_name || i.name || "", price: i.price || 0, qty: i.qty || i.quantity || 0 })),
@@ -149,7 +155,7 @@ export default function ApprovalPage() {
   // Approve order → call API then generate export slip
   const handleApprove = async (order: SalesOrder) => {
     try {
-      const res = await salesOrderApi.approve(order.id)
+      const res = await salesOrderApi.approve(order.rawId || order.id)
       if (!res.success) { console.error("Approve failed:", res.error); return }
     } catch (err) { console.error("Approve error:", err); return }
     const now = new Date()
@@ -158,6 +164,7 @@ export default function ApprovalPage() {
     const slip: ExportSlip = {
       id: slipId,
       orderId: order.id,
+      orderRawId: order.rawId || order.id,
       date: now.toISOString().split("T")[0],
       items: order.items.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
       total: order.finalTotal,
@@ -182,7 +189,7 @@ export default function ApprovalPage() {
   // Reject order
   const handleReject = async (order: SalesOrder, reason: string) => {
     try {
-      await salesOrderApi.reject(order.id, reason)
+      await salesOrderApi.reject(order.rawId || order.id, reason)
     } catch {}
     const now = new Date()
     const updatedOrders = orders.map(o =>
@@ -198,7 +205,17 @@ export default function ApprovalPage() {
   const handleCompleteSlip = async (slip: ExportSlip) => {
     const now = new Date()
     // Call BE to mark order as exported
-    try { await salesOrderApi.complete(slip.orderId) } catch {}
+    try {
+      const res = await salesOrderApi.complete(slip.orderRawId || slip.orderId)
+      if (!res.success) {
+        alert(res.error || "Không thể xuất kho. Vui lòng kiểm tra tồn kho và thử lại.")
+        return
+      }
+      await refreshInventory().catch(() => {})
+    } catch {
+      alert("Không thể xuất kho. Vui lòng kiểm tra kết nối và thử lại.")
+      return
+    }
 
     const updatedSlips = exportSlips.map(s =>
       s.id === slip.id
