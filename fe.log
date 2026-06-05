@@ -8,20 +8,18 @@
 - Environments: .env.local
 
 ✓ Starting...
-✓ Ready in 1793ms
- GET /courts 200 in 2.5s (compile: 2.1s, render: 459ms)
- GET / 200 in 97ms (compile: 65ms, render: 32ms)
- GET /courts 200 in 33ms (compile: 7ms, render: 26ms)
- GET /courts 200 in 253ms (compile: 7ms, render: 246ms)
- GET / 200 in 38ms (compile: 8ms, render: 29ms)
- GET /shop 200 in 1287ms (compile: 1244ms, render: 43ms)
- GET /courts 200 in 31ms (compile: 5ms, render: 26ms)
-⚠ Fast Refresh had to perform a full reload when ./lib/api.ts changed. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
-✓ Compiled in 303ms
- GET /courts 200 in 323ms (compile: 60ms, render: 263ms)
-✓ Compiled in 286ms
- GET /shop 200 in 97ms (compile: 61ms, render: 36ms)
- GET / 200 in 98ms (compile: 71ms, render: 27ms)
- GET /courts 200 in 30ms (compile: 4ms, render: 25ms)
- GET /courts/6 200 in 880ms (compile: 840ms, render: 39ms)
-[?25h
+✓ Ready in 2.4s
+ GET / 200 in 2.3s (compile: 1924ms, render: 391ms)
+ GET /courts 200 in 122ms (compile: 76ms, render: 46ms)
+ GET /login 200 in 128ms (compile: 99ms, render: 29ms)
+ GET /forgot-password 200 in 974ms (compile: 931ms, render: 44ms)
+ GET /login 200 in 26ms (compile: 5ms, render: 21ms)
+ GET / 200 in 26ms (compile: 5ms, render: 21ms)
+ GET /my-bookings 200 in 992ms (compile: 963ms, render: 29ms)
+ GET /courts 200 in 39ms (compile: 6ms, render: 33ms)
+ GET /courts/7 200 in 780ms (compile: 734ms, render: 46ms)
+ GET /booking 200 in 748ms (compile: 702ms, render: 46ms)
+ GET /booking 200 in 269ms (compile: 12ms, render: 257ms)
+ GET /courts 200 in 39ms (compile: 8ms, render: 31ms)
+ GET / 200 in 27ms (compile: 4ms, render: 23ms)
+ GET / 200 in 130ms (compile: 5ms, render: 125ms)

@@ -63,13 +63,16 @@ function Stepper({ step }: { step: number }) {
   )
 }
 
-// ─── Countdown ───────────────────────────────────────────────────────────────
-function Countdown() {
-  const [seconds, setSeconds] = useState(600)
+// ─── Countdown (5 phút) ──────────────────────────────────────────────────────
+function Countdown({ onExpire }: { onExpire?: () => void }) {
+  const [seconds, setSeconds] = useState(300) // 5 phút
   useEffect(() => {
-    const t = setInterval(() => setSeconds(s => Math.max(0, s - 1)), 1000)
+    const t = setInterval(() => setSeconds(s => {
+      if (s <= 1) { clearInterval(t); onExpire?.(); return 0 }
+      return s - 1
+    }), 1000)
     return () => clearInterval(t)
-  }, [])
+  }, [onExpire])
   const m = Math.floor(seconds / 60).toString().padStart(2, '0')
   const s = (seconds % 60).toString().padStart(2, '0')
   const urgent = seconds <= 60
@@ -179,6 +182,7 @@ export default function BookingPage() {
   const [submitting, setSubmitting]         = useState(false)
   const [submitError, setSubmitError]       = useState("")
   const [booking, setBooking]               = useState<PendingBooking | null>(null)
+  const [sessionExpired, setSessionExpired] = useState(false)
 
   // Contact info
   const [contactName, setContactName]       = useState(user?.fullName === "Khách" ? "" : (user?.fullName || ""))
@@ -227,6 +231,38 @@ export default function BookingPage() {
           <div className="text-center">
             <Loader2 className="h-8 w-8 animate-spin text-[#FF6B35] mx-auto" />
             <p className="text-gray-500 mt-3 text-sm">Đang tải thông tin đặt sân...</p>
+          </div>
+        </main>
+      </div>
+    )
+  }
+
+  // ── Màn hình hết hạn phiên ────────────────────────────────────────────────
+  if (sessionExpired) {
+    // Gọi API để giải phóng chỗ đã hold (fire-and-forget)
+    fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/bookings/release-expired`, { method: 'POST' }).catch(() => {})
+    // Xóa pending booking khỏi localStorage
+    localStorage.removeItem('pendingBooking')
+
+    return (
+      <div className="min-h-screen flex flex-col bg-[#F7F8FA]">
+        <Navbar />
+        <main className="flex-1 flex items-center justify-center px-4">
+          <div className="text-center max-w-sm mx-auto">
+            <div className="h-20 w-20 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-6">
+              <Clock className="h-10 w-10 text-red-500" />
+            </div>
+            <h2 className="font-serif text-2xl font-bold text-gray-800 mb-2">Phiên đặt sân đã hết hạn</h2>
+            <p className="text-gray-500 text-sm mb-6">
+              Chỗ giữ của bạn đã được giải phóng sau 5 phút chưa thanh toán.
+              Vui lòng chọn lại sân và thực hiện đặt sân mới.
+            </p>
+            <button
+              onClick={() => router.push('/courts')}
+              className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-[#FF6B35] to-[#e85a28] px-8 py-3 text-sm font-bold text-white shadow-lg"
+            >
+              Chọn sân mới
+            </button>
           </div>
         </main>
       </div>
@@ -416,8 +452,8 @@ export default function BookingPage() {
                   {/* Booking info */}
                   <Section title="Thông tin đặt sân" icon={FileText}>
                     <div className="flex items-center justify-between mb-5">
-                      <p className="text-xs text-gray-400">Thời gian giữ sân</p>
-                      <Countdown />
+                      <p className="text-xs text-gray-400">Thời gian giữ chỗ (5 phút)</p>
+                      <Countdown onExpire={() => setSessionExpired(true)} />
                     </div>
                     <div className="grid grid-cols-2 gap-x-6 gap-y-4">
                       <InfoRow label="Sân" value={booking.courtName} />

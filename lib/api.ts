@@ -412,6 +412,30 @@ export const authApi = {
     })
     return { success: res.success, error: res.message }
   },
+
+  // POST /auth/forgot-password — gửi OTP qua email
+  forgotPassword: async (phone: string) => {
+    const res = await apiFetch<{
+      username: string; maskedEmail: string; maskedPhone: string; message: string
+    }>('/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ phone }),
+    })
+    if (res.success && res.data) {
+      return { success: true, ...res.data }
+    }
+    return { success: false, error: res.message || 'Không tìm thấy tài khoản' }
+  },
+
+  // POST /auth/reset-password — xác minh OTP và đặt mật khẩu mới
+  resetPassword: async (phone: string, otp: string, newPassword: string) => {
+    const res = await apiFetch<{ message: string; username: string }>('/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ phone, otp, new_password: newPassword }),
+    })
+    if (res.success) return { success: true, message: (res.data as any)?.message }
+    return { success: false, error: res.message || 'Xác minh thất bại' }
+  },
 }
 
 // ═══════════════════════════════════════════════════════════════
