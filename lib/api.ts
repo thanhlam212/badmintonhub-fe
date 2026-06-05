@@ -161,15 +161,25 @@ export interface ApiBooking {
 
 export interface ApiOrder {
   id: string
+  orderCode?: string
+  invoiceId?: string | null
+  invoiceStatus?: string | null
+  invoiceCode?: string | null
   userId: string | null
   customerName: string
   customerPhone: string
   customerEmail: string | null
   shippingAddress: string
+  subtotal?: number
+  shippingFee?: number
+  totalAmount?: number
   amount: number
   status: string
   paymentMethod: string | null
   note: string | null
+  deliveryMethod?: 'delivery' | 'pickup'
+  pickupBranchId?: number | null
+  fulfillingWarehouseId?: number | null
   items: ApiOrderItem[]
   createdAt: string
 }
@@ -305,20 +315,30 @@ function transformBooking(raw: any): ApiBooking {
 function transformOrder(raw: any): ApiOrder {
   return {
     id: raw.id,
-    userId: raw.userId,
+    orderCode: raw.orderCode || raw.order_code || raw.sales_code || raw.invoiceCode || raw.invoice_code || undefined,
+    invoiceId: raw.invoiceId || raw.invoice_id || null,
+    invoiceStatus: raw.invoiceStatus || raw.invoice_status || null,
+    invoiceCode: raw.invoiceCode || raw.invoice_code || null,
+    userId: raw.userId ?? raw.user_id ?? null,
     customerName: raw.customerName,
     customerPhone: raw.customerPhone,
     customerEmail: raw.customerEmail || null,
-    shippingAddress: raw.customerAddress || '',
-    amount: parseFloat(raw.total),
+    shippingAddress: raw.shippingAddress || raw.shipping_address || raw.customerAddress || raw.customer_address || '',
+    subtotal: parseFloat(String(raw.subtotal ?? raw.amount ?? raw.totalAmount ?? raw.total_amount ?? raw.total ?? 0)),
+    shippingFee: parseFloat(String(raw.shippingFee ?? raw.shipping_fee ?? 0)),
+    totalAmount: parseFloat(String(raw.totalAmount ?? raw.total_amount ?? raw.total ?? raw.amount ?? 0)),
+    amount: parseFloat(String(raw.totalAmount ?? raw.total_amount ?? raw.total ?? raw.amount ?? 0)),
     status: raw.status,
-    paymentMethod: raw.paymentMethod,
+    paymentMethod: raw.paymentMethod || raw.payment_method || null,
     note: raw.note || null,
+    deliveryMethod: raw.deliveryMethod || raw.delivery_method || 'delivery',
+    pickupBranchId: raw.pickupBranchId ?? raw.pickup_branch_id ?? null,
+    fulfillingWarehouseId: raw.fulfillingWarehouseId ?? raw.fulfilling_warehouse_id ?? null,
     items: (raw.items || []).map((item: any) => ({
-      productId: item.productId,
-      productName: item.productName,
-      sku: item.product?.sku || '',
-      quantity: item.qty,
+      productId: item.productId ?? item.product_id,
+      productName: item.productName || item.product_name || item.name || '',
+      sku: item.product?.sku || item.sku || '',
+      quantity: item.quantity ?? item.qty ?? 0,
       price: parseFloat(item.price),
     })),
     createdAt: raw.createdAt,
@@ -864,7 +884,13 @@ export const orderApi = {
     shipping_address: string
     payment_method?: string
     note?: string
-    items: { product_id: number; quantity: number; price: number }[]
+    delivery_method?: string
+    pickup_branch_id?: number
+    customer_coords?: any
+    shipping_fee?: number
+    subtotal?: number
+    total?: number
+    items: { product_id: number; qty: number; price: number }[]
     }) => {
       const res = await apiFetch<any>('/orders', {
         method: 'POST',
@@ -1000,10 +1026,10 @@ export const purchaseOrderApi = {
     const res = await apiFetch('/purchase-orders', {
       method: 'POST',
       body: JSON.stringify({
-        supplierId:  dto.supplier_id,
-        warehouseId: dto.warehouse_id,
+        supplier_id:  dto.supplier_id,
+        warehouse_id: dto.warehouse_id,
         note:        dto.note || '',
-        items:       dto.items.map(i => ({ sku: i.sku, qty: i.quantity, unitCost: i.price })),
+        items:       dto.items.map(i => ({ sku: i.sku, quantity: i.quantity, price: i.price })),
       }),
     })
     return { success: res.success, data: res.data, error: res.message }
@@ -1323,13 +1349,36 @@ export const paymentApi = {
    * POST /payment/create
    * Returns: { paymentId, method, payUrl }
    */
-  create: async (invoiceId: string, method: 'vnpay' | 'momo') => {
-    const res = await apiFetch<{ paymentId: string; method: string; payUrl: string }>('/payment/create', {
+  create: async (invoiceId: string, method: 'vnpay' | 'momo' | 'sepay') => {
+    const res = await apiFetch<{
+      paymentId: string
+      method: string
+      payUrl?: string
+      qrImageUrl?: string
+      bankCode?: string
+      accountNumber?: string
+      transferContent?: string
+      amount?: number
+      checkoutUrl?: string
+      formFields?: Record<string, any>
+    }>('/payment/create', {
       method: 'POST',
       body: JSON.stringify({ invoiceId, method }),
     })
     if (res.success && res.data) {
-      return { success: true, paymentId: res.data.paymentId, payUrl: res.data.payUrl, method: res.data.method }
+      return {
+        success: true,
+        paymentId: res.data.paymentId,
+        payUrl: res.data.payUrl || null,
+        method: res.data.method,
+        qrImageUrl: res.data.qrImageUrl,
+        bankCode: res.data.bankCode,
+        accountNumber: res.data.accountNumber,
+        transferContent: res.data.transferContent,
+        amount: res.data.amount,
+        checkoutUrl: res.data.checkoutUrl,
+        formFields: res.data.formFields,
+      }
     }
     return { success: false, error: res.message || 'Không thể tạo liên kết thanh toán', paymentId: null, payUrl: null }
   },

@@ -10,7 +10,7 @@ import { Star, MapPin, Clock, ChevronLeft, ChevronRight, Check, Wifi, Wind, Lamp
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useState, useMemo, use, useCallback, useEffect, useRef } from "react"
-import { formatVND, generateTimeSlots, getWeekDays, WEATHER_API_KEY } from "@/lib/utils"
+import { formatVND, generateTimeSlots, getWeekDays, isSlotPast, WEATHER_API_KEY } from "@/lib/utils"
 import { courtApi, type ApiCourt } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { AddressInput } from "@/components/address-input"
@@ -141,9 +141,15 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
   const isClosed = court ? court.available === false : false
 
   const [selectedSlots, setSelectedSlots] = useState<string[]>([])
+  const [nowTick, setNowTick] = useState(() => Date.now())
   const [expanded, setExpanded] = useState(false)
   const [weekOffset, setWeekOffset] = useState(0)
   const timeSlots = generateTimeSlots()
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowTick(Date.now()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   // Directions state — auto-fill from user's registered address
   const { user } = useAuth()
@@ -213,6 +219,8 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
   const [availability, setAvailability] = useState<Record<string, Record<string, 'available' | 'booked' | 'hold'>>>({})
   useEffect(() => {
     if (!court) return
+    let cancelled = false
+
     const fetchSlots = async () => {
       const timeSlotsList = generateTimeSlots()
       const map: Record<string, Record<string, 'available' | 'booked' | 'hold'>> = {}
@@ -235,9 +243,18 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
           }
         })
       })
-      setAvailability(map)
+      if (!cancelled) {
+        setAvailability(map)
+      }
     }
+
     fetchSlots()
+    const refreshTimer = window.setInterval(fetchSlots, 60_000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(refreshTimer)
+    }
   }, [court?.id, weekKey])
 
   // Ngày hiện đang được chọn (chỉ cho phép chọn 1 ngày tại một thời điểm)
@@ -247,6 +264,10 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
 
   const toggleSlot = (dayLabel: string, time: string) => {
     if (isClosed) return // Block slot selection on closed courts
+    const day = weekDays.find(d => d.label === dayLabel)
+    if (!day || isSlotPast(day.date, time)) return
+    if ((availability[dayLabel]?.[time] || 'available') !== 'available') return
+
     const key = `${dayLabel}-${time}`
     setSelectedSlots(prev => {
       if (prev.includes(key)) {
@@ -261,6 +282,16 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
       return [...prev, key]
     })
   }
+
+  useEffect(() => {
+    setSelectedSlots(prev => prev.filter(slot => {
+      const lastDash = slot.lastIndexOf('-')
+      const dayLabel = slot.substring(0, lastDash)
+      const time = slot.substring(lastDash + 1)
+      const day = weekDays.find(d => d.label === dayLabel)
+      return day && !isSlotPast(day.date, time) && (availability[dayLabel]?.[time] || 'available') === 'available'
+    }))
+  }, [availability, nowTick, weekKey])
 
   const totalPrice = selectedSlots.length * (court?.price || 0)
 
@@ -298,6 +329,18 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
       return
     }
     const { date, timeRange, slots } = getBookingTimeRange()
+    const hasPastSlot = slots.some(slot => {
+      const lastDash = slot.lastIndexOf('-')
+      const dayLabel = slot.substring(0, lastDash)
+      const time = slot.substring(lastDash + 1)
+      const day = weekDays.find(d => d.label === dayLabel)
+      return !day || isSlotPast(day.date, time)
+    })
+    if (hasPastSlot) {
+      setSelectedSlots([])
+      return
+    }
+
     const bookingData = {
       courtId: court!.id,
       courtName: court!.name,
@@ -848,7 +891,8 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
                             const status = availability[d.label]?.[time] || 'available'
                             const slotKey = `${d.label}-${time}`
                             const isSelected = selectedSlots.includes(slotKey)
-                            const isDisabled = status !== 'available'
+                            const isPastSlot = nowTick > 0 && isSlotPast(d.date, time)
+                            const isDisabled = status !== 'available' || isPastSlot
                             const isOtherDay = selectedDay !== null && selectedDay !== d.label
 
                             return (
@@ -861,6 +905,8 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
                                   "h-8 rounded text-xs font-medium transition-all duration-150",
                                   isSelected
                                     ? "bg-primary text-primary-foreground scale-[0.95] shadow-sm shadow-primary/40 ring-2 ring-primary/30"
+                                    : isPastSlot
+                                      ? "bg-muted text-muted-foreground cursor-not-allowed opacity-40"
                                     : isOtherDay
                                       ? status === 'available'
                                         ? "bg-court-available opacity-30 hover:opacity-70 cursor-pointer"

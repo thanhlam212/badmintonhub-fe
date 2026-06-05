@@ -106,9 +106,12 @@ export default function CheckoutPage() {
         shipping_address: shippingAddr,
         payment_method: paymentMethod,
         note: note.trim() || undefined,
+        delivery_method: deliveryMethod,
+        pickup_branch_id: deliveryMethod === "pickup" ? pickupBranch : undefined,
+        customer_coords: deliveryMethod === "delivery" ? customerCoords : undefined,
         items: cart.map(item => ({
           product_id: item.productId,
-          quantity: item.qty,
+          qty: item.qty,
           price: item.price,
         })),
       })
@@ -329,6 +332,7 @@ export default function CheckoutPage() {
                 <CardContent>
                   <RadioGroup value={paymentMethod} onValueChange={setPaymentMethod} className="flex flex-col gap-3">
                     {[
+                      { value: "sepay", label: "SePay", icon: <Building2 className="h-5 w-5" />, desc: "Thanh toan qua SePay / VietQR" },
                       { value: "cod", label: "Thanh toán khi nhận hàng (COD)", icon: <Truck className="h-5 w-5" />, desc: "Trả tiền mặt khi nhận hàng" },
                       { value: "momo", label: "MoMo", icon: <Smartphone className="h-5 w-5" />, desc: "Ví điện tử MoMo" },
                       { value: "vnpay", label: "VNPay", icon: <CreditCard className="h-5 w-5" />, desc: "Thanh toán qua VNPay" },

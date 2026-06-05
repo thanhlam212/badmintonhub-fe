@@ -37,10 +37,21 @@ interface AddressInputProps {
   className?: string
   /** Compact mode for registration form — smaller map */
   compact?: boolean
+  showMapByDefault?: boolean
+  enableMapPicker?: boolean
+  defaultMapCenter?: { lat: number; lng: number }
 }
 
 /* ─── Mini Map (loaded dynamically to avoid SSR issues) ─── */
-const TomTomMap = dynamic<{ lat: number; lng: number; courtLat?: number; courtLng?: number; courtName?: string; routeCoords?: [number, number][] }>(
+const TomTomMap = dynamic<{
+  lat: number
+  lng: number
+  courtLat?: number
+  courtLng?: number
+  courtName?: string
+  routeCoords?: [number, number][]
+  onPickLocation?: (coords: { lat: number; lng: number }) => void
+}>(
   () => import("@/components/tomtom-map"),
   {
     ssr: false,
@@ -51,6 +62,8 @@ const TomTomMap = dynamic<{ lat: number; lng: number; courtLat?: number; courtLn
     ),
   }
 )
+
+const DEFAULT_MAP_CENTER = { lat: 21.0278, lng: 105.8342 }
 
 /* ─── Main Component ─── */
 
@@ -66,13 +79,25 @@ function deduplicateAddress(raw: string): string {
   return unique.join(", ")
 }
 
-export function AddressInput({ value, onChange, placeholder, error, className, compact }: AddressInputProps) {
+export function AddressInput({
+  value,
+  onChange,
+  placeholder,
+  error,
+  className,
+  compact,
+  showMapByDefault,
+  enableMapPicker,
+  defaultMapCenter = DEFAULT_MAP_CENTER,
+}: AddressInputProps) {
   const [query, setQuery] = useState(value)
   const [results, setResults] = useState<TomTomResult[]>([])
   const [loading, setLoading] = useState(false)
   const [showDropdown, setShowDropdown] = useState(false)
-  const [selectedCoords, setSelectedCoords] = useState<{ lat: number; lng: number } | null>(null)
-  const [showMap, setShowMap] = useState(false)
+  const [selectedCoords, setSelectedCoords] = useState<{ lat: number; lng: number } | null>(
+    showMapByDefault ? defaultMapCenter : null,
+  )
+  const [showMap, setShowMap] = useState(Boolean(showMapByDefault))
   const [geoWarning, setGeoWarning] = useState("")
   const debounceRef = useRef<NodeJS.Timeout | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -82,6 +107,32 @@ export function AddressInput({ value, onChange, placeholder, error, className, c
     if (value !== query) setQuery(value)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value])
+
+  const reverseGeocode = useCallback(async (coords: { lat: number; lng: number }) => {
+    setLoading(true)
+    setSelectedCoords(coords)
+    setShowMap(true)
+    setGeoWarning("")
+
+    try {
+      const res = await fetch(
+        `https://api.tomtom.com/search/2/reverseGeocode/${coords.lat},${coords.lng}.json?key=${TOMTOM_API_KEY}&language=vi-VN`
+      )
+      const data = await res.json()
+      const raw = data?.addresses?.[0]?.address?.freeformAddress
+      if (raw) {
+        const addr = deduplicateAddress(raw)
+        setQuery(addr)
+        onChange(addr, coords)
+      } else {
+        onChange(query, coords)
+      }
+    } catch {
+      onChange(query, coords)
+    } finally {
+      setLoading(false)
+    }
+  }, [onChange, query])
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -163,21 +214,7 @@ export function AddressInput({ value, onChange, placeholder, error, className, c
 
       const { latitude, longitude } = position.coords
       const coords = { lat: latitude, lng: longitude }
-      setSelectedCoords(coords)
-      setShowMap(true)
-      try {
-        const res = await fetch(
-          `https://api.tomtom.com/search/2/reverseGeocode/${latitude},${longitude}.json?key=${TOMTOM_API_KEY}&language=vi-VN`
-        )
-        const data = await res.json()
-        const raw = data?.addresses?.[0]?.address?.freeformAddress
-        if (raw) {
-          const addr = deduplicateAddress(raw)
-          setQuery(addr)
-          onChange(addr, coords)
-        }
-      } catch {}
-      setLoading(false)
+      await reverseGeocode(coords)
     }
 
     const watchId = navigator.geolocation.watchPosition(
@@ -215,8 +252,8 @@ export function AddressInput({ value, onChange, placeholder, error, className, c
   const clearAddress = () => {
     setQuery("")
     onChange("")
-    setSelectedCoords(null)
-    setShowMap(false)
+    setSelectedCoords(showMapByDefault ? defaultMapCenter : null)
+    setShowMap(Boolean(showMapByDefault))
     setResults([])
     setGeoWarning("")
   }
@@ -280,14 +317,23 @@ export function AddressInput({ value, onChange, placeholder, error, className, c
           Nhập địa chỉ để tìm kiếm hoặc nhấn <Navigation className="h-3 w-3 inline text-primary" /> để dùng vị trí hiện tại
         </p>
       )}
+      {enableMapPicker && (
+        <p className="text-xs text-muted-foreground">
+          Bấm lên bản đồ để chọn vị trí chính xác hơn.
+        </p>
+      )}
 
       {/* Map */}
       {showMap && selectedCoords && (
         <div className={cn(
           "rounded-xl overflow-hidden border shadow-sm",
-          compact ? "h-40" : "h-52"
+          compact ? "h-40" : "h-64"
         )}>
-          <TomTomMap lat={selectedCoords.lat} lng={selectedCoords.lng} />
+          <TomTomMap
+            lat={selectedCoords.lat}
+            lng={selectedCoords.lng}
+            onPickLocation={enableMapPicker ? reverseGeocode : undefined}
+          />
         </div>
       )}
     </div>

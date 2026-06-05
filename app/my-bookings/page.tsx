@@ -23,7 +23,7 @@ import {
   RefreshCw, SkipForward, XCircle, ChevronRight, Loader2,
 } from "lucide-react"
 import { useState, useEffect } from "react"
-import { formatVND } from "@/lib/utils"
+import { formatVND, formatBookingReference } from "@/lib/utils"
 import { bookingApi, orderApi, fixedScheduleApi, type ApiBooking, type ApiOrder } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
@@ -106,7 +106,7 @@ function BookingDetailDialog({ booking }: { booking: ApiBooking }) {
       <div className="space-y-4 mt-2">
         <div className="flex items-center justify-between">
           <span className="font-mono text-sm text-primary font-semibold bg-primary/5 px-2 py-1 rounded">
-            {booking.id}
+            {booking.bookingCode || formatBookingReference(booking.id, booking.createdAt)}
           </span>
           <BookingStatusBadge status={booking.status} />
         </div>
@@ -238,7 +238,9 @@ function BookingCard({ booking, onCancel }: { booking: ApiBooking; onCancel?: (i
               <span className="flex items-center gap-1"><MapPin className="h-3 w-3" /> {booking.branchName}</span>
             </div>
             <div className="flex items-center gap-2 mt-2">
-              <span className="text-xs font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded">{booking.id}</span>
+              <span className="text-xs font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded">
+                {booking.bookingCode || formatBookingReference(booking.id, booking.createdAt)}
+              </span>
               <span className="text-sm font-semibold text-primary">{formatVND(booking.amount)}</span>
             </div>
           </div>
@@ -905,17 +907,35 @@ function OrderStatusBadge({ status }: { status: string }) {
 function OrderHistoryView() {
   const { user } = useAuth()
   const [orders, setOrders] = useState<ApiOrder[]>([])
-  const [selectedOrder, setSelectedOrder] = useState<ApiOrder | null>(null)
+  const [loading, setLoading] = useState(true)
 
-  useEffect(() => { orderApi.getMyOrders().then(setOrders) }, [user])
+  useEffect(() => {
+    setLoading(true)
+    orderApi.getMyOrders().then(data => { setOrders(data); setLoading(false) })
+  }, [user])
+
+  const paymentLabels: Record<string, string> = { cod: "COD (Thanh toán khi nhận)", momo: "MoMo", vnpay: "VNPay", bank: "Chuyển khoản", cash: "Tiền mặt" }
+  const deliveryLabels: Record<string, string> = { delivery: "Giao hàng tận nơi", pickup: "Nhận tại cửa hàng" }
+
+  const orderStatusSteps = [
+    { key: "pending",    label: "Chờ xử lý" },
+    { key: "confirmed",  label: "Đã xác nhận" },
+    { key: "processing", label: "Đang xử lý" },
+    { key: "shipping",   label: "Đang giao" },
+    { key: "delivered",  label: "Đã giao" },
+  ]
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="font-serif text-2xl font-extrabold">Đơn hàng của tôi</h1>
-        <p className="text-muted-foreground mt-1">Xem lại lịch sử mua hàng và hóa đơn</p>
+        <p className="text-muted-foreground mt-1">Theo dõi tình trạng đơn hàng và xem lại lịch sử mua hàng</p>
       </div>
-      {orders.length === 0 ? (
+      {loading ? (
+        <div className="flex items-center justify-center py-16">
+          <Loader2 className="h-8 w-8 text-primary animate-spin" />
+        </div>
+      ) : orders.length === 0 ? (
         <Card><CardContent className="p-12 text-center">
           <ShoppingBag className="h-16 w-16 text-muted-foreground/20 mx-auto mb-4" />
           <h3 className="font-serif font-bold text-lg text-muted-foreground">Chưa có đơn hàng nào</h3>
@@ -923,59 +943,182 @@ function OrderHistoryView() {
         </CardContent></Card>
       ) : (
         <div className="space-y-3">
-          {orders.map(order => (
-            <Card key={order.id} className="hover:shadow-md transition-shadow">
-              <CardContent className="p-4">
-                <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-mono font-bold text-primary">{order.id}</span>
-                      <OrderStatusBadge status={order.status} />
+          {orders.map(order => {
+            const currentStep = orderStatusSteps.findIndex(s => s.key === order.status)
+
+            return (
+              <Card key={order.id} className="hover:shadow-md transition-shadow">
+                <CardContent className="p-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono font-bold text-primary">{order.orderCode || order.id.slice(0, 8)}</span>
+                        <OrderStatusBadge status={order.status} />
+                      </div>
+                      <p className="text-sm text-muted-foreground mt-1">{new Date(order.createdAt).toLocaleString("vi-VN")}</p>
+                      <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
+                        {order.items.map(i => `${i.productName} x${i.quantity}`).join(", ")}
+                      </p>
                     </div>
-                    <p className="text-sm text-muted-foreground mt-1">{new Date(order.createdAt).toLocaleString("vi-VN")}</p>
-                    <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
-                      {order.items.map(i => `${i.productName} x${i.quantity}`).join(", ")}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <p className="font-serif font-bold text-primary text-lg">{formatVND(order.amount)}</p>
-                    <Dialog>
-                      <DialogTrigger asChild>
-                        <Button variant="outline" size="sm" className="gap-1" onClick={() => setSelectedOrder(order)}>
-                          <Receipt className="h-4 w-4" /> Xem hóa đơn
-                        </Button>
-                      </DialogTrigger>
-                      {selectedOrder?.id === order.id && (
-                        <DialogContent className="max-w-lg">
+                    <div className="flex items-center gap-3 shrink-0">
+                      <p className="font-serif font-bold text-primary text-lg">{formatVND(order.amount)}</p>
+                      <Dialog>
+                        <DialogTrigger asChild>
+                          <Button variant="outline" size="sm" className="gap-1">
+                            <Receipt className="h-4 w-4" /> Chi tiết
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
                           <DialogHeader>
-                            <DialogTitle className="font-serif">Hóa đơn #{order.id}</DialogTitle>
+                            <DialogTitle className="font-serif text-lg flex items-center gap-2">
+                              <FileText className="h-5 w-5 text-primary" /> Chi tiết đơn hàng
+                            </DialogTitle>
                           </DialogHeader>
-                          <div className="space-y-3 text-sm">
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">Trạng thái</span>
+                          <div className="space-y-4 mt-2">
+                            {/* Order code & status */}
+                            <div className="flex items-center justify-between">
+                              <span className="font-mono text-sm text-primary font-semibold bg-primary/5 px-2 py-1 rounded">
+                                {order.orderCode || order.id.slice(0, 8)}
+                              </span>
                               <OrderStatusBadge status={order.status} />
                             </div>
-                            <Separator />
-                            {order.items.map(item => (
-                              <div key={item.productId} className="flex justify-between">
-                                <span>{item.productName} x{item.quantity}</span>
-                                <span className="font-medium">{formatVND(item.price * item.quantity)}</span>
+
+                            {/* Status steps */}
+                            {order.status !== "cancelled" && (
+                              <>
+                                <div className="flex items-center gap-1 mt-2">
+                                  {orderStatusSteps.map((step, i) => (
+                                    <div key={step.key} className="flex items-center flex-1">
+                                      <div className={cn(
+                                        "flex items-center justify-center h-6 w-6 rounded-full text-xs font-bold shrink-0",
+                                        i <= currentStep ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                                      )}>
+                                        {i < currentStep ? <CheckCircle2 className="h-3.5 w-3.5" /> : i + 1}
+                                      </div>
+                                      {i < orderStatusSteps.length - 1 && (
+                                        <div className={cn("h-0.5 flex-1 mx-1", i < currentStep ? "bg-primary" : "bg-muted")} />
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="flex justify-between">
+                                  {orderStatusSteps.map((step, i) => (
+                                    <span key={step.key} className={cn(
+                                      "text-[10px] text-center flex-1",
+                                      i <= currentStep ? "text-primary font-medium" : "text-muted-foreground"
+                                    )}>
+                                      {step.label}
+                                    </span>
+                                  ))}
+                                </div>
+                              </>
+                            )}
+
+                            {order.status === "cancelled" && (
+                              <div className="flex items-center gap-2 p-3 bg-red-50 rounded-lg border border-red-200">
+                                <AlertCircle className="h-5 w-5 text-red-500" />
+                                <p className="text-sm text-red-700 font-medium">Đơn hàng đã bị hủy</p>
                               </div>
-                            ))}
+                            )}
+
                             <Separator />
-                            <div className="flex justify-between font-bold text-base">
-                              <span>Tổng cộng</span>
-                              <span className="text-primary">{formatVND(order.amount)}</span>
+
+                            {/* Delivery info */}
+                            <div>
+                              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Thông tin giao hàng</p>
+                              <div className="rounded-lg border p-3 space-y-2">
+                                <div className="flex justify-between text-sm">
+                                  <span className="text-muted-foreground flex items-center gap-1.5"><Truck className="h-3.5 w-3.5" /> Hình thức</span>
+                                  <span className="font-medium">{deliveryLabels[order.deliveryMethod || "delivery"] || "Giao hàng"}</span>
+                                </div>
+                                {order.shippingAddress && (
+                                  <div className="flex justify-between text-sm">
+                                    <span className="text-muted-foreground flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" /> Địa chỉ</span>
+                                    <span className="font-medium text-right max-w-[60%]">{order.shippingAddress}</span>
+                                  </div>
+                                )}
+                                <div className="flex justify-between text-sm">
+                                  <span className="text-muted-foreground flex items-center gap-1.5"><UserIcon className="h-3.5 w-3.5" /> Người nhận</span>
+                                  <span className="font-medium">{order.customerName}</span>
+                                </div>
+                                <div className="flex justify-between text-sm">
+                                  <span className="text-muted-foreground flex items-center gap-1.5"><Phone className="h-3.5 w-3.5" /> SĐT</span>
+                                  <span className="font-medium">{order.customerPhone}</span>
+                                </div>
+                                {order.customerEmail && (
+                                  <div className="flex justify-between text-sm">
+                                    <span className="text-muted-foreground flex items-center gap-1.5"><Mail className="h-3.5 w-3.5" /> Email</span>
+                                    <span className="font-medium">{order.customerEmail}</span>
+                                  </div>
+                                )}
+                              </div>
                             </div>
+
+                            {/* Product list */}
+                            <div>
+                              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Sản phẩm ({order.items.length})</p>
+                              <div className="rounded-lg border divide-y">
+                                {order.items.map(item => (
+                                  <div key={item.productId} className="flex justify-between items-center p-3">
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-sm font-medium">{item.productName}</p>
+                                      <p className="text-xs text-muted-foreground">
+                                        {item.sku && <span className="font-mono">{item.sku} · </span>}
+                                        SL: {item.quantity} × {formatVND(item.price)}
+                                      </p>
+                                    </div>
+                                    <span className="text-sm font-semibold shrink-0 ml-3">{formatVND(item.price * item.quantity)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Cost breakdown */}
+                            <div>
+                              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Thanh toán</p>
+                              <div className="rounded-lg border p-3 space-y-2">
+                                <div className="flex justify-between text-sm">
+                                  <span className="text-muted-foreground flex items-center gap-1.5"><CreditCard className="h-3.5 w-3.5" /> Phương thức</span>
+                                  <span className="font-medium">{paymentLabels[order.paymentMethod || ""] || order.paymentMethod || "—"}</span>
+                                </div>
+                                <Separator />
+                                <div className="flex justify-between text-sm">
+                                  <span className="text-muted-foreground">Tạm tính</span>
+                                  <span className="font-medium">{formatVND(order.subtotal || order.amount)}</span>
+                                </div>
+                                {(order.shippingFee ?? 0) > 0 && (
+                                  <div className="flex justify-between text-sm">
+                                    <span className="text-muted-foreground">Phí vận chuyển</span>
+                                    <span className="font-medium">{formatVND(order.shippingFee!)}</span>
+                                  </div>
+                                )}
+                                <Separator />
+                                <div className="flex justify-between">
+                                  <span className="font-semibold">Tổng cộng</span>
+                                  <span className="font-serif font-bold text-lg text-primary">{formatVND(order.totalAmount || order.amount)}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {order.note && (
+                              <div className="rounded-lg bg-muted p-3">
+                                <p className="text-xs font-semibold text-muted-foreground mb-1">Ghi chú</p>
+                                <p className="text-sm">{order.note}</p>
+                              </div>
+                            )}
+
+                            <p className="text-xs text-muted-foreground">
+                              Đặt lúc: {order.createdAt ? new Date(order.createdAt).toLocaleString("vi-VN") : "—"}
+                            </p>
                           </div>
                         </DialogContent>
-                      )}
-                    </Dialog>
+                      </Dialog>
+                    </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                </CardContent>
+              </Card>
+            )
+          })}
         </div>
       )}
     </div>

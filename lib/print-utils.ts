@@ -288,3 +288,56 @@ export function printCourtServiceInvoice(data: PrintCourtServiceInvoiceData) {
     </div>
   `)
 }
+
+// ─── Warranty Card (Giấy bảo hành) ──────────────────────────
+
+export interface PrintWarrantyData {
+  orderCode: string
+  date: string
+  customerName: string
+  customerPhone?: string
+  customerEmail?: string
+  warrantyMonths?: number
+  items: { sku?: string; name: string; qty: number; price: number }[]
+}
+
+export function printWarrantyCard(data: PrintWarrantyData) {
+  const months = data.warrantyMonths ?? 12
+  const purchaseDate = new Date(data.date)
+  const expiryDate = new Date(purchaseDate)
+  expiryDate.setMonth(expiryDate.getMonth() + months)
+  const fmtDate = (d: Date) => d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" })
+
+  openPrint(`
+    <div class="header">
+      <div class="company">BadmintonHub</div>
+      <div class="title">GIẤY BẢO HÀNH SẢN PHẨM</div>
+      <div class="code">${esc(data.orderCode)}</div>
+      <div class="date">Ngày mua: ${esc(fmtDate(purchaseDate))}</div>
+    </div>
+    <div class="info-grid">
+      <div><div class="info-label">Khách hàng</div><div class="info-value">${esc(data.customerName)}</div></div>
+      ${data.customerPhone ? `<div><div class="info-label">SĐT</div><div class="info-value">${esc(data.customerPhone)}</div></div>` : ""}
+      ${data.customerEmail ? `<div><div class="info-label">Email</div><div class="info-value">${esc(data.customerEmail)}</div></div>` : ""}
+      <div><div class="info-label">Thời hạn BH</div><div class="info-value">${months} tháng</div></div>
+      <div><div class="info-label">Ngày hết hạn</div><div class="info-value" style="color:#dc2626;font-weight:700">${esc(fmtDate(expiryDate))}</div></div>
+    </div>
+    <table>
+      <thead><tr><th>STT</th>${data.items.some(i => i.sku) ? "<th>SKU</th>" : ""}<th>Sản phẩm</th><th class="center">SL</th><th class="right">Đơn giá</th></tr></thead>
+      <tbody>
+        ${data.items.map((it, i) => `<tr><td class="center">${i + 1}</td>${it.sku ? `<td class="mono">${esc(it.sku)}</td>` : ""}<td>${esc(it.name)}</td><td class="center">${it.qty}</td><td class="right">${fmtVND(it.price)}</td></tr>`).join("")}
+      </tbody>
+    </table>
+    <div class="note">
+      <strong>Điều kiện bảo hành:</strong><br/>
+      1. Sản phẩm được bảo hành miễn phí trong thời hạn ${months} tháng kể từ ngày mua.<br/>
+      2. Bảo hành áp dụng cho lỗi do nhà sản xuất.<br/>
+      3. Không bảo hành các trường hợp: hư hỏng do người dùng, sử dụng sai mục đích, tác động ngoại lực, hoặc sửa chữa tại nơi không được ủy quyền.<br/>
+      4. Vui lòng xuất trình giấy bảo hành này khi yêu cầu bảo hành.
+    </div>
+    <div class="signatures">
+      <div class="sign-block"><div class="sign-label">Đại diện cửa hàng</div><div class="sign-name">(Ký, đóng dấu)</div></div>
+      <div class="sign-block"><div class="sign-label">Khách hàng</div><div class="sign-name">(Ký, ghi rõ họ tên)</div></div>
+    </div>
+  `)
+}

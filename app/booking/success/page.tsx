@@ -54,6 +54,7 @@ const paymentLabels: Record<string, string> = {
   cash: 'Tiền mặt',
   momo: 'MoMo',
   vnpay: 'VNPay',
+  sepay: 'SePay',
   bank: 'Chuyển khoản',
   wallet: 'Ví BadmintonHub',
 };

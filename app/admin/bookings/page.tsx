@@ -18,7 +18,7 @@ import { Calendar } from "@/components/ui/calendar"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { BookingStatusBadge, PaymentBadge } from "@/components/shared"
-import { formatVND, generateTimeSlots } from "@/lib/utils"
+import { formatVND, generateTimeSlots, formatBookingReference } from "@/lib/utils"
 import { branchApi, courtApi, bookingApi, ApiBooking, ApiBranch, ApiCourt } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import {
@@ -36,6 +36,7 @@ interface BookingHistoryEntry {
   time: string; people: number; amount: number; status: string
   paymentMethod: string; customer: { name: string; phone: string; email: string }
   createdAt: string; courtId?: number; note?: string
+  bookingCode?: string
 }
 
 interface CourtBookingEntry {
@@ -48,7 +49,7 @@ interface CourtItem { id: number; name: string; branch: string; branchId: number
 
 function apiToBooking(b: ApiBooking): BookingHistoryEntry {
   return {
-    id: b.id, court: b.courtName, branch: b.branchName,
+    id: b.id, bookingCode: b.bookingCode, court: b.courtName, branch: b.branchName,
     date: b.bookingDate, day: "",
     time: `${b.timeStart} - ${b.timeEnd}`,
     people: b.slots || 2, amount: b.amount, status: b.status,
@@ -153,7 +154,7 @@ function BookingDetailSheet({
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <p className="font-mono text-sm text-primary font-semibold">{booking.id}</p>
+            <p className="font-mono text-sm text-primary font-semibold">{booking.bookingCode || formatBookingReference(booking.id, booking.createdAt)}</p>
             <p className="text-lg font-serif font-bold mt-1">{booking.court}</p>
           </div>
           <BookingStatusBadge status={booking.status} />
@@ -288,7 +289,7 @@ function BookingDetailSheet({
                   <AlertDialogHeader>
                     <AlertDialogTitle className="font-serif">Xác nhận booking?</AlertDialogTitle>
                     <AlertDialogDescription>
-                      Bạn có chắc muốn xác nhận booking <strong>{booking.id}</strong> cho khách <strong>{booking.customer.name}</strong>?
+                      Bạn có chắc muốn xác nhận booking <strong>{booking.bookingCode || formatBookingReference(booking.id, booking.createdAt)}</strong> cho khách <strong>{booking.customer.name}</strong>?
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
@@ -305,7 +306,7 @@ function BookingDetailSheet({
                   <AlertDialogHeader>
                     <AlertDialogTitle className="font-serif">Từ chối booking?</AlertDialogTitle>
                     <AlertDialogDescription>
-                      Bạn có chắc muốn từ chối booking <strong>{booking.id}</strong>? Hành động này không thể hoàn tác.
+                      Bạn có chắc muốn từ chối booking <strong>{booking.bookingCode || formatBookingReference(booking.id, booking.createdAt)}</strong>? Hành động này không thể hoàn tác.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
@@ -1324,7 +1325,9 @@ export default function AdminBookings() {
                               onCheckedChange={() => toggleSelect(booking.id)}
                             />
                           </TableCell>
-                          <TableCell className="font-mono text-xs text-primary font-semibold">{booking.id}</TableCell>
+                          <TableCell className="font-mono text-xs text-primary font-semibold">
+                            {booking.bookingCode || formatBookingReference(booking.id, booking.createdAt)}
+                          </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <div className="h-7 w-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold shrink-0">
@@ -1371,7 +1374,7 @@ export default function AdminBookings() {
                               )}
                               {/* View detail */}
                               <Sheet>
-                                <SheetTrigger asChild>
+                <SheetTrigger asChild>
                                   <Button variant="ghost" size="icon" className="h-7 w-7">
                                     <Eye className="h-3.5 w-3.5" />
                                   </Button>
@@ -1393,7 +1396,7 @@ export default function AdminBookings() {
                                   <AlertDialogHeader>
                                     <AlertDialogTitle className="font-serif">Xoá booking?</AlertDialogTitle>
                                     <AlertDialogDescription>
-                                      Bạn có chắc muốn xoá booking <strong>{booking.id}</strong>? Hành động này không thể hoàn tác và sẽ giải phóng slot sân.
+                                      Bạn có chắc muốn xoá booking <strong>{booking.bookingCode || formatBookingReference(booking.id, booking.createdAt)}</strong>? Hành động này không thể hoàn tác và sẽ giải phóng slot sân.
                                     </AlertDialogDescription>
                                   </AlertDialogHeader>
                                   <AlertDialogFooter>

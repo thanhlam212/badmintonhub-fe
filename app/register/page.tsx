@@ -32,36 +32,58 @@ function CourtDecoration() {
 
 // ─── DateSelectInput ──────────────────────────────────────────────────────────
 function DateSelectInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const parts  = value ? value.split("-") : ["", "", ""]
-  const year   = parts[0] || ""
-  const month  = parts[1] || ""
-  const day    = parts[2] || ""
+  const [draft, setDraft] = useState(() => {
+    const parts = value ? value.split("-") : ["", "", ""]
+    return {
+      year: parts[0] || "",
+      month: parts[1] || "",
+      day: parts[2] || "",
+    }
+  })
 
-  const upd = (y: string, m: string, d: string) => {
+  useEffect(() => {
+    const parts = value ? value.split("-") : ["", "", ""]
+    setDraft({
+      year: parts[0] || "",
+      month: parts[1] || "",
+      day: parts[2] || "",
+    })
+  }, [value])
+
+  const upd = (next: Partial<typeof draft>) => {
+    const nextDraft = { ...draft, ...next }
+    if (nextDraft.year && nextDraft.month && nextDraft.day) {
+      const maxDay = new Date(parseInt(nextDraft.year), parseInt(nextDraft.month), 0).getDate()
+      if (parseInt(nextDraft.day) > maxDay) {
+        nextDraft.day = String(maxDay).padStart(2, "0")
+      }
+    }
+    setDraft(nextDraft)
+
+    const { year: y, month: m, day: d } = nextDraft
     if (y && m && d) onChange(`${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`)
-    else onChange("")
   }
 
   const currentYear  = new Date().getFullYear()
   const years  = Array.from({ length: currentYear - 1939 }, (_, i) => currentYear - 9 - i)
   const months = ["Tháng 1","Tháng 2","Tháng 3","Tháng 4","Tháng 5","Tháng 6",
                   "Tháng 7","Tháng 8","Tháng 9","Tháng 10","Tháng 11","Tháng 12"]
-  const daysInMonth  = year && month ? new Date(parseInt(year), parseInt(month), 0).getDate() : 31
+  const daysInMonth  = draft.year && draft.month ? new Date(parseInt(draft.year), parseInt(draft.month), 0).getDate() : 31
   const days   = Array.from({ length: daysInMonth }, (_, i) => i + 1)
 
-  const cls = "h-10 w-full rounded-xl border-2 border-gray-200 bg-gray-50/50 px-2 text-sm text-gray-900 outline-none transition-all duration-200 cursor-pointer hover:border-gray-300 focus:border-[#FF6B35] focus:bg-orange-50/20"
+  const cls = "h-11 min-w-0 w-full rounded-xl border-2 border-gray-200 bg-gray-50/50 px-3 text-sm text-gray-900 outline-none transition-all duration-200 cursor-pointer hover:border-gray-300 focus:border-[#FF6B35] focus:bg-orange-50/20"
 
   return (
-    <div className="grid grid-cols-3 gap-2">
-      <select value={day}   onChange={e => upd(year, month, e.target.value)} className={cls}>
+    <div className="grid grid-cols-3 gap-2 sm:gap-3">
+      <select value={draft.day}   onChange={e => upd({ day: e.target.value })} className={cls}>
         <option value="">Ngày</option>
         {days.map(d => <option key={d} value={String(d).padStart(2,"0")}>{d}</option>)}
       </select>
-      <select value={month} onChange={e => upd(year, e.target.value, day)}   className={cls}>
+      <select value={draft.month} onChange={e => upd({ month: e.target.value })}   className={cls}>
         <option value="">Tháng</option>
         {months.map((m, i) => <option key={i+1} value={String(i+1).padStart(2,"0")}>{m}</option>)}
       </select>
-      <select value={year}  onChange={e => upd(e.target.value, month, day)}  className={cls}>
+      <select value={draft.year}  onChange={e => upd({ year: e.target.value })}  className={cls}>
         <option value="">Năm</option>
         {years.map(y => <option key={y} value={String(y)}>{y}</option>)}
       </select>
@@ -74,7 +96,7 @@ function FieldWrap({
   label, required, children, className,
 }: { label: string; required?: boolean; children: React.ReactNode; className?: string }) {
   return (
-    <div className={cn("space-y-1.5", className)}>
+    <div className={cn("min-w-0 space-y-1.5", className)}>
       <label className="block text-sm font-semibold text-gray-700">
         {label}{required && <span className="ml-0.5 text-[#FF6B35]">*</span>}
       </label>
@@ -111,7 +133,7 @@ function CustomInput({
         onBlur={onBlur}
         autoFocus={autoFocus}
         autoComplete={autoComplete}
-        className="flex-1 bg-transparent px-3.5 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none font-medium"
+        className="min-w-0 flex-1 bg-transparent px-3.5 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none font-medium"
       />
       {suffix}
     </div>
@@ -259,13 +281,13 @@ export default function RegisterPage() {
       </div>
 
       {/* ── RIGHT PANEL ────────────────────────────────────────────── */}
-      <div className="flex-1 flex items-start justify-center p-6 bg-white lg:bg-[#F7F8FA] overflow-y-auto relative">
+      <div className="flex-1 flex items-start justify-center px-4 py-6 sm:p-6 bg-white lg:bg-[#F7F8FA] overflow-y-auto relative">
         {/* Mobile bg */}
         <div className="absolute inset-0 lg:hidden bg-gradient-to-br from-[#0A2416] via-[#0d3020] to-[#051008]" />
         <Orb className="w-72 h-72 bg-[#FF6B35]/10 -top-20 -right-20 lg:hidden" />
 
         <div
-          className="relative z-10 w-full max-w-[440px] py-8"
+          className="relative z-10 w-full max-w-[640px] py-8"
           style={{
             opacity: mounted ? 1 : 0,
             transform: mounted ? "translateY(0)" : "translateY(20px)",
@@ -282,7 +304,7 @@ export default function RegisterPage() {
           </div>
 
           {/* Card */}
-          <div className="bg-white rounded-3xl shadow-2xl shadow-black/10 px-8 py-9 lg:px-10 border border-gray-100">
+          <div className="bg-white rounded-3xl shadow-2xl shadow-black/10 px-5 py-8 sm:px-8 sm:py-9 lg:px-10 border border-gray-100">
             <div className="mb-7">
               <h2 className="font-serif text-2xl font-extrabold text-[#0A2416]">Tạo tài khoản</h2>
               <p className="text-gray-500 text-sm mt-1.5">Điền thông tin để bắt đầu đặt sân 🏸</p>
@@ -291,7 +313,7 @@ export default function RegisterPage() {
             <form onSubmit={handleSubmit} className="space-y-4">
 
               {/* Row 1: Họ tên + Username */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <FieldWrap label="Họ và tên" required>
                   <CustomInput
                     placeholder="Nguyễn Văn A"
@@ -318,7 +340,7 @@ export default function RegisterPage() {
               </div>
 
               {/* Row 2: Email + Phone */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <FieldWrap label="Email" required>
                   <CustomInput
                     type="email"
@@ -357,14 +379,15 @@ export default function RegisterPage() {
                     value={form.address}
                     onChange={(val) => upd("address", val)}
                     placeholder="Tìm kiếm địa chỉ..."
-                    compact
+                    showMapByDefault
+                    enableMapPicker
                   />
                 </div>
               </FieldWrap>
 
               {/* Row 3: Giới tính + Ngày sinh */}
-              <div className="grid grid-cols-5 gap-3">
-                <FieldWrap label="Giới tính" className="col-span-2">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-[220px_1fr]">
+                <FieldWrap label="Giới tính">
                   <div className="flex gap-2 h-10">
                     {(["nam", "nữ"] as const).map(g => (
                       <button
@@ -385,7 +408,7 @@ export default function RegisterPage() {
                     ))}
                   </div>
                 </FieldWrap>
-                <FieldWrap label="Ngày sinh" className="col-span-3">
+                <FieldWrap label="Ngày sinh">
                   <DateSelectInput value={form.dateOfBirth} onChange={val => upd("dateOfBirth", val)} />
                 </FieldWrap>
               </div>
@@ -444,7 +467,7 @@ export default function RegisterPage() {
                     onFocus={() => setFocused("confirmPassword")}
                     onBlur={() => setFocused(null)}
                     autoComplete="new-password"
-                    className="flex-1 bg-transparent px-3.5 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none font-medium"
+                    className="min-w-0 flex-1 bg-transparent px-3.5 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none font-medium"
                   />
                   {form.confirmPassword && (
                     <span className="pr-3.5">

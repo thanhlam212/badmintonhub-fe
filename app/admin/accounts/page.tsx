@@ -171,7 +171,12 @@ function UserFormDialog({ open, onOpenChange, editUser, warehouses, onSaved }: U
               <div>
                 <Label>Mật khẩu <span className="text-red-500">*</span></Label>
                 <div className="relative mt-1">
-                  <Input type={showPassword ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)} placeholder="Ít nhất 6 ký tự" />
+                  <Input
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={e => setPassword(e.target.value.replace(/[^\x00-\x7F]/g, ""))}
+                    placeholder="Ít nhất 6 ký tự không dấu"
+                  />
                   <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setShowPassword(!showPassword)}>
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
@@ -274,7 +279,7 @@ function UserFormDialog({ open, onOpenChange, editUser, warehouses, onSaved }: U
 
 /* ─── Reset Password Dialog ─── */
 
-function ResetPasswordDialog({ open, onOpenChange, user }: { open: boolean; onOpenChange: (o: boolean) => void; user: ApiUser | null }) {
+function ResetPasswordDialog({ open, onOpenChange, user, onSaved }: { open: boolean; onOpenChange: (o: boolean) => void; user: ApiUser | null; onSaved?: () => void }) {
   const [newPassword, setNewPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -283,10 +288,11 @@ function ResetPasswordDialog({ open, onOpenChange, user }: { open: boolean; onOp
 
   const handleReset = async () => {
     if (!user) return
-    if (newPassword.length < 6) { toast.error("Mật khẩu mới ít nhất 6 ký tự"); return }
+    const cleanPassword = newPassword.trim()
+    if (cleanPassword.length < 6) { toast.error("Mật khẩu mới ít nhất 6 ký tự"); return }
     setSaving(true)
     try {
-      const res = await userApi.resetPassword(user.id, newPassword)
+      const res = await userApi.resetPassword(user.id, cleanPassword)
       if (res.success) {
         toast.success(`Đã đặt lại mật khẩu cho ${user.fullName}`)
         onOpenChange(false)
@@ -309,7 +315,12 @@ function ResetPasswordDialog({ open, onOpenChange, user }: { open: boolean; onOp
           </p>
           <Label>Mật khẩu mới</Label>
           <div className="relative mt-1">
-            <Input type={showPassword ? "text" : "password"} value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Ít nhất 6 ký tự" />
+            <Input
+              type={showPassword ? "text" : "password"}
+              value={newPassword}
+              onChange={e => setNewPassword(e.target.value.replace(/[^\x00-\x7F]/g, ""))}
+              placeholder="Ít nhất 6 ký tự không dấu"
+            />
             <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setShowPassword(!showPassword)}>
               {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
@@ -360,17 +371,21 @@ export default function AdminAccountsPage() {
   }, [])
 
   // Load users
-  const loadUsers = useCallback(async () => {
+  const loadUsers = useCallback(async (overrides?: { role?: string; search?: string; page?: number }) => {
     setLoading(true)
     try {
+      const hasRoleOverride = overrides && Object.prototype.hasOwnProperty.call(overrides, "role")
+      const hasSearchOverride = overrides && Object.prototype.hasOwnProperty.call(overrides, "search")
       const result = await userApi.getAll({
-        role: roleFilter !== "all" ? roleFilter : undefined,
-        search: searchDebounce || undefined,
-        page,
+        role: hasRoleOverride ? overrides?.role : (roleFilter !== "all" ? roleFilter : undefined),
+        search: hasSearchOverride ? overrides?.search : (searchDebounce || undefined),
+        page: overrides?.page ?? page,
         limit,
       })
-      setUsers(result.users)
-      setTotal(result.pagination?.total || result.users.length)
+      if (result.users !== undefined) {
+        setUsers(result.users)
+        setTotal(result.pagination?.total || result.users.length)
+      }
     } catch {
       toast.error("Lỗi tải danh sách tài khoản")
     } finally {
@@ -484,7 +499,7 @@ export default function AdminAccountsPage() {
             </div>
 
             {/* Refresh */}
-            <Button variant="outline" size="icon" onClick={loadUsers} disabled={loading}>
+            <Button variant="outline" size="icon" onClick={() => loadUsers()} disabled={loading}>
               <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
             </Button>
           </div>

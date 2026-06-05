@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { StockLevelIndicator } from "@/components/shared"
-import { formatVND } from "@/lib/utils"
+import { formatVND, formatTransferReference } from "@/lib/utils"
 import { purchaseOrderApi } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
@@ -154,11 +154,11 @@ export default function EmployeeInventory() {
     return pages
   }
 
-  const handleGrnConfirm = () => {
+  const handleGrnConfirm = async () => {
     const validRows = grnRows.filter(r => r.sku && r.qty > 0)
     if (validRows.length === 0) return
 
-    ctx.importItems({
+    await ctx.importItems({
       items: validRows.map(r => ({
         sku: r.sku,
         name: inventory.find(it => it.sku === r.sku)?.name || r.sku,
@@ -176,7 +176,12 @@ export default function EmployeeInventory() {
     setGrnNote("")
     // Mark admin slip as processed if this import was from an admin slip
     if (processingSlipId) {
+      const slip = adminSlips.find(s => s.id === processingSlipId)
       ctx.processAdminSlip(processingSlipId, user?.fullName || "Nhân viên")
+      const poStatusId = slip?.poRawId || slip?.poId
+      if (poStatusId) {
+        await ctx.updatePOStatus(poStatusId, "received").catch(() => {})
+      }
       setProcessingSlipId(null)
     }
     setTimeout(() => setGrnSuccess(false), 3000)
@@ -602,7 +607,7 @@ export default function EmployeeInventory() {
                     <p className="text-sm font-medium text-blue-800">Đang xử lý phiếu từ Admin: <span className="font-mono">{processingSlipId}</span></p>
                     <p className="text-xs text-blue-600 mt-0.5">Kiểm tra sản phẩm và số lượng, sau đó bấm "Xác nhận nhập kho" để hoàn tất.</p>
                   </div>
-                  <Button variant="ghost" size="sm" className="text-blue-600 hover:text-blue-800" onClick={() => { setProcessingSlipId(null); setGrnRows([{ sku: "", qty: 1, cost: 0 }]); setGrnNote("") }}>
+                  <Button variant="ghost" size="sm" className="text-blue-600 hover:text-blue-800" onClick={() => { setProcessingSlipId(null); setGrnRows([{ sku: "", qty: 1, cost: 0 }]); setGrnNote(""); setGrnPo(""); setGrnSupplier(""); setGrnWarehouse(myWarehouse) }}>
                     Huỷ liên kết
                   </Button>
                 </div>
@@ -617,7 +622,7 @@ export default function EmployeeInventory() {
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <div>
                   <Label className="text-sm">Kho</Label>
-                  <Select value={grnWarehouse} onValueChange={setGrnWarehouse}>
+                  <Select value={grnWarehouse} onValueChange={setGrnWarehouse} disabled={!!processingSlipId}>
                     <SelectTrigger className="mt-1"><SelectValue placeholder="Chọn kho" /></SelectTrigger>
                     <SelectContent>
                       {warehouses.map(w => <SelectItem key={w} value={w}>{w}</SelectItem>)}
@@ -626,7 +631,7 @@ export default function EmployeeInventory() {
                 </div>
                 <div>
                   <Label className="text-sm">Nhà cung cấp</Label>
-                  <Select value={grnSupplier} onValueChange={setGrnSupplier}>
+                  <Select value={grnSupplier} onValueChange={setGrnSupplier} disabled={!!processingSlipId}>
                     <SelectTrigger className="mt-1"><SelectValue placeholder="Chọn NCC" /></SelectTrigger>
                     <SelectContent>
                       {suppliers.map(s => <SelectItem key={s.id} value={s.id.toString()}>{s.name}</SelectItem>)}
@@ -635,11 +640,11 @@ export default function EmployeeInventory() {
                 </div>
                 <div>
                   <Label className="text-sm">Tham chiếu PO</Label>
-                  <Input className="mt-1" placeholder="PO-2026-xxx" value={grnPo} onChange={e => setGrnPo(e.target.value)} />
+                  <Input className="mt-1" placeholder="PO-YYYYMMDD-XXXX" value={grnPo} onChange={e => setGrnPo(e.target.value)} readOnly={!!processingSlipId} />
                 </div>
                 <div>
                   <Label className="text-sm">Ngày nhập</Label>
-                  <Input className="mt-1" type="date" value={grnDate} onChange={e => setGrnDate(e.target.value)} />
+                  <Input className="mt-1" type="date" value={grnDate} onChange={e => setGrnDate(e.target.value)} readOnly={!!processingSlipId} />
                 </div>
               </div>
 
@@ -663,7 +668,7 @@ export default function EmployeeInventory() {
                           const item = inventory.find(it => it.sku === v)
                           if (item) newRows[i].cost = item.unitCost
                           setGrnRows(newRows)
-                        }}>
+                        }} disabled={!!processingSlipId}>
                           <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Chọn sản phẩm" /></SelectTrigger>
                           <SelectContent>
                             {inventory.map(item => (
@@ -681,6 +686,7 @@ export default function EmployeeInventory() {
                             setGrnRows(newRows)
                           }}
                           className="h-8 text-xs"
+                          readOnly={!!processingSlipId}
                         />
                       </TableCell>
                       <TableCell>
@@ -692,6 +698,7 @@ export default function EmployeeInventory() {
                             setGrnRows(newRows)
                           }}
                           className="h-8 text-xs"
+                          readOnly={!!processingSlipId}
                         />
                       </TableCell>
                       <TableCell className="text-right text-sm font-medium">
@@ -701,7 +708,7 @@ export default function EmployeeInventory() {
                         <Button
                           variant="ghost" size="icon" className="h-7 w-7 text-red-500"
                           onClick={() => setGrnRows(grnRows.filter((_, idx) => idx !== i))}
-                          disabled={grnRows.length === 1}
+                          disabled={grnRows.length === 1 || !!processingSlipId}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
@@ -722,13 +729,13 @@ export default function EmployeeInventory() {
               </div>
 
               <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" onClick={() => setGrnRows([...grnRows, { sku: "", qty: 1, cost: 0 }])}>
+                <Button variant="outline" size="sm" onClick={() => setGrnRows([...grnRows, { sku: "", qty: 1, cost: 0 }])} disabled={!!processingSlipId}>
                   <Plus className="h-4 w-4 mr-1" /> Thêm dòng
                 </Button>
               </div>
 
               <div className="flex justify-end gap-2 pt-4 border-t">
-                <Button variant="outline" onClick={() => { setGrnRows([{ sku: "", qty: 1, cost: 0 }]); setGrnNote("") }}>Huỷ</Button>
+                <Button variant="outline" onClick={() => { setGrnRows([{ sku: "", qty: 1, cost: 0 }]); setGrnNote(""); setGrnPo(""); setGrnSupplier(""); setProcessingSlipId(null) }}>Huỷ</Button>
                 <Dialog>
                   <DialogTrigger asChild>
                     <Button className="bg-green-600 hover:bg-green-700 text-white" disabled={!grnRows.some(r => r.sku && r.qty > 0)}>
@@ -1267,7 +1274,7 @@ export default function EmployeeInventory() {
                           t.status === "rejected" && "border-red-200 bg-red-50/30"
                         )} onClick={() => { setSelectedTransfer(t); setTransferDetailOpen(true) }}>
                           <div className="flex items-center justify-between mb-1.5">
-                            <span className="font-mono text-xs font-bold text-purple-600">{t.id}</span>
+                            <span className="font-mono text-xs font-bold text-purple-600">{formatTransferReference(t.id, t.date)}</span>
                             <div className="flex items-center gap-1.5">
                               <Badge className={cn("text-[10px]", pickupMethodColor(t.pickupMethod))}>
                                 {pickupMethodLabel(t.pickupMethod)}
@@ -1358,7 +1365,7 @@ export default function EmployeeInventory() {
                         <div className="flex items-start justify-between mb-2">
                           <div>
                             <div className="flex items-center gap-2 mb-1">
-                              <span className="font-mono text-sm font-bold text-purple-600">{t.id}</span>
+                              <span className="font-mono text-sm font-bold text-purple-600">{formatTransferReference(t.id, t.date)}</span>
                               <Badge className={cn("text-[10px]", pickupMethodColor(t.pickupMethod))}>
                                 {pickupMethodLabel(t.pickupMethod)}
                               </Badge>
@@ -1429,7 +1436,7 @@ export default function EmployeeInventory() {
                   <DialogHeader>
                     <DialogTitle className="font-serif flex items-center gap-2">
                       <Repeat className="h-5 w-5 text-purple-600" />
-                      Phiếu điều chuyển {selectedTransfer.id}
+                      Phiếu điều chuyển {formatTransferReference(selectedTransfer.id, selectedTransfer.date)}
                     </DialogTitle>
                   </DialogHeader>
                   <div className="space-y-4">
@@ -1525,7 +1532,7 @@ export default function EmployeeInventory() {
 
           {/* Export Transfer Form Dialog — source warehouse creates phiếu xuất kho điều chuyển */}
           <Dialog open={exportTransferOpen} onOpenChange={(open) => { setExportTransferOpen(open); if (!open) setExportTransferTarget(null) }}>
-            <DialogContent className="max-w-2xl">
+            <DialogContent className="w-[95vw] max-w-5xl max-h-[92vh] overflow-y-auto">
               {exportTransferTarget && (
                 <>
                   <DialogHeader>

@@ -11,7 +11,7 @@ import {
 } from "lucide-react"
 import Link from "next/link"
 import { useEffect, useState } from "react"
-import { formatVND } from "@/lib/utils"
+import { formatHDReference, formatVND } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
 
 interface OrderData {
@@ -29,6 +29,7 @@ interface OrderData {
 
 const paymentLabels: Record<string, string> = {
   cod: "Thanh toán khi nhận hàng (COD)",
+  sepay: "SePay",
   momo: "MoMo",
   vnpay: "VNPay",
   bank: "Chuyển khoản ngân hàng",
@@ -50,6 +51,10 @@ function AnimatedCheckmark() {
   )
 }
 
+function getOrderDisplayCode(order: OrderData): string {
+  return formatHDReference((order as any).orderCode || (order as any).order_code || (order as any).invoiceCode || (order as any).invoice_code || order.id, order.createdAt)
+}
+
 export default function OrderSuccessPage() {
   const [order, setOrder] = useState<OrderData | null>(null)
   const [copied, setCopied] = useState(false)
@@ -66,7 +71,7 @@ export default function OrderSuccessPage() {
 
   const handleCopy = () => {
     if (order) {
-      navigator.clipboard.writeText(order.id)
+      navigator.clipboard.writeText(getOrderDisplayCode(order))
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     }
@@ -82,7 +87,7 @@ export default function OrderSuccessPage() {
       "====================================",
       "       HÓA ĐƠN - BADMINTONHUB",
       "====================================",
-      `Mã đơn hàng: ${order.id}`,
+      `Mã đơn hàng: ${getOrderDisplayCode(order)}`,
       `Ngày đặt: ${new Date(order.createdAt).toLocaleString("vi-VN")}`,
       "",
       "Thông tin khách hàng:",
@@ -114,12 +119,13 @@ export default function OrderSuccessPage() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
-    a.download = `hoa-don-${order.id}.txt`
+    a.download = `hoa-don-${getOrderDisplayCode(order)}.txt`
     a.click()
     URL.revokeObjectURL(url)
   }
 
   const data = order
+  const displayOrderCode = data ? getOrderDisplayCode(data) : ""
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -144,7 +150,7 @@ export default function OrderSuccessPage() {
             {data && (
               <div className="mt-2 flex items-center justify-center gap-2">
                 <p className="text-muted-foreground">
-                  Mã đơn hàng: <span className="font-mono font-bold text-primary">{data.id}</span>
+                  Mã đơn hàng: <span className="font-mono font-bold text-primary">{displayOrderCode}</span>
                 </p>
                 <button
                   onClick={handleCopy}
@@ -210,7 +216,7 @@ export default function OrderSuccessPage() {
                     </div>
                     <div className="text-right">
                       <p className="text-xs text-muted-foreground">Mã đơn hàng</p>
-                      <p className="font-mono font-bold text-primary">{data.id}</p>
+                      <p className="font-mono font-bold text-primary">{displayOrderCode}</p>
                       <p className="text-xs text-muted-foreground mt-1">
                         {new Date(data.createdAt).toLocaleString("vi-VN")}
                       </p>
@@ -306,7 +312,7 @@ export default function OrderSuccessPage() {
                   <div className="text-sm">
                     <p className="font-semibold text-blue-800">Đơn hàng sẽ được xử lý trong 1-2 giờ</p>
                     <p className="text-xs text-blue-700 mt-1">
-                      Nhân viên sẽ nhận mã đơn <strong>{data.id}</strong>, xuất kho và gửi giao vận tới địa chỉ của bạn.
+                      Nhân viên sẽ nhận mã đơn <strong>{displayOrderCode}</strong>, xuất kho và gửi giao vận tới địa chỉ của bạn.
                       Thời gian giao hàng dự kiến 2-5 ngày làm việc.
                     </p>
                   </div>

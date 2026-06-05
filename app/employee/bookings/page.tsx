@@ -18,7 +18,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { BookingStatusBadge, PaymentBadge } from "@/components/shared"
-import { formatBookingReference, formatVND, generateTimeSlots, isSlotPast } from "@/lib/utils"
+import { formatBookingReference, formatDateLabel, formatVND, generateTimeSlots, isSlotPast } from "@/lib/utils"
 import { branchApi, courtApi, bookingApi, userApi, ApiBooking, ApiBranch, ApiCourt, ApiUser } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
@@ -73,7 +73,7 @@ function bookingsToSlots(bookings: BookingHistoryEntry[]): CourtBookingEntry[] {
     const start = parseInt(parts[0].split(":")[0])
     const end = parseInt(parts[1].split(":")[0])
     const d = new Date(b.date)
-    const dateLabel = formatDateShort(d)
+    const dateLabel = formatDateLabel(d)
     const bookedByLabel = b.customer.name?.trim() || b.customer.phone?.trim() || b.bookingCode
     for (let h = start; h < end; h++) {
       slots.push({
@@ -88,7 +88,7 @@ function bookingsToSlots(bookings: BookingHistoryEntry[]): CourtBookingEntry[] {
 }
 
 function generateBookingId() {
-  return `BK-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`
+  return formatBookingReference(`tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`, new Date())
 }
 
 function formatDate(dateStr: string) {
@@ -96,10 +96,6 @@ function formatDate(dateStr: string) {
     const d = new Date(dateStr)
     return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
   } catch { return dateStr }
-}
-
-function formatDateShort(date: Date) {
-  return `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}`
 }
 
 /* ─── Status flow ─── */
@@ -495,7 +491,7 @@ function BookingFormDialog({
                 <PopoverTrigger asChild>
                   <Button variant="outline" className={cn("w-full mt-1.5 justify-start text-left font-normal", !bookingDate && "text-muted-foreground", errors.date && "border-red-500")}>
                     <CalendarIcon className="mr-2 h-4 w-4" />
-                    {bookingDate ? formatDateShort(bookingDate) : "Chọn ngày"}
+                    {bookingDate ? `${String(bookingDate.getDate()).padStart(2,'0')}/${String(bookingDate.getMonth()+1).padStart(2,'0')}` : "Chọn ngày"}
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-auto p-0" align="start">
@@ -657,19 +653,21 @@ function ScheduleView({
   const [qbUserResults, setQbUserResults] = useState<ApiUser[]>([])
   const [qbSelectedUser, setQbSelectedUser] = useState<ApiUser | null>(null)
   const [qbUserLoading, setQbUserLoading] = useState(false)
+  const [qbUserPickerOpen, setQbUserPickerOpen] = useState(false)
   const qbUserSearchCacheRef = useRef<Map<string, ApiUser[]>>(new Map())
   const qbUserSearchReqRef = useRef(0)
 
   // Debounced user search
   useEffect(() => {
     const keyword = qbUserSearch.trim().toLowerCase()
-    if (!keyword || keyword.length < 2) {
+    if (!qbUserPickerOpen) {
       setQbUserResults([])
       setQbUserLoading(false)
       return
     }
 
-    const cached = qbUserSearchCacheRef.current.get(keyword)
+    const cacheKey = keyword || "__all__"
+    const cached = qbUserSearchCacheRef.current.get(cacheKey)
     if (cached) {
       setQbUserResults(cached)
       setQbUserLoading(false)
@@ -680,15 +678,15 @@ function ScheduleView({
       const requestId = ++qbUserSearchReqRef.current
       setQbUserLoading(true)
       try {
-        const res = await userApi.getAll({ search: keyword, limit: 10, role: 'user' })
+        const res = await userApi.getAll({ ...(keyword && { search: keyword }), limit: 10, role: 'user' })
         if (requestId !== qbUserSearchReqRef.current) return
         let users = res.users || []
-        if (users.length === 0) {
+        if (keyword && users.length === 0) {
           const fallback = await userApi.getAll({ search: keyword, limit: 10 })
           if (requestId !== qbUserSearchReqRef.current) return
           users = fallback.users || []
         }
-        qbUserSearchCacheRef.current.set(keyword, users)
+        qbUserSearchCacheRef.current.set(cacheKey, users)
         setQbUserResults(users)
       } catch { setQbUserResults([]) }
       finally {
@@ -696,9 +694,9 @@ function ScheduleView({
           setQbUserLoading(false)
         }
       }
-    }, 300)
+    }, keyword ? 250 : 0)
     return () => clearTimeout(timer)
-  }, [qbUserSearch])
+  }, [qbUserSearch, qbUserPickerOpen])
 
   useEffect(() => {
     if (branches.length > 0 && !selectedBranch) {
@@ -710,7 +708,7 @@ function ScheduleView({
     return allCourts.filter(c => c.branchId === parseInt(selectedBranch))
   }, [selectedBranch, allCourts])
 
-  const dateLabel = formatDateShort(scheduleDate)
+  const dateLabel = formatDateLabel(scheduleDate)
   const timeSlots = generateTimeSlots()
 
   const scheduleMap = useMemo(() => {
@@ -905,7 +903,7 @@ function ScheduleView({
               <PopoverTrigger asChild>
                 <Button variant="outline" className="min-w-[200px] justify-center">
                   <CalendarIcon className="h-4 w-4 mr-2" />
-                  {dayNames[scheduleDate.getDay()]}, {dateLabel}
+                  {dayNames[scheduleDate.getDay()]}, {String(scheduleDate.getDate()).padStart(2,'0')}/{String(scheduleDate.getMonth()+1).padStart(2,'0')}
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-auto p-0"><Calendar mode="single" selected={scheduleDate} onSelect={d => d && setScheduleDate(d)} /></PopoverContent>
@@ -1010,7 +1008,7 @@ function ScheduleView({
                                       placedByRole === "employee" && "text-amber-600"
                                     )}>Ai đặt: {placedByLabel || "Khách"}</p>
                                     {cell.phone && <p className="text-muted-foreground">SĐT: {cell.phone}</p>}
-                                    {(cell.bookingCode || cell.bookingId) && <p className="text-muted-foreground">Mã: {cell.bookingCode || formatBookingReference(cell.bookingId)}</p>}
+                                    {(cell.bookingCode || cell.bookingId) && <p className="text-muted-foreground">Mã: {formatBookingReference(cell.bookingCode || cell.bookingId)}</p>}
                                     <p className="text-muted-foreground">{time} - {endTimeStr}</p>
                                   </div>
                                 ) : isHold ? (
@@ -1055,7 +1053,7 @@ function ScheduleView({
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground">Ngày:</span>
-                  <span className="font-medium">{dayNames[scheduleDate.getDay()]}, {dateLabel}</span>
+                  <span className="font-medium">{dayNames[scheduleDate.getDay()]}, {String(scheduleDate.getDate()).padStart(2,'0')}/{String(scheduleDate.getMonth()+1).padStart(2,'0')}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground">Giờ:</span>
@@ -1092,6 +1090,7 @@ function ScheduleView({
                       setQbSelectedUser(null)
                       setQbName("")
                       setQbPhone("")
+                      setQbUserPickerOpen(false)
                     }}>
                       <X className="h-3.5 w-3.5" />
                     </Button>
@@ -1104,21 +1103,27 @@ function ScheduleView({
                       className="pl-8 h-9 text-sm"
                       value={qbUserSearch}
                       onChange={e => setQbUserSearch(e.target.value)}
+                      onFocus={() => setQbUserPickerOpen(true)}
+                      onClick={() => setQbUserPickerOpen(true)}
                     />
                     {qbUserLoading && <Loader2 className="absolute right-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 animate-spin text-muted-foreground" />}
-                    {qbUserResults.length > 0 && (
+                    {qbUserPickerOpen && (qbUserResults.length > 0 || (!qbUserLoading && qbUserSearch.trim())) && (
                       <div className="absolute z-20 top-full left-0 right-0 mt-1 rounded-lg border bg-popover shadow-lg max-h-[200px] overflow-y-auto">
-                        {qbUserResults.map(u => (
+                        {qbUserResults.length === 0 ? (
+                          <div className="px-3 py-2 text-sm text-muted-foreground">Khong tim thay tai khoan</div>
+                        ) : qbUserResults.map(u => (
                           <button
                             key={u.id}
                             type="button"
                             className="w-full text-left px-3 py-2 hover:bg-muted/50 flex items-center gap-2 border-b last:border-b-0 transition-colors"
+                            onMouseDown={e => e.preventDefault()}
                             onClick={() => {
                               setQbSelectedUser(u)
                               setQbName(u.fullName || "")
                               setQbPhone(u.phone || "")
                               setQbUserSearch("")
                               setQbUserResults([])
+                              setQbUserPickerOpen(false)
                             }}
                           >
                             <div className="h-7 w-7 rounded-full bg-muted flex items-center justify-center text-xs font-semibold shrink-0">
@@ -1316,6 +1321,12 @@ export default function EmployeeBookings() {
     }
   }, [employeeBranch, refreshData])
 
+  useEffect(() => {
+    if (!hydrated) return
+    const refreshTimer = window.setInterval(refreshData, 60_000)
+    return () => window.clearInterval(refreshTimer)
+  }, [hydrated, refreshData])
+
   // Status change
   const handleStatusChange = useCallback(async (id: string, newStatus: string) => {
     try {
@@ -1403,7 +1414,7 @@ export default function EmployeeBookings() {
 
     if (dateFilter) {
       const filterStr = `${dateFilter.getFullYear()}-${(dateFilter.getMonth() + 1).toString().padStart(2, '0')}-${dateFilter.getDate().toString().padStart(2, '0')}`
-      result = result.filter(b => b.date === filterStr || b.date.includes(formatDateShort(dateFilter)))
+      result = result.filter(b => b.date === filterStr || b.date.includes(`${String(dateFilter.getDate()).padStart(2,'0')}/${String(dateFilter.getMonth()+1).padStart(2,'0')}`))
     }
 
     result.sort((a, b) => {
@@ -1550,7 +1561,7 @@ export default function EmployeeBookings() {
               <PopoverTrigger asChild>
                 <Button variant="outline" size="sm" className={cn("h-9 gap-1.5", dateFilter && "bg-primary/10 text-primary border-primary/30")}>
                   <CalendarIcon className="h-3.5 w-3.5" />
-                  {dateFilter ? formatDateShort(dateFilter) : "Lọc ngày"}
+                  {dateFilter ? `${String(dateFilter.getDate()).padStart(2,'0')}/${String(dateFilter.getMonth()+1).padStart(2,'0')}` : "Lọc ngày"}
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-auto p-0" align="start">

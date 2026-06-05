@@ -12,14 +12,15 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   Package, Truck, Search, Eye, CheckCircle2, Clock, PackageCheck, RotateCcw,
-  ArrowUpFromLine, MapPin, Phone, Mail, AlertCircle, RefreshCw, XCircle, Store, Warehouse
+  ArrowUpFromLine, MapPin, Phone, Mail, AlertCircle, RefreshCw, XCircle, Store, Warehouse, Printer, Award
 } from "lucide-react"
 import { useState, useEffect } from "react"
-import { formatVND } from "@/lib/utils"
+import { formatVND, formatHDReference } from "@/lib/utils"
 import { orderApi } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
 import { useInventory } from "@/lib/inventory-context"
+import { printWarehouseSlip, printWarrantyCard } from "@/lib/print-utils"
 
 interface OrderItem {
   productId: number
@@ -30,6 +31,7 @@ interface OrderItem {
 
 interface Order {
   id: string
+  rawId?: string
   items: OrderItem[]
   customer: { name: string; phone: string; email: string; address: string }
   note: string
@@ -37,7 +39,7 @@ interface Order {
   shippingFee: number
   total: number
   paymentMethod: string
-  status: "pending" | "processing" | "shipping" | "delivered" | "cancelled" | "refunded"
+  status: "pending" | "confirmed" | "processing" | "shipping" | "delivered" | "cancelled" | "refunded"
   createdAt: string
   userId: string
   type: "online"
@@ -85,7 +87,7 @@ function OrderDetailDialog({ order, onApprove, onStartDelivery, onDeliver, onRef
   onDeliver: () => void
   onRefund?: (id: string) => void
   onCancel: () => void
-  inventoryData?: { sku: string; name: string; warehouse: string; available: number }[]
+  inventoryData?: { productId?: number; sku: string; name: string; warehouse: string; available: number }[]
 }) {
   const [selectedWarehouse, setSelectedWarehouse] = useState(order.fulfillingWarehouse || "")
 
@@ -96,7 +98,9 @@ function OrderDetailDialog({ order, onApprove, onStartDelivery, onDeliver, onRef
   const productIdToSkuMap: Record<number, string> = {}
   if (inventoryData) {
     for (const inv of inventoryData) {
-      if (inv.sku) productIdToSkuMap[parseInt(inv.sku)] = inv.sku
+      if (inv.productId) {
+        productIdToSkuMap[inv.productId] = inv.sku
+      }
     }
   }
 
@@ -120,7 +124,7 @@ function OrderDetailDialog({ order, onApprove, onStartDelivery, onDeliver, onRef
 
   // Tự động chọn kho đã gán (kho gần khách) — nếu đủ hàng thì dùng luôn
   useEffect(() => {
-    if (order.status !== "pending" || order.deliveryMethod === "pickup" || !inventoryData) return
+    if ((order.status !== "pending" && order.status !== "confirmed") || order.deliveryMethod === "pickup" || !inventoryData) return
     if (selectedWarehouse && getWarehouseStock(selectedWarehouse).allEnough) return
 
     // Ưu tiên kho đã gán từ checkout (gần khách nhất), rồi thử các kho khác
@@ -296,7 +300,7 @@ function OrderDetailDialog({ order, onApprove, onStartDelivery, onDeliver, onRef
       </div>
 
       {/* Warehouse stock overview + selector for pending orders */}
-      {order.status === "pending" && order.deliveryMethod !== "pickup" && inventoryData && (
+      {(order.status === "pending" || order.status === "confirmed") && order.deliveryMethod !== "pickup" && inventoryData && (
         <Card className="border-blue-200 bg-blue-50">
           <CardContent className="p-4 space-y-3">
             <p className="text-sm font-semibold text-blue-800 flex items-center gap-2">
@@ -397,8 +401,58 @@ function OrderDetailDialog({ order, onApprove, onStartDelivery, onDeliver, onRef
         </Card>
       )}
 
+      {/* Print actions bar - only when order is past pending */}
+      {order.status !== "pending" && order.status !== "cancelled" && (
+        <div className="flex items-center gap-2 p-3 bg-muted/50 rounded-lg border">
+          <Printer className="h-4 w-4 text-muted-foreground shrink-0" />
+          <span className="text-xs text-muted-foreground mr-auto">In chứng từ:</span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1 text-xs h-7"
+            onClick={() => printWarehouseSlip({
+              id: order.id,
+              type: "export",
+              date: new Date(order.processedAt || order.createdAt).toLocaleDateString("vi-VN"),
+              warehouse: order.fulfillingWarehouse || "—",
+              note: order.note || "",
+              createdBy: order.approvedBy || "Hệ thống",
+              assignedTo: order.customer.name,
+              items: order.items.map(i => ({
+                sku: productIdToSkuMap[i.productId] || String(i.productId),
+                name: i.name,
+                qty: i.qty,
+                unitCost: i.price,
+              })),
+            })}
+          >
+            <ArrowUpFromLine className="h-3.5 w-3.5" /> Phiếu xuất kho
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1 text-xs h-7"
+            onClick={() => printWarrantyCard({
+              orderCode: order.id,
+              date: order.createdAt,
+              customerName: order.customer.name,
+              customerPhone: order.customer.phone,
+              customerEmail: order.customer.email,
+              items: order.items.map(i => ({
+                sku: productIdToSkuMap[i.productId] || undefined,
+                name: i.name,
+                qty: i.qty,
+                price: i.price,
+              })),
+            })}
+          >
+            <Award className="h-3.5 w-3.5" /> Phiếu bảo hành
+          </Button>
+        </div>
+      )}
+
       <DialogFooter className="gap-2 mt-4">
-        {order.status === "pending" && (
+        {(order.status === "pending" || order.status === "confirmed") && (
           <>
             <Button
               onClick={() => onApprove(selectedWarehouse)}
@@ -440,7 +494,7 @@ function OrderDetailDialog({ order, onApprove, onStartDelivery, onDeliver, onRef
 
 export default function EmployeeOrdersPage() {
   const { user } = useAuth()
-  const { inventory } = useInventory()
+  const { inventory, refreshInventory } = useInventory()
   const [orders, setOrders] = useState<Order[]>([])
   const [search, setSearch] = useState("")
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
@@ -450,15 +504,23 @@ export default function EmployeeOrdersPage() {
     try {
       const res = await orderApi.getAll()
       if (res.orders) {
-        const allOrders: Order[] = res.orders.map((o: any) => ({
-          id: String(o.id),
-          items: (o.items || []).map((i: any) => ({ productId: i.productId || i.product_id, name: i.productName || i.name || "", price: i.price || 0, qty: i.quantity || i.qty || 0 })),
-          customer: { name: o.customerName || "", phone: o.customerPhone || "", email: o.customerEmail || "", address: o.shippingAddress || "" },
-          note: o.note || "", subtotal: o.amount || 0, shippingFee: 0, total: o.amount || 0,
-          paymentMethod: o.paymentMethod || "", status: o.status || "pending", createdAt: o.createdAt || "",
-          userId: o.userId || "", type: "online" as const, deliveryMethod: "delivery" as const,
-          fulfillingWarehouse: o.fulfillingWarehouse || "",
-        }))
+        const allOrders: Order[] = res.orders.map((o: any) => {
+          let fulfillingWarehouse = o.fulfillingWarehouse || ""
+          if (o.fulfillingWarehouseId && !fulfillingWarehouse) {
+            const wh = inventory.find(inv => inv.warehouseId === o.fulfillingWarehouseId)
+            if (wh) fulfillingWarehouse = wh.warehouse
+          }
+          return {
+            id: formatHDReference(o.orderCode || o.order_code || o.invoiceCode || o.invoice_code || o.sales_code || o.id, o.createdAt || o.created_at),
+            rawId: String(o.id),
+            items: (o.items || []).map((i: any) => ({ productId: i.productId || i.product_id, name: i.productName || i.name || "", price: i.price || 0, qty: i.quantity || i.qty || 0 })),
+            customer: { name: o.customerName || "", phone: o.customerPhone || "", email: o.customerEmail || "", address: o.shippingAddress || "" },
+            note: o.note || "", subtotal: o.amount || 0, shippingFee: 0, total: o.amount || 0,
+            paymentMethod: o.paymentMethod || "", status: o.status || "pending", createdAt: o.createdAt || "",
+            userId: o.userId || "", type: "online" as const, deliveryMethod: "delivery" as const,
+            fulfillingWarehouse,
+          }
+        })
         const myWarehouse = user?.warehouse
         if (myWarehouse) {
           setOrders(allOrders.filter(o => o.fulfillingWarehouse === myWarehouse || !o.fulfillingWarehouse))
@@ -478,9 +540,14 @@ export default function EmployeeOrdersPage() {
   }, [user])
 
   const updateOrderStatus = async (orderId: string, updates: Partial<Order>) => {
+    const order = orders.find(o => o.id === orderId)
+    const apiId = order?.rawId || orderId
     try {
       if (updates.status) {
-        await orderApi.updateStatus(orderId, updates.status)
+        await orderApi.updateStatus(apiId, updates.status)
+        if (updates.status === "processing" || updates.status === "cancelled" || updates.status === "refunded") {
+          refreshInventory().catch(() => {})
+        }
       }
     } catch {}
     const updated = orders.map(o => o.id === orderId ? { ...o, ...updates } : o)
@@ -531,13 +598,13 @@ export default function EmployeeOrdersPage() {
       o.customer.phone.includes(q)
   })
 
-  const pendingOrders = filteredOrders.filter(o => o.status === "pending")
+  const pendingOrders = filteredOrders.filter(o => o.status === "pending" || o.status === "confirmed")
   const processingOrders = filteredOrders.filter(o => o.status === "processing")
   const shippingOrders = filteredOrders.filter(o => o.status === "shipping")
   const completedOrders = filteredOrders.filter(o => ["delivered", "cancelled", "refunded"].includes(o.status))
 
   const stats = {
-    pending: orders.filter(o => o.status === "pending").length,
+    pending: orders.filter(o => o.status === "pending" || o.status === "confirmed").length,
     processing: orders.filter(o => o.status === "processing").length,
     shipping: orders.filter(o => o.status === "shipping").length,
     delivered: orders.filter(o => o.status === "delivered").length,
@@ -680,13 +747,13 @@ export default function EmployeeOrdersPage() {
                                 onDeliver={() => handleDeliver(order.id)}
                                 onRefund={(id) => handleRefund(id)}
                                 onCancel={() => handleCancel(order.id)}
-                                inventoryData={inventory.map(i => ({ sku: i.sku, name: i.name, warehouse: i.warehouse, available: i.available }))}
+                                inventoryData={inventory.map(i => ({ productId: i.productId, sku: i.sku, name: i.name, warehouse: i.warehouse, available: i.available }))}
                               />
                             )}
                           </Dialog>
 
                           {/* Quick actions */}
-                          {order.status === "pending" && (
+                          {(order.status === "pending" || order.status === "confirmed") && (
                             <Button
                               size="sm"
                               onClick={() => { setSelectedOrder(order); setDialogOpen(true) }}

@@ -14,6 +14,7 @@ interface TomTomMapProps {
   routeCoords?: [number, number][]
   /** Hide the blue user marker (e.g. when showing court-only view) */
   hideUserMarker?: boolean
+  onPickLocation?: (coords: { lat: number; lng: number }) => void
 }
 
 // Use TomTom raster tiles with proper attribution
@@ -41,7 +42,7 @@ const TOMTOM_RASTER_STYLE: maplibregl.StyleSpecification = {
   ],
 }
 
-export default function TomTomMap({ lat, lng, courtLat, courtLng, courtName, routeCoords, hideUserMarker }: TomTomMapProps) {
+export default function TomTomMap({ lat, lng, courtLat, courtLng, courtName, routeCoords, hideUserMarker, onPickLocation }: TomTomMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
   const userMarkerRef = useRef<maplibregl.Marker | null>(null)
@@ -181,6 +182,13 @@ export default function TomTomMap({ lat, lng, courtLat, courtLng, courtName, rou
       mapLoadedRef.current = true
       syncMapContent(map)
     })
+
+    if (onPickLocation) {
+      map.getCanvas().style.cursor = "crosshair"
+      map.on("click", (event) => {
+        onPickLocation({ lat: event.lngLat.lat, lng: event.lngLat.lng })
+      })
+    }
 
     return () => {
       mapLoadedRef.current = false

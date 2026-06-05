@@ -463,7 +463,7 @@ export default function AdminInventory() {
                 </div>
                 <div>
                   <Label className="text-sm">Tham chiếu PO</Label>
-                  <Input className="mt-1" placeholder="PO-2026-xxx" value={grnPo} onChange={e => setGrnPo(e.target.value)} />
+                  <Input className="mt-1" placeholder="PO-YYYYMMDD-XXXX" value={grnPo} onChange={e => setGrnPo(e.target.value)} />
                 </div>
                 <div>
                   <Label className="text-sm">Ngày nhập</Label>
@@ -746,7 +746,7 @@ export default function AdminInventory() {
                   {slipType === "import" && (
                     <div>
                       <Label className="text-sm">Tham chiếu PO</Label>
-                      <Input className="mt-1" placeholder="PO-2026-xxx" value={slipPo} onChange={e => setSlipPo(e.target.value)} />
+                      <Input className="mt-1" placeholder="PO-YYYYMMDD-XXXX" value={slipPo} onChange={e => setSlipPo(e.target.value)} />
                     </div>
                   )}
                 </div>

@@ -9,9 +9,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose, DialogTrigger } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
-import { formatVND } from "@/lib/utils"
+import { formatVND, formatSalesOrderReference } from "@/lib/utils"
 import { salesOrderApi } from "@/lib/api"
 import { cn } from "@/lib/utils"
+<<<<<<< HEAD
+=======
+import { useAuth } from "@/lib/auth-context"
+import { useInventory } from "@/lib/inventory-context"
+>>>>>>> fd4e817d37048e1dde400e5402e68ff66a1caecd
 import {
   Search, CheckCircle2, XCircle, Clock, Eye, Receipt,
   ArrowUpFromLine, Package, AlertTriangle, Loader2,
@@ -21,6 +26,7 @@ import {
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface SalesOrder {
   id: string
+  rawId?: string
   date: string
   time: string
   customer: string
@@ -37,6 +43,25 @@ interface SalesOrder {
   approvedAt?: string
   approvedBy?: string
   rejectReason?: string
+<<<<<<< HEAD
+=======
+  exportSlipId?: string
+}
+
+interface ExportSlip {
+  id: string
+  orderId: string
+  orderRawId?: string
+  date: string
+  items: { name: string; qty: number; price: number }[]
+  total: number
+  customer: string
+  note: string
+  status: "pending" | "completed"
+  createdBy: string
+  completedAt?: string
+  completedBy?: string
+>>>>>>> fd4e817d37048e1dde400e5402e68ff66a1caecd
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -140,9 +165,17 @@ function OrderDetail({ order }: { order: SalesOrder }) {
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function ApprovalPage() {
+<<<<<<< HEAD
   const [orders, setOrders]           = useState<SalesOrder[]>([])
   const [loading, setLoading]         = useState(true)
   const [search, setSearch]           = useState("")
+=======
+  const { user } = useAuth()
+  const { refreshInventory } = useInventory()
+  const [orders, setOrders] = useState<SalesOrder[]>([])
+  const [exportSlips, setExportSlips] = useState<ExportSlip[]>([])
+  const [search, setSearch] = useState("")
+>>>>>>> fd4e817d37048e1dde400e5402e68ff66a1caecd
   const [statusFilter, setStatusFilter] = useState("all")
   const [rejectReason, setRejectReason] = useState("")
   const [actionLoading, setActionLoading] = useState<string | null>(null)
@@ -153,7 +186,23 @@ export default function ApprovalPage() {
     try {
       const res = await salesOrderApi.getAll()
       if ((res as any).success && (res as any).data) {
+<<<<<<< HEAD
         setOrders((res as any).data.map(mapOrder))
+=======
+        setOrders((res as any).data.map((o: any) => ({
+          id: formatSalesOrderReference(o.sales_code || o.orderCode || o.order_code || o.code || o.id, o.created_at),
+          rawId: String(o.id),
+          date: o.created_at ? new Date(o.created_at).toISOString().split("T")[0] : "",
+          time: o.created_at ? new Date(o.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "",
+          customer: o.customer_name || "Khách lẻ", phone: o.customer_phone || "",
+          items: (o.items || []).map((i: any) => ({ productId: i.product_id, name: i.product_name || i.name || "", price: i.price || 0, qty: i.qty || i.quantity || 0 })),
+          total: o.total || 0, discount: o.discount || 0, finalTotal: o.final_total || o.total || 0,
+          paymentMethod: o.payment_method || "", note: o.note || "",
+          status: o.status || "pending", createdBy: o.created_by || "",
+          approvedAt: o.approved_at, approvedBy: o.approved_by,
+          rejectedAt: o.rejected_at, rejectedBy: o.rejected_by, rejectReason: o.reject_reason,
+        })))
+>>>>>>> fd4e817d37048e1dde400e5402e68ff66a1caecd
       }
     } catch {}
     setLoading(false)
@@ -190,6 +239,7 @@ export default function ApprovalPage() {
   const handleApprove = async (orderId: string) => {
     setActionLoading(orderId + "_approve")
     try {
+<<<<<<< HEAD
       const res = await salesOrderApi.approve(orderId)
       if ((res as any).success !== false) await loadData()
     } catch {}
@@ -203,11 +253,49 @@ export default function ApprovalPage() {
     try {
       await salesOrderApi.reject(orderId, reason)
       await loadData()
+=======
+      const res = await salesOrderApi.approve(order.rawId || order.id)
+      if (!res.success) { console.error("Approve failed:", res.error); return }
+    } catch (err) { console.error("Approve error:", err); return }
+    const now = new Date()
+    const slipId = `PXK-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${String(exportSlips.length + 1).padStart(3, "0")}`
+
+    const slip: ExportSlip = {
+      id: slipId,
+      orderId: order.id,
+      orderRawId: order.rawId || order.id,
+      date: now.toISOString().split("T")[0],
+      items: order.items.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
+      total: order.finalTotal,
+      customer: order.customer,
+      note: `Xuất kho theo đơn ${order.id}`,
+      status: "pending",
+      createdBy: user?.fullName || "Nhân viên",
+    }
+
+    const updatedOrders = orders.map(o =>
+      o.id === order.id
+        ? { ...o, status: "approved" as const, approvedAt: now.toISOString(), approvedBy: user?.fullName, exportSlipId: slipId }
+        : o
+    )
+
+    const updatedSlips = [slip, ...exportSlips]
+
+    saveOrders(updatedOrders)
+    saveSlips(updatedSlips)
+  }
+
+  // Reject order
+  const handleReject = async (order: SalesOrder, reason: string) => {
+    try {
+      await salesOrderApi.reject(order.rawId || order.id, reason)
+>>>>>>> fd4e817d37048e1dde400e5402e68ff66a1caecd
     } catch {}
     setRejectReason("")
     setActionLoading(null)
   }
 
+<<<<<<< HEAD
   // Xuất kho (complete) – backend sẽ tự động trừ kho + gửi email
   const handleExport = async (orderId: string) => {
     setActionLoading(orderId + "_export")
@@ -216,6 +304,55 @@ export default function ApprovalPage() {
       if ((res as any).success !== false) await loadData()
     } catch {}
     setActionLoading(null)
+=======
+  // Complete export slip → update order status to "exported"
+  const handleCompleteSlip = async (slip: ExportSlip) => {
+    const now = new Date()
+    // Call BE to mark order as exported
+    try {
+      const res = await salesOrderApi.complete(slip.orderRawId || slip.orderId)
+      if (!res.success) {
+        alert(res.error || "Không thể xuất kho. Vui lòng kiểm tra tồn kho và thử lại.")
+        return
+      }
+      await refreshInventory().catch(() => {})
+    } catch {
+      alert("Không thể xuất kho. Vui lòng kiểm tra kết nối và thử lại.")
+      return
+    }
+
+    const updatedSlips = exportSlips.map(s =>
+      s.id === slip.id
+        ? { ...s, status: "completed" as const, completedAt: now.toISOString(), completedBy: user?.fullName }
+        : s
+    )
+    saveSlips(updatedSlips)
+
+    // Update linked order
+    const updatedOrders = orders.map(o =>
+      o.id === slip.orderId
+        ? { ...o, status: "exported" as const }
+        : o
+    )
+    saveOrders(updatedOrders)
+
+    // Save warehouse transaction to localStorage for inventory page
+    const existingTxns = JSON.parse(localStorage.getItem("warehouseTransactions") || "[]")
+    const newTxns = slip.items.map((item, i) => ({
+      id: `${slip.id}-${i}`,
+      type: "export",
+      source: "sales",
+      slipId: slip.id,
+      orderId: slip.orderId,
+      date: now.toISOString().split("T")[0],
+      productName: item.name,
+      qty: item.qty,
+      price: item.price,
+      note: slip.note,
+      processedBy: user?.fullName,
+    }))
+    localStorage.setItem("warehouseTransactions", JSON.stringify([...newTxns, ...existingTxns]))
+>>>>>>> fd4e817d37048e1dde400e5402e68ff66a1caecd
   }
 
   return (

@@ -105,32 +105,45 @@ export default function AdminCourtsPage() {
   // Build availability from API bookings
   const [allBookings, setAllBookings] = useState<{bookingId: string; courtId: number; dateLabel: string; time: string; status: string; bookedBy?: string; placedBy?: string; placedByRole?: 'admin' | 'employee' | ''; phone?: string; bookingCode?: string}[]>([])
   useEffect(() => {
-    bookingApi.getAll({ limit: 1000 }).then((res: any) => {
-      const bookings = res.bookings || []
-      const slots: {bookingId: string; courtId: number; dateLabel: string; time: string; status: string; bookedBy?: string; placedBy?: string; placedByRole?: 'admin' | 'employee' | ''; phone?: string; bookingCode?: string}[] = []
-      for (const b of bookings) {
-        if (!b.courtId || !b.timeStart || b.status === "cancelled") continue
-        const start = parseInt(b.timeStart.split(":")[0])
-        const end = parseInt(b.timeEnd.split(":")[0])
-        const d = new Date(b.bookingDate)
-        const dateLabel = `${d.getDate()}/${d.getMonth() + 1}`
-        for (let h = start; h < end; h++) {
-          slots.push({
-            bookingId: b.id,
-            courtId: b.courtId,
-            dateLabel,
-            time: `${h.toString().padStart(2, '0')}:00`,
-            status: b.status === "hold" ? "hold" : "booked",
-            bookedBy: b.customerName || "",
-            placedBy: b.placedBy || "",
-            placedByRole: (b.placedByRole || "") as 'admin' | 'employee' | '',
-            phone: b.customerPhone || "",
-            bookingCode: b.bookingCode || "",
-          })
+    let cancelled = false
+
+    const fetchBookings = () => {
+      bookingApi.getAll({ limit: 1000 }).then((res: any) => {
+        if (cancelled) return
+        const bookings = res.bookings || []
+        const slots: {bookingId: string; courtId: number; dateLabel: string; time: string; status: string; bookedBy?: string; placedBy?: string; placedByRole?: 'admin' | 'employee' | ''; phone?: string; bookingCode?: string}[] = []
+        for (const b of bookings) {
+          if (!b.courtId || !b.timeStart || b.status === "cancelled") continue
+          const start = parseInt(b.timeStart.split(":")[0])
+          const end = parseInt(b.timeEnd.split(":")[0])
+          const d = new Date(b.bookingDate)
+          const dateLabel = `${d.getDate()}/${d.getMonth() + 1}`
+          for (let h = start; h < end; h++) {
+            slots.push({
+              bookingId: b.id,
+              courtId: b.courtId,
+              dateLabel,
+              time: `${h.toString().padStart(2, '0')}:00`,
+              status: b.status === "hold" ? "hold" : "booked",
+              bookedBy: b.customerName || "",
+              placedBy: b.placedBy || "",
+              placedByRole: (b.placedByRole || "") as 'admin' | 'employee' | '',
+              phone: b.customerPhone || "",
+              bookingCode: b.bookingCode || "",
+            })
+          }
         }
-      }
-      setAllBookings(slots)
-    }).catch(() => {})
+        setAllBookings(slots)
+      }).catch(() => {})
+    }
+
+    fetchBookings()
+    const refreshTimer = window.setInterval(fetchBookings, 60_000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(refreshTimer)
+    }
   }, [bookingsVersion])
   const dayLabels = useMemo(() => weekDays.map(d => d.label), [weekKey])
 

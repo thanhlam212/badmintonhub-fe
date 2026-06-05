@@ -5,14 +5,12 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-// ═══════════════════════════════════════════════════════════════
-// FORMATTING & HELPER FUNCTIONS (migrated from mock-data.ts)
-// ═══════════════════════════════════════════════════════════════
+// Formatting and helper functions migrated from mock-data.ts
 
 export const WEATHER_API_KEY = "8a4755cdd81b4bdcb9973512251210"
 
 export function formatVND(amount: number): string {
-  return new Intl.NumberFormat('vi-VN').format(amount) + 'đ'
+  return new Intl.NumberFormat('vi-VN').format(amount) + '\u0111'
 }
 
 export function generateTimeSlots(): string[] {
@@ -31,18 +29,26 @@ export function getWeekDays(startDate: Date = new Date()): { date: Date; label: 
     d.setDate(d.getDate() + i)
     days.push({
       date: d,
-      label: `${d.getDate()}/${d.getMonth() + 1}`,
+      label: formatDateLabel(d),
       dayName: dayNames[d.getDay()],
     })
   }
   return days
 }
 
+/**
+ * CHUẨN DUY NHẤT cho dateLabel: "d/M" (không padding).
+ * Ví dụ: 5/6, 12/11, 1/1
+ * Cả bookings/page.tsx và courts/page.tsx PHẢI dùng hàm này để so khớp slot.
+ */
+export function formatDateLabel(date: Date): string {
+  return `${date.getDate()}/${date.getMonth() + 1}`
+}
+
 export function isSlotPast(dateLabel: string | Date, time: string): boolean {
-  // Guard: nếu thiếu data thì không disable
+  // Do not disable a slot when data is incomplete.
   if (!dateLabel || !time) return false
 
-  // Handle Date object
   if (dateLabel instanceof Date) {
     const slotDate = new Date(dateLabel)
     const [hour] = time.split(':').map(Number)
@@ -64,52 +70,71 @@ export function isSlotPast(dateLabel: string | Date, time: string): boolean {
   return slotDate < new Date()
 }
 
-// ─── Document reference formatters ──────────────────────────────────────────
+// Document reference formatters
 
-export function formatPOReference(value?: string | null): string {
+type ProjectDocPrefix = "MB" | "BK" | "FS" | "OD" | "SO" | "PO" | "VD" | "DC"
+
+const PROJECT_DOC_CODE_PATTERN = /^(MB|BK|FS|OD|SO|PO|VD|DC)-\d{8}-\d{4}$/i
+
+function buildProjectReference(prefix: ProjectDocPrefix, value?: string | null, createdAt?: string | Date | null): string {
   const raw = String(value ?? "").trim()
   if (!raw) return ""
-  if (/^PO[-A-Z0-9]+$/i.test(raw)) return raw.toUpperCase()
-  const normalized = raw.replace(/[^a-zA-Z0-9]/g, "").toUpperCase()
-  if (!normalized) return raw
-  return `PO${normalized.slice(0, 8)}`
-}
-
-export function formatHDReference(value?: string | null, createdAt?: string | Date | null): string {
-  const raw = String(value ?? "").trim()
-  if (/^HD-\d{6}-\d{4}$/i.test(raw)) return raw.toUpperCase()
+  if (PROJECT_DOC_CODE_PATTERN.test(raw)) return raw.toUpperCase()
 
   const date = createdAt ? new Date(createdAt) : new Date()
   const safeDate = Number.isNaN(date.getTime()) ? new Date() : date
-  const yy = String(safeDate.getFullYear()).slice(2)
-  const mm = String(safeDate.getMonth() + 1).padStart(2, "0")
-  const dd = String(safeDate.getDate()).padStart(2, "0")
-
-  const normalized = raw.replace(/[^a-zA-Z0-9]/g, "").toUpperCase()
-  const tailHex = normalized.slice(-8)
-  let seq = Number.parseInt(tailHex, 16)
-  if (!Number.isFinite(seq)) {
-    seq = 0
-    for (const ch of normalized) seq = (seq * 31 + ch.charCodeAt(0)) % 10000
-  }
-  return `HD-${yy}${mm}${dd}-${String(Math.abs(seq) % 10000).padStart(4, "0")}`
-}
-
-export function formatBookingReference(value?: string | null, createdAt?: string | Date | null): string {
-  const raw = String(value ?? "").trim()
-  if (!raw) return ""
-  if (/^(BH-\d{6}-\d{3}|MB-[A-Z0-9-]+|BK-[A-Z0-9-]+)$/i.test(raw)) return raw.toUpperCase()
-
-  const date = createdAt ? new Date(createdAt) : new Date()
-  const safeDate = Number.isNaN(date.getTime()) ? new Date() : date
-  const yy = String(safeDate.getFullYear()).slice(2)
+  const yyyy = String(safeDate.getFullYear())
   const mm = String(safeDate.getMonth() + 1).padStart(2, "0")
   const dd = String(safeDate.getDate()).padStart(2, "0")
 
   const normalized = raw.replace(/[^a-zA-Z0-9]/g, "").toUpperCase()
   let seq = 0
-  for (const ch of normalized) {
-    seq = (seq * 31 + ch.charCodeAt(0)) % 1000
+  for (const ch of normalized || `${prefix}${yyyy}${mm}${dd}`) {
+    seq = (seq * 31 + ch.charCodeAt(0)) % 10000
   }
-  return `BH-${yy}${mm}${dd}-${String(Math.abs(seq) % 1000).padStart(3, "0")}`
+
+  return `${prefix}-${yyyy}${mm}${dd}-${String(Math.abs(seq) % 10000).padStart(4, "0")}`
+}
+
+export function formatPOReference(value?: string | null, createdAt?: string | Date | null): string {
+  return buildProjectReference("PO", value, createdAt)
+}
+
+export function formatHDReference(value?: string | null, createdAt?: string | Date | null, fallbackPrefix: "OD" | "SO" = "OD"): string {
+  const raw = String(value ?? "").trim()
+  if (/^(OD|SO)-\d{8}-\d{4}$/i.test(raw)) return raw.toUpperCase()
+  return buildProjectReference(fallbackPrefix, raw, createdAt)
+}
+
+export function formatBookingReference(value?: string | null, createdAt?: string | Date | null): string {
+  const raw = String(value ?? "").trim()
+  if (/^(MB|BK|FS)-\d{8}-\d{4}$/i.test(raw)) return raw.toUpperCase()
+  return buildProjectReference("MB", raw, createdAt)
+}
+
+export function formatShipmentReference(value?: string | null, createdAt?: string | Date | null): string {
+  return buildProjectReference("VD", value, createdAt)
+}
+
+export function formatTransferReference(value?: string | null, createdAt?: string | Date | null): string {
+  const raw = String(value ?? "").trim()
+  if (/^DC-\d{8}-\d{4}$/i.test(raw)) return raw.toUpperCase()
+  // DC = Điều Chuyển
+  const date = createdAt ? new Date(createdAt) : new Date()
+  const safeDate = Number.isNaN(date.getTime()) ? new Date() : date
+  const yyyy = String(safeDate.getFullYear())
+  const mm = String(safeDate.getMonth() + 1).padStart(2, "0")
+  const dd = String(safeDate.getDate()).padStart(2, "0")
+  const normalized = raw.replace(/[^a-zA-Z0-9]/g, "").toUpperCase()
+  let seq = 0
+  for (const ch of normalized || `DC${yyyy}${mm}${dd}`) {
+    seq = (seq * 31 + ch.charCodeAt(0)) % 10000
+  }
+  return `DC-${yyyy}${mm}${dd}-${String(Math.abs(seq) % 10000).padStart(4, "0")}`
+}
+
+export function formatSalesOrderReference(value?: string | null, createdAt?: string | Date | null): string {
+  const raw = String(value ?? "").trim()
+  if (/^SO-\d{8}-\d{4}$/i.test(raw)) return raw.toUpperCase()
+  return buildProjectReference("SO", raw, createdAt)
 }
