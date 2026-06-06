@@ -198,7 +198,7 @@ export default function ForgotPasswordPage() {
                 <div className="space-y-2">
                   <Label htmlFor="phone">Số điện thoại</Label>
                   <Input
-                    id="phone" placeholder="0888322778" value={phone}
+                    id="phone" placeholder="0901234567" value={phone}
                     onChange={e => { setPhone(e.target.value); setError("") }}
                     autoFocus maxLength={10}
                     onKeyDown={e => e.key === "Enter" && handlePhoneSubmit()}

@@ -194,14 +194,11 @@ export default function BookingPage() {
   const [submitting, setSubmitting]         = useState(false)
   const [submitError, setSubmitError]       = useState("")
   const [booking, setBooking]               = useState<PendingBooking | null>(null)
-<<<<<<< HEAD
   const [sessionExpired, setSessionExpired] = useState(false)
-=======
   const [sepayPayment, setSepayPayment]     = useState<SepayPaymentState | null>(null)
   const [sepayStatus, setSepayStatus]       = useState<'waiting' | 'failed' | 'expired'>('waiting')
   const [sepayCountdown, setSepayCountdown] = useState(600) // 10 minutes
   const [copied, setCopied]                 = useState(false)
->>>>>>> fd4e817d37048e1dde400e5402e68ff66a1caecd
 
   // Contact info
   const [contactName, setContactName]       = useState(user?.fullName === "Khách" ? "" : (user?.fullName || ""))

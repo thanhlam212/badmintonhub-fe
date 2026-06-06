@@ -11,25 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { formatVND } from "@/lib/utils"
 import { salesOrderApi } from "@/lib/api"
-<<<<<<< HEAD
 import { cn } from "@/lib/utils"
 import { Search, ShieldCheck, ShieldAlert, Clock, Loader2, Package } from "lucide-react"
-=======
-import { useAuth } from "@/lib/auth-context"
-import { cn, formatSalesOrderReference } from "@/lib/utils"
-import { Search, ShieldCheck, Clock, CheckCircle2, XCircle, Wrench } from "lucide-react"
-
-type WarrantyCaseStatus = "new" | "processing" | "resolved" | "rejected" | "expired"
-
-interface WarrantyLine {
-  id: string
-  sku?: string
-  name: string
-  qty: number
-  months: number
-  expiresAt: string
-}
->>>>>>> fd4e817d37048e1dde400e5402e68ff66a1caecd
 
 interface WarrantyItem { name: string; qty: number; price: number; warrantyMonths: number }
 interface WarrantyRecord {
@@ -96,7 +79,6 @@ export default function WarrantyPage() {
           price: Number(i.price) || 0,
           warrantyMonths: getWarrantyMonths(i.product_name || i.name || ""),
         }))
-<<<<<<< HEAD
         if (!items.some(it => it.warrantyMonths > 0)) return null
         const ov  = cases[id]
         const allExp = items.filter(it => it.warrantyMonths > 0).every(it => isExpired(date, it.warrantyMonths))
@@ -108,93 +90,6 @@ export default function WarrantyPage() {
       setRecords(built)
     } catch {}
     setLoading(false)
-=======
-
-        const expiresAt = normalizedWarrantyItems.length > 0
-          ? [...normalizedWarrantyItems].sort((a, b) => String(b.expiresAt).localeCompare(String(a.expiresAt)))[0].expiresAt
-          : issuedAt
-
-        const savedState = stateMap[warrantyId]
-        const baseStatus: WarrantyCaseStatus = expiresAt < today ? "expired" : "new"
-
-        nextRecords.push({
-          id: warrantyId,
-          customer,
-          phone,
-          issuedAt,
-          expiresAt,
-          orderCode: formatSalesOrderReference(slip?.orderCode || order?.sales_code || order?.orderCode || order?.order_code || order?.invoiceCode || order?.invoice_code || order?.code || order?.id || slip?.orderId || "", order?.created_at || order?.createdAt || slip?.date || today),
-          slipId: String(slip?.id || ""),
-          status: savedState?.status || baseStatus,
-          note: savedState?.note || "",
-          updatedAt: savedState?.updatedAt,
-          updatedBy: savedState?.updatedBy,
-          items: normalizedWarrantyItems,
-        })
-      }
-
-      nextRecords.sort((a, b) => {
-        const byDate = String(b.issuedAt).localeCompare(String(a.issuedAt))
-        if (byDate !== 0) return byDate
-        return String(a.id).localeCompare(String(b.id))
-      })
-
-      setRecords(nextRecords)
-    }
-
-    loadRecords()
-
-    const intervalId = window.setInterval(() => {
-      loadRecords()
-    }, 10000)
-
-    const onStorage = (event: StorageEvent) => {
-      if (!event.key || event.key === "exportSlips" || event.key === WARRANTY_CASES_KEY) {
-        loadRecords()
-      }
-    }
-
-    const onFocus = () => loadRecords()
-
-    window.addEventListener("storage", onStorage)
-    window.addEventListener("focus", onFocus)
-
-    return () => {
-      window.clearInterval(intervalId)
-      window.removeEventListener("storage", onStorage)
-      window.removeEventListener("focus", onFocus)
-    }
-  }, [])
-
-  const filteredRecords = useMemo(() => {
-    const normalizedPhone = normalizePhone(searchPhone)
-    const q = searchText.trim().toLowerCase()
-
-    return records.filter((record) => {
-      if (statusFilter !== "all" && record.status !== statusFilter) return false
-      if (normalizedPhone && !normalizePhone(record.phone).includes(normalizedPhone)) return false
-      if (q) {
-        const haystack = `${record.id} ${record.customer} ${record.orderCode} ${record.slipId}`.toLowerCase()
-        if (!haystack.includes(q)) return false
-      }
-      return true
-    })
-  }, [records, searchPhone, searchText, statusFilter])
-
-  const stats = useMemo(() => {
-    return {
-      total: records.length,
-      processing: records.filter(r => r.status === "processing").length,
-      resolved: records.filter(r => r.status === "resolved").length,
-      expired: records.filter(r => r.status === "expired").length,
-    }
-  }, [records])
-
-  const openManageDialog = (record: WarrantyRecord) => {
-    setSelectedRecord(record)
-    setEditStatus(record.status)
-    setEditNote(record.note)
->>>>>>> fd4e817d37048e1dde400e5402e68ff66a1caecd
   }
   useEffect(() => { loadData() }, [])
 

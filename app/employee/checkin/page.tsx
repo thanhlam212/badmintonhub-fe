@@ -141,9 +141,13 @@ export default function CheckinPage() {
     setErrorMsg("")
 
     try {
+      // Hỗ trợ cả UUID và mã booking (MB-XXXXXX / BK-XXXXXX)
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+      const body = isUuid ? { bookingId: id } : { bookingCode: id }
+
       const data = await apiFetch("/bookings/checkin", {
         method: "POST",
-        body: JSON.stringify({ bookingId: id }),
+        body: JSON.stringify(body),
       })
       if (!data.success) {
         setErrorMsg(data.message || "Check-in thất bại")
@@ -171,9 +175,12 @@ export default function CheckinPage() {
 
   const { videoRef, canvasRef, cameraError, ready, restartCamera } = useQRScanner(
     useCallback((data: string) => {
-      // QR chứa booking UUID (hoặc URL có chứa UUID)
+      // QR chứa booking UUID hoặc mã booking (MB-/BK-)
       const uuidMatch = data.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)
-      if (uuidMatch) doCheckin(uuidMatch[0])
+      if (uuidMatch) { doCheckin(uuidMatch[0]); return }
+      // Mã booking dạng MB-YYYYMMDD-XXXX hoặc BK-YYYYMMDD-XXXX
+      const codeMatch = data.match(/[A-Z]{2}-\d{8}-\d{4}/i)
+      if (codeMatch) doCheckin(codeMatch[0])
     }, [doCheckin]),
     mode === "camera" && scanActive && status === "idle"
   )
@@ -290,10 +297,10 @@ export default function CheckinPage() {
             <CardContent className="p-5 space-y-4">
               <div className="flex items-center gap-3 text-muted-foreground">
                 <QrCode className="h-10 w-10 shrink-0 text-primary/40" />
-                <p className="text-sm">Nhập mã booking (UUID) từ email xác nhận của khách</p>
+                <p className="text-sm">Nhập mã booking hoặc UUID từ email xác nhận của khách</p>
               </div>
               <Input
-                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                placeholder="MB-20260606-0001 hoặc UUID booking"
                 value={manualId}
                 onChange={e => setManualId(e.target.value)}
                 className="font-mono text-sm h-11"
