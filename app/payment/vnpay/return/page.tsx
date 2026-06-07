@@ -1,13 +1,13 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { Suspense, useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { CheckCircle2, XCircle, Loader2, ArrowLeft, Home } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import Link from "next/link"
 
-export default function VNPayReturnPage() {
+function VNPayReturnContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [status, setStatus] = useState<"loading" | "success" | "failed">("loading")
@@ -68,7 +68,6 @@ export default function VNPayReturnPage() {
     <div className="min-h-screen flex items-center justify-center p-4 bg-muted/30">
       <Card className="w-full max-w-md">
         <CardContent className="pt-8 pb-6 px-6 space-y-6">
-          {/* Icon */}
           <div className="text-center">
             {status === "success" ? (
               <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-green-100">
@@ -81,7 +80,6 @@ export default function VNPayReturnPage() {
             )}
           </div>
 
-          {/* Message */}
           <div className="text-center space-y-1">
             <h1 className="font-serif text-xl font-bold">
               {status === "success" ? "Thanh toán thành công" : "Thanh toán thất bại"}
@@ -89,7 +87,6 @@ export default function VNPayReturnPage() {
             <p className="text-sm text-muted-foreground">{message}</p>
           </div>
 
-          {/* Details */}
           {(amount || orderInfo) && (
             <div className="rounded-lg border p-4 space-y-2 bg-muted/30">
               {orderInfo && (
@@ -111,7 +108,6 @@ export default function VNPayReturnPage() {
             </div>
           )}
 
-          {/* Actions */}
           <div className="space-y-2">
             {status === "success" ? (
               <>
@@ -144,5 +140,20 @@ export default function VNPayReturnPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+export default function VNPayReturnPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center space-y-3">
+          <Loader2 className="h-10 w-10 animate-spin text-primary mx-auto" />
+          <p className="text-muted-foreground">Đang xử lý kết quả thanh toán...</p>
+        </div>
+      </div>
+    }>
+      <VNPayReturnContent />
+    </Suspense>
   )
 }

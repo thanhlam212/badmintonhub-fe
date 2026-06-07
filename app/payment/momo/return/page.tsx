@@ -1,13 +1,13 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { Suspense, useEffect, useState } from "react"
 import { useSearchParams } from "next/navigation"
 import { CheckCircle2, XCircle, Loader2, ArrowLeft, Home } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import Link from "next/link"
 
-export default function MoMoReturnPage() {
+function MoMoReturnContent() {
   const searchParams = useSearchParams()
   const [status, setStatus] = useState<"loading" | "success" | "failed">("loading")
   const [message, setMessage] = useState("")
@@ -96,5 +96,20 @@ export default function MoMoReturnPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+export default function MoMoReturnPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center space-y-3">
+          <Loader2 className="h-10 w-10 animate-spin text-primary mx-auto" />
+          <p className="text-muted-foreground">Đang xử lý kết quả thanh toán...</p>
+        </div>
+      </div>
+    }>
+      <MoMoReturnContent />
+    </Suspense>
   )
 }
