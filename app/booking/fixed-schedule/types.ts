@@ -2,8 +2,17 @@
 // ENUMS - Khớp với BE booking.dto.ts
 // ═══════════════════════════════════════════════════════════════
 
-export type FixedScheduleCycle = 'weekly' | 'monthly';
 export type PaymentMethod = 'cash' | 'bank_transfer' | 'momo' | 'vnpay';
+
+/**
+ * Một buổi trong tuần: thứ mấy + giờ.
+ * dayOfWeek: 0=CN, 1=T2, 2=T3, 3=T4, 4=T5, 5=T6, 6=T7
+ */
+export interface WeeklySlot {
+  dayOfWeek: number;
+  timeStart: string; // HH:mm
+  timeEnd: string;   // HH:mm
+}
 
 /**
  * Action cho từng occurrence khi confirm gói.
@@ -60,11 +69,9 @@ export interface Court {
 /** Payload gửi lên POST /bookings/fixed/preview */
 export interface FixedSchedulePreviewRequest {
   courtId: number;
-  cycle: FixedScheduleCycle;
-  startDate: string; // YYYY-MM-DD
-  endDate: string;
-  timeStart: string; // HH:mm
-  timeEnd: string;
+  startDate: string;     // YYYY-MM-DD
+  numberOfWeeks: number; // tối thiểu 4
+  weeklySlots: WeeklySlot[];
 }
 
 /** Sân thay thế BE gợi ý khi có conflict */
@@ -100,12 +107,10 @@ export interface PreviewOccurrence {
 /** Response đầy đủ từ /preview */
 export interface FixedSchedulePreviewResponse {
   court: Court;
-  cycle: FixedScheduleCycle;
   startDate: string;
   endDate: string;
-  timeStart: string;
-  timeEnd: string;
-  hoursPerSession: number;
+  numberOfWeeks: number;
+  weeklySlots: WeeklySlot[];
   occurrences: PreviewOccurrence[];
   summary: {
     totalOccurrences: number;
@@ -115,7 +120,6 @@ export interface FixedSchedulePreviewResponse {
   };
   pricing: {
     pricePerHour: number;
-    pricePerSession: number;
     estimatedTotal: number;
     currency: string;
   };
@@ -142,11 +146,9 @@ export interface OccurrenceDecision {
 export interface FixedScheduleConfirmRequest {
   // Thông tin gói
   courtId: number;
-  cycle: FixedScheduleCycle;
   startDate: string;
-  endDate: string;
-  timeStart: string;
-  timeEnd: string;
+  numberOfWeeks: number;
+  weeklySlots: WeeklySlot[];
   // Thông tin khách
   customerName: string;
   customerPhone: string;

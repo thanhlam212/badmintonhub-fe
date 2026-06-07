@@ -8,17 +8,27 @@ interface Props {
   occurrences: OccurrenceUIState[];
 }
 
+function calcHours(timeStart: string, timeEnd: string): number {
+  const s = parseInt(timeStart.split(':')[0], 10);
+  const e = parseInt(timeEnd.split(':')[0], 10);
+  return Number.isNaN(s) || Number.isNaN(e) ? 0 : Math.max(0, e - s);
+}
+
 export function PricingSummary({ preview, occurrences }: Props) {
   const { pricing } = preview;
 
-  // Đếm số buổi thực sự tính tiền (keep + replace, không tính skip)
   const billableCount = occurrences.filter(
-    (o) => o.action === 'keep' || o.action === 'replace',
+    (o) => o.action === 'keep' || o.action === 'replace' || o.action === 'custom',
   ).length;
   const skippedCount = occurrences.filter((o) => o.action === 'skip').length;
 
-  // Giá luôn dùng giá sân gốc (bù miễn phí theo policy)
-  const totalAmount = pricing.pricePerSession * billableCount;
+  const totalAmount = occurrences
+    .filter((o) => o.action !== 'skip')
+    .reduce((sum, o) => {
+      const ts = o.action === 'custom' ? (o.customTimeStart ?? o.timeStart) : o.timeStart;
+      const te = o.action === 'custom' ? (o.customTimeEnd ?? o.timeEnd) : o.timeEnd;
+      return sum + pricing.pricePerHour * calcHours(ts, te);
+    }, 0);
 
   return (
     <div className="bg-white rounded-lg shadow-md p-6 sticky top-4">
@@ -33,7 +43,6 @@ export function PricingSummary({ preview, occurrences }: Props) {
       </div>
 
       <div className="space-y-3 text-sm">
-        {/* Breakdown */}
         <div className="space-y-2 text-gray-600">
           <div className="flex justify-between">
             <span>Giá mỗi giờ:</span>
@@ -42,27 +51,27 @@ export function PricingSummary({ preview, occurrences }: Props) {
             </span>
           </div>
           <div className="flex justify-between">
-            <span>Số giờ mỗi buổi:</span>
+            <span>Số buổi/tuần:</span>
             <span className="font-medium text-gray-900">
-              {preview.hoursPerSession} giờ
+              {preview.weeklySlots.length} buổi
             </span>
           </div>
           <div className="flex justify-between">
-            <span>Giá mỗi buổi:</span>
+            <span>Số tuần:</span>
             <span className="font-medium text-gray-900">
-              {pricing.pricePerSession.toLocaleString('vi-VN')}đ
+              {preview.numberOfWeeks} tuần
             </span>
           </div>
         </div>
 
         <div className="border-t pt-3 space-y-2 text-gray-600">
           <div className="flex justify-between">
-            <span>Buổi giữ nguyên / sân bù:</span>
+            <span>Buổi tính tiền:</span>
             <span className="font-medium text-gray-900">{billableCount} buổi</span>
           </div>
           {skippedCount > 0 && (
             <div className="flex justify-between text-gray-400">
-              <span>Buổi bỏ qua (miễn phí):</span>
+              <span>Buổi bỏ qua:</span>
               <span>{skippedCount} buổi</span>
             </div>
           )}
@@ -70,17 +79,16 @@ export function PricingSummary({ preview, occurrences }: Props) {
 
         <div className="border-t pt-3">
           <div className="flex justify-between text-base font-bold">
-            <span>Tổng cộng:</span>
+            <span>Ước tính:</span>
             <span className="text-blue-600">
               {totalAmount.toLocaleString('vi-VN')}đ
             </span>
           </div>
         </div>
 
-        {/* Note về bù sân miễn phí */}
         {occurrences.some((o) => o.action === 'replace') && (
           <div className="p-3 bg-blue-50 rounded-lg text-xs text-blue-700">
-            🔄 Các buổi dùng sân thay thế được tính theo giá sân gốc (bù miễn phí).
+            🔄 Sân thay thế tính theo giá sân gốc (bù miễn phí).
           </div>
         )}
       </div>

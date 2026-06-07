@@ -1167,27 +1167,23 @@ export interface ApiFixedSchedulePreview {
     name: string;
     type: string;
     price: number;
+    branchId: number;
   };
-  cycle: 'weekly' | 'monthly';
   startDate: string;
   endDate: string;
-  hoursPerSession: number;
+  numberOfWeeks: number;
+  weeklySlots: { dayOfWeek: number; timeStart: string; timeEnd: string }[];
   occurrences: ApiFixedScheduleOccurrence[];
-  totalOccurrences: number;
-  availableOccurrences: number;
-  conflictOccurrences: number;
+  summary: {
+    totalOccurrences: number;
+    availableCount: number;
+    replaceableCount: number;
+    unresolvableCount: number;
+  };
   pricing: {
     pricePerHour: number;
-    pricePerSession: number;
-    totalSessions: number;
-    subtotal: number;
-    suggestedDiscount: number;
-    discountAmount: number;
-    finalAmount: number;
-  };
-  suggestions: {
-    hasConflicts: boolean;
-    message: string;
+    estimatedTotal: number;
+    currency: string;
   };
 }
 
@@ -1197,32 +1193,36 @@ export interface ApiFixedSchedulePreview {
 
 // Add this to your api.ts or lib/api.ts file
 
-interface FixedSchedulePreviewPayload {
-  courtId: number;
-  cycle: 'weekly' | 'monthly';
-  startDate: string;
-  endDate: string;
+interface WeeklySlotPayload {
+  dayOfWeek: number; // 0=CN, 1=T2, ..., 6=T7
   timeStart: string;
   timeEnd: string;
 }
 
+interface FixedSchedulePreviewPayload {
+  courtId: number;
+  startDate: string;
+  numberOfWeeks: number;
+  weeklySlots: WeeklySlotPayload[];
+}
+
 interface FixedScheduleConfirmPayload {
   courtId: number;
-  cycle: string;
   startDate: string;
-  endDate: string;
-  timeStart: string;
-  timeEnd: string;
+  numberOfWeeks: number;
+  weeklySlots: WeeklySlotPayload[];
   customerName: string;
   customerPhone: string;
   customerEmail?: string;
   paymentMethod: string;
   userId?: string;
   adjustmentLimit?: number;
-  decisions: {           // ← Đổi từ occurrences[] sang decisions[]
+  decisions: {
     date: string;
     action: 'keep' | 'replace' | 'skip' | 'custom';
     replaceWithCourtId?: number;
+    customTimeStart?: string;
+    customTimeEnd?: string;
     reason?: string;
   }[];
 }
