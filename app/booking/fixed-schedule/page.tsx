@@ -10,18 +10,28 @@ import {
   BadgeCheck, XCircle, Sparkles, Shield, Search,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useAuth } from '@/lib/auth-context';
 import { useFixedSchedule } from './hooks/useFixedSchedule';
 import type {
-  FixedScheduleCycle,
+  WeeklySlot,
   PaymentMethod,
   OccurrenceUIState,
   OccurrenceAction,
   Court,
 } from './types';
+
+// ── Constants for day of week ──
+const DAY_LABELS: { value: number; label: string; short: string }[] = [
+  { value: 1, label: 'Thứ Hai',  short: 'T2' },
+  { value: 2, label: 'Thứ Ba',   short: 'T3' },
+  { value: 3, label: 'Thứ Tư',   short: 'T4' },
+  { value: 4, label: 'Thứ Năm',  short: 'T5' },
+  { value: 5, label: 'Thứ Sáu',  short: 'T6' },
+  { value: 6, label: 'Thứ Bảy',  short: 'T7' },
+  { value: 0, label: 'Chủ Nhật', short: 'CN' },
+];
 
 // ═══════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -47,11 +57,12 @@ export default function FixedSchedulePage() {
   const [courts, setCourts] = useState<Court[]>([]);
   const [loadingCourts, setLoadingCourts] = useState(true);
   const [courtId, setCourtId] = useState('');
-  const [cycle, setCycle] = useState<FixedScheduleCycle>('weekly');
   const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [timeStart, setTimeStart] = useState('08:00');
-  const [timeEnd, setTimeEnd] = useState('10:00');
+  const [numberOfWeeks, setNumberOfWeeks] = useState(8);
+  // weeklySlots: mỗi phần tử = 1 buổi/tuần với thứ + giờ
+  const [weeklySlots, setWeeklySlots] = useState<WeeklySlot[]>([
+    { dayOfWeek: 1, timeStart: '08:00', timeEnd: '10:00' },
+  ]);
 
   // ── Step 2 state (customer) ──
   const [customerName, setCustomerName] = useState('');
@@ -98,8 +109,54 @@ export default function FixedSchedulePage() {
     if (!customerEmail && user.email)   setCustomerEmail(user.email);
   }, [user]);
 
+  // ── Helpers cho weeklySlots ──
+  const toggleDay = (dayOfWeek: number) => {
+    setWeeklySlots((prev) => {
+      const exists = prev.find((s) => s.dayOfWeek === dayOfWeek);
+      if (exists) {
+        // Phải giữ ít nhất 1 buổi
+        if (prev.length === 1) return prev;
+        return prev.filter((s) => s.dayOfWeek !== dayOfWeek);
+      }
+      return [...prev, { dayOfWeek, timeStart: '08:00', timeEnd: '10:00' }]
+        .sort((a, b) => {
+          // Sort theo thứ tự tuần: T2=1 đến CN=0 (đặt CN cuối)
+          const order = [1, 2, 3, 4, 5, 6, 0];
+          return order.indexOf(a.dayOfWeek) - order.indexOf(b.dayOfWeek);
+        });
+    });
+  };
+
+  const updateSlotTime = (dayOfWeek: number, field: 'timeStart' | 'timeEnd', value: string) => {
+    setWeeklySlots((prev) =>
+      prev.map((s) => s.dayOfWeek === dayOfWeek ? { ...s, [field]: value } : s),
+    );
+  };
+
+  // ── Tính live total cho pricing sidebar ──
+  const liveTotal = (() => {
+    if (!preview) return 0;
+    const ph = preview.pricing.pricePerHour;
+    return occurrences
+      .filter((o) => o.action !== 'skip')
+      .reduce((sum, o) => {
+        const tsStr = o.action === 'custom' ? (o.customTimeStart ?? o.timeStart) : o.timeStart;
+        const teStr = o.action === 'custom' ? (o.customTimeEnd ?? o.timeEnd) : o.timeEnd;
+        const ts = parseInt(tsStr.split(':')[0], 10);
+        const te = parseInt(teStr.split(':')[0], 10);
+        if (Number.isNaN(ts) || Number.isNaN(te) || te <= ts) return sum;
+        return sum + ph * (te - ts);
+      }, 0);
+  })();
+
   // ── Validation ──
-  const isStep1Valid = !!(courtId && startDate && endDate && timeStart && timeEnd);
+  const isStep1Valid = !!(
+    courtId &&
+    startDate &&
+    numberOfWeeks >= 4 &&
+    weeklySlots.length > 0 &&
+    weeklySlots.every((s) => s.timeStart && s.timeEnd && s.timeEnd > s.timeStart)
+  );
   const isStep2Valid = !!(
     customerName.trim() &&
     /^(0[3|5|7|8|9])+([0-9]{8})$/.test(customerPhone) &&
@@ -114,7 +171,9 @@ export default function FixedSchedulePage() {
     if (!isStep1Valid) { toast.error('Vui lòng điền đầy đủ thông tin!'); return; }
     const ok = await fetchPreview({
       courtId: parseInt(courtId),
-      cycle, startDate, endDate, timeStart, timeEnd,
+      startDate,
+      numberOfWeeks,
+      weeklySlots,
     });
     if (ok) setStep(2);
   };
@@ -146,7 +205,9 @@ export default function FixedSchedulePage() {
 
     const result = await confirmBooking({
       courtId: parseInt(courtId),
-      cycle, startDate, endDate, timeStart, timeEnd,
+      startDate,
+      numberOfWeeks,
+      weeklySlots,
       customerName,
       customerPhone,
       customerEmail: customerEmail || undefined,
@@ -159,9 +220,9 @@ export default function FixedSchedulePage() {
     if (result) {
       localStorage.setItem('completedFixedBooking', JSON.stringify({
         fixedSchedule: {
-          id: result.scheduleId,          // ← success page đọc fixedSchedule.id
+          id: result.scheduleId,
           courtName: courts.find((c) => c.id === parseInt(courtId))?.name || 'Sân',
-          cycle,
+          numberOfWeeks,
           occurrenceCount: result.bookingsCreated,
           invoiceCode: result.invoiceCode,
           totalAmount: result.totalAmount,
@@ -270,17 +331,16 @@ export default function FixedSchedulePage() {
               transition={{ duration: 0.25 }}
               className="max-w-2xl mx-auto space-y-4"
             >
-              {/* Court + Cycle */}
+              {/* Court */}
               <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-5">
                 <h2 className="font-semibold text-gray-800 flex items-center gap-2">
                   <MapPin className="h-4 w-4 text-green-600" />
-                  Thông tin sân & chu kỳ
+                  Chọn sân
                 </h2>
 
-                {/* Court select */}
                 <div className="space-y-1.5">
                   <label className="text-sm font-medium text-gray-600">
-                    Chọn sân <span className="text-red-400">*</span>
+                    Sân cầu lông <span className="text-red-400">*</span>
                   </label>
                   {loadingCourts ? (
                     <div className="h-11 bg-gray-100 animate-pulse rounded-xl" />
@@ -300,43 +360,20 @@ export default function FixedSchedulePage() {
                   )}
                 </div>
 
-                {/* Cycle toggle */}
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium text-gray-600">
-                    Chu kỳ <span className="text-red-400">*</span>
-                  </label>
-                  <div className="grid grid-cols-2 gap-2.5">
-                    {(['weekly', 'monthly'] as const).map((c) => (
-                      <button
-                        key={c}
-                        type="button"
-                        onClick={() => setCycle(c)}
-                        className={cn(
-                          'h-11 rounded-xl border-2 text-sm font-semibold transition-all duration-150',
-                          cycle === c
-                            ? 'border-green-600 bg-green-600 text-white shadow-md shadow-green-600/20'
-                            : 'border-gray-200 text-gray-600 hover:border-green-300 hover:bg-green-50',
-                        )}
-                      >
-                        {c === 'weekly' ? '📅 Hàng tuần' : '📆 Hàng tháng'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
               </div>
 
-              {/* Date + Time */}
+              {/* Schedule settings */}
               <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-5">
                 <h2 className="font-semibold text-gray-800 flex items-center gap-2">
                   <Calendar className="h-4 w-4 text-green-600" />
-                  Thời gian
+                  Thời gian đặt sân
                 </h2>
 
-                {/* Date range */}
+                {/* Start date + Number of weeks */}
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                      Từ ngày
+                      Ngày bắt đầu <span className="text-red-400">*</span>
                     </label>
                     <input
                       type="date"
@@ -348,65 +385,131 @@ export default function FixedSchedulePage() {
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                      Đến ngày
+                      Số tuần <span className="text-red-400">*</span>
                     </label>
-                    <input
-                      type="date"
-                      value={endDate}
-                      min={startDate || today}
-                      onChange={(e) => setEndDate(e.target.value)}
+                    <select
+                      value={numberOfWeeks}
+                      onChange={(e) => setNumberOfWeeks(parseInt(e.target.value))}
                       className="w-full h-11 px-3.5 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-500 transition-all"
-                    />
+                    >
+                      {[4, 8, 12, 16, 20, 24].map((n) => (
+                        <option key={n} value={n}>{n} tuần ({Math.round(n / 4)} tháng)</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
 
-                {/* Time range - đẹp hơn với visual */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
-                    <Clock className="h-3.5 w-3.5" />
-                    Khung giờ
-                  </label>
-                  <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-xl border border-gray-100">
-                    <div className="flex-1 space-y-1">
-                      <p className="text-xs text-gray-400">Bắt đầu</p>
-                      <input
-                        type="time"
-                        value={timeStart}
-                        onChange={(e) => setTimeStart(e.target.value)}
-                        className="w-full h-10 px-3 border border-gray-200 rounded-lg text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-500 transition-all"
-                      />
-                    </div>
-                    <div className="flex flex-col items-center gap-1 pt-4">
-                      <div className="w-8 h-px bg-gray-300" />
-                      <span className="text-xs text-gray-400">đến</span>
-                    </div>
-                    <div className="flex-1 space-y-1">
-                      <p className="text-xs text-gray-400">Kết thúc</p>
-                      <input
-                        type="time"
-                        value={timeEnd}
-                        onChange={(e) => setTimeEnd(e.target.value)}
-                        className="w-full h-10 px-3 border border-gray-200 rounded-lg text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-500 transition-all"
-                      />
-                    </div>
-                  </div>
-                  {timeStart && timeEnd && timeEnd <= timeStart && (
-                    <p className="text-xs text-red-500 flex items-center gap-1">
-                      <AlertCircle className="h-3.5 w-3.5" />
-                      Giờ kết thúc phải sau giờ bắt đầu
-                    </p>
-                  )}
+                <p className="text-xs text-gray-400 flex items-center gap-1.5">
+                  <AlertCircle className="h-3.5 w-3.5 text-blue-400" />
+                  Tổng <strong>{weeklySlots.length * numberOfWeeks}</strong> buổi •&nbsp;
+                  {weeklySlots.length} buổi/tuần × {numberOfWeeks} tuần
+                </p>
+              </div>
+
+              {/* Weekly slots: chọn thứ + giờ */}
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-4">
+                <h2 className="font-semibold text-gray-800 flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-green-600" />
+                  Buổi tập trong tuần
+                </h2>
+                <p className="text-xs text-gray-400">
+                  Chọn các thứ muốn đặt và khung giờ cho từng thứ
+                </p>
+
+                {/* Day selector */}
+                <div className="flex flex-wrap gap-2">
+                  {DAY_LABELS.map((day) => {
+                    const selected = weeklySlots.some((s) => s.dayOfWeek === day.value);
+                    return (
+                      <button
+                        key={day.value}
+                        type="button"
+                        onClick={() => toggleDay(day.value)}
+                        className={cn(
+                          'px-3 h-8 rounded-lg text-xs font-bold border-2 transition-all',
+                          selected
+                            ? 'border-green-600 bg-green-600 text-white'
+                            : 'border-gray-200 text-gray-500 hover:border-green-400 hover:text-green-600',
+                        )}
+                      >
+                        {day.short}
+                      </button>
+                    );
+                  })}
                 </div>
+
+                {/* Time picker per selected day */}
+                <div className="space-y-3">
+                  {weeklySlots.map((slot) => {
+                    const dayInfo = DAY_LABELS.find((d) => d.value === slot.dayOfWeek);
+                    const hasError = slot.timeEnd <= slot.timeStart;
+                    return (
+                      <div
+                        key={slot.dayOfWeek}
+                        className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100"
+                      >
+                        <div className="w-8 h-8 rounded-lg bg-green-100 flex items-center justify-center shrink-0">
+                          <span className="text-xs font-bold text-green-700">{dayInfo?.short}</span>
+                        </div>
+                        <div className="flex-1 grid grid-cols-2 gap-2">
+                          <div className="space-y-0.5">
+                            <p className="text-xs text-gray-400">Bắt đầu</p>
+                            <input
+                              type="time"
+                              value={slot.timeStart}
+                              onChange={(e) => updateSlotTime(slot.dayOfWeek, 'timeStart', e.target.value)}
+                              className={cn(
+                                'w-full h-9 px-2.5 border rounded-lg text-sm font-semibold bg-white focus:outline-none focus:ring-2 transition-all',
+                                hasError
+                                  ? 'border-red-300 focus:ring-red-500/20'
+                                  : 'border-gray-200 focus:ring-green-500/30 focus:border-green-500',
+                              )}
+                            />
+                          </div>
+                          <div className="space-y-0.5">
+                            <p className="text-xs text-gray-400">Kết thúc</p>
+                            <input
+                              type="time"
+                              value={slot.timeEnd}
+                              onChange={(e) => updateSlotTime(slot.dayOfWeek, 'timeEnd', e.target.value)}
+                              className={cn(
+                                'w-full h-9 px-2.5 border rounded-lg text-sm font-semibold bg-white focus:outline-none focus:ring-2 transition-all',
+                                hasError
+                                  ? 'border-red-300 focus:ring-red-500/20'
+                                  : 'border-gray-200 focus:ring-green-500/30 focus:border-green-500',
+                              )}
+                            />
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => toggleDay(slot.dayOfWeek)}
+                          disabled={weeklySlots.length === 1}
+                          className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-300 hover:text-red-400 hover:bg-red-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
+                        >
+                          <XCircle className="h-4 w-4" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {weeklySlots.some((s) => s.timeEnd <= s.timeStart) && (
+                  <p className="text-xs text-red-500 flex items-center gap-1">
+                    <AlertCircle className="h-3.5 w-3.5" />
+                    Giờ kết thúc phải sau giờ bắt đầu ở tất cả các buổi
+                  </p>
+                )}
               </div>
 
               {/* Info note */}
               <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-100 rounded-2xl text-sm text-blue-700">
                 <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-blue-500" />
                 <div className="space-y-1">
-                  <p className="font-semibold">Lưu ý về gói đặt sân</p>
+                  <p className="font-semibold">Lưu ý về gói đặt sân cố định</p>
                   <ul className="text-xs space-y-0.5 text-blue-600 list-disc ml-3">
-                    <li>Gói <strong>hàng tuần</strong>: tối thiểu 4 tuần (28 ngày)</li>
-                    <li>Gói <strong>hàng tháng</strong>: tối thiểu 2 chu kỳ (56 ngày)</li>
+                    <li>Tối thiểu <strong>4 tuần</strong> và tối đa 52 tuần</li>
+                    <li>Có thể chọn nhiều buổi/tuần với giờ khác nhau mỗi thứ</li>
                     <li>Sân bị trùng lịch sẽ được <strong>tự động gợi ý sân bù</strong> miễn phí</li>
                   </ul>
                 </div>
@@ -611,8 +714,10 @@ export default function FixedSchedulePage() {
                       <div>
                         <p className="font-semibold text-gray-900">{preview.court.name}</p>
                         <p className="text-xs text-gray-400 mt-0.5">
-                          {cycle === 'weekly' ? 'Gói hàng tuần' : 'Gói hàng tháng'}
-                          {' · '}{preview.timeStart} – {preview.timeEnd}
+                          Gói cố định · {preview.numberOfWeeks} tuần
+                        </p>
+                        <p className="text-xs text-gray-400">
+                          {preview.weeklySlots.length} buổi/tuần
                         </p>
                       </div>
                     </div>
@@ -625,19 +730,13 @@ export default function FixedSchedulePage() {
                         </span>
                       </div>
                       <div className="flex justify-between text-gray-500">
-                        <span>Giờ/buổi</span>
+                        <span>Tổng số buổi</span>
                         <span className="text-gray-800 font-medium">
-                          {preview.hoursPerSession} giờ
+                          {occurrences.length} buổi
                         </span>
                       </div>
                       <div className="flex justify-between text-gray-500">
-                        <span>Giá/buổi</span>
-                        <span className="text-gray-800 font-medium">
-                          {preview.pricing.pricePerSession.toLocaleString('vi-VN')}đ
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-gray-500">
-                        <span>Số buổi tính tiền</span>
+                        <span>Buổi tính tiền</span>
                         <span className="text-gray-800 font-medium">
                           {occurrences.filter((o) => o.action !== 'skip').length} buổi
                         </span>
@@ -645,18 +744,15 @@ export default function FixedSchedulePage() {
                       {occurrences.some((o) => o.action === 'skip') && (
                         <div className="flex justify-between text-gray-400 text-xs">
                           <span>Buổi bỏ qua</span>
-                          <span>{occurrences.filter((o) => o.action === 'skip').length} buổi (miễn phí)</span>
+                          <span>{occurrences.filter((o) => o.action === 'skip').length} buổi</span>
                         </div>
                       )}
                     </div>
 
                     <div className="border-t border-gray-100 pt-3 flex justify-between items-center">
-                      <span className="font-bold text-gray-900">Tổng cộng</span>
+                      <span className="font-bold text-gray-900">Ước tính</span>
                       <span className="text-xl font-bold text-green-600">
-                        {(
-                          preview.pricing.pricePerSession *
-                          occurrences.filter((o) => o.action !== 'skip').length
-                        ).toLocaleString('vi-VN')}đ
+                        {liveTotal.toLocaleString('vi-VN')}đ
                       </span>
                     </div>
 
