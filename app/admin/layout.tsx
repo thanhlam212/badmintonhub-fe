@@ -56,16 +56,26 @@ const navGroups = [
   },
 ]
 
-function AdminSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+function AdminSidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: { collapsed: boolean; onToggle: () => void; mobileOpen: boolean; onMobileClose: () => void }) {
   const pathname = usePathname()
   const router = useRouter()
   const { user, logout } = useAuth()
 
   return (
-    <aside className={cn(
-      "fixed inset-y-0 left-0 z-40 bg-[#0F172A] text-slate-300 flex flex-col transition-all duration-300",
-      collapsed ? "w-16" : "w-64"
-    )}>
+    <>
+      {/* Mobile Backdrop */}
+      {mobileOpen && (
+        <div 
+          className="fixed inset-0 z-40 bg-black/50 lg:hidden" 
+          onClick={onMobileClose}
+        />
+      )}
+
+      <aside className={cn(
+        "fixed inset-y-0 left-0 z-50 bg-[#0F172A] text-slate-300 flex flex-col transition-all duration-300",
+        collapsed ? "lg:w-16" : "lg:w-64",
+        mobileOpen ? "translate-x-0 w-64" : "-translate-x-full lg:translate-x-0"
+      )}>
       {/* Logo */}
       <div className="flex items-center gap-2 px-4 h-16 border-b border-slate-800">
         <Image src="/logo.png" alt="BadmintonHub" width={48} height={48} className="rounded-lg shrink-0" />
@@ -97,6 +107,7 @@ function AdminSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: (
                 const isActive = pathname === item.href || (item.href !== '/admin' && pathname.startsWith(item.href))
                 return (
                   <Link key={item.href} href={item.href}
+                    onClick={onMobileClose}
                     className={cn(
                       "flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors",
                       isActive
@@ -124,12 +135,13 @@ function AdminSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: (
         </button>
         <button
           onClick={onToggle}
-          className="flex items-center gap-3 px-3 py-2.5 rounded-md text-sm text-slate-400 hover:bg-slate-800 hover:text-white transition-colors w-full"
+          className="hidden lg:flex items-center gap-3 px-3 py-2.5 rounded-md text-sm text-slate-400 hover:bg-slate-800 hover:text-white transition-colors w-full"
         >
           {collapsed ? <ChevronRight className="h-5 w-5" /> : <><ChevronLeft className="h-5 w-5" /> <span>Thu gọn</span></>}
         </button>
       </div>
     </aside>
+    </>
   )
 }
 
@@ -154,8 +166,8 @@ function AdminTopbar({ collapsed, onMobileMenu }: { collapsed: boolean; onMobile
 
   return (
     <header className={cn(
-      "fixed top-0 right-0 z-30 h-16 bg-card border-b flex items-center justify-between px-4 transition-all duration-300",
-      collapsed ? "left-16" : "left-64"
+      "fixed top-0 right-0 left-0 z-30 h-16 bg-card border-b flex items-center justify-between px-4 transition-all duration-300",
+      collapsed ? "lg:left-16" : "lg:left-64"
     )}>
       <div className="flex items-center gap-3">
         <button className="lg:hidden" onClick={onMobileMenu}>
@@ -179,16 +191,22 @@ function AdminTopbar({ collapsed, onMobileMenu }: { collapsed: boolean; onMobile
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false)
+  const [mobileOpen, setMobileOpen] = useState(false)
 
   return (
     <RouteGuard requiredRole="admin">
       <InventoryProvider>  {/* ← bọc toàn bộ bên trong */}
         <div className="min-h-screen bg-background">
-          <AdminSidebar collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
-          <AdminTopbar collapsed={collapsed} onMobileMenu={() => { }} />
+          <AdminSidebar 
+            collapsed={collapsed} 
+            onToggle={() => setCollapsed(!collapsed)} 
+            mobileOpen={mobileOpen}
+            onMobileClose={() => setMobileOpen(false)}
+          />
+          <AdminTopbar collapsed={collapsed} onMobileMenu={() => setMobileOpen(true)} />
           <main className={cn(
             "pt-16 min-h-screen transition-all duration-300",
-            collapsed ? "ml-16" : "ml-64"
+            collapsed ? "ml-0 lg:ml-16" : "ml-0 lg:ml-64"
           )}>
             <div className="p-6">
               {children}  {/* ← chỉ render 1 lần duy nhất */}
