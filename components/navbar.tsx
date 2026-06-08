@@ -114,24 +114,24 @@ export function Navbar() {
             : "bg-white border-b border-gray-100"
         )}
       >
-        <div className="mx-auto max-w-7xl px-6 h-20">
-          <div className="flex items-center justify-between h-full gap-8">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 h-16 sm:h-20">
+          <div className="flex items-center justify-between h-full gap-4 sm:gap-8">
             {/* Logo - Bên trái */}
-            <Link href="/" className="flex items-center gap-3 group shrink-0">
+            <Link href="/" className="flex items-center gap-2 sm:gap-3 group shrink-0">
               <div className="relative">
                 <Image
                   src="/logo.jpg"
                   alt="BadmintonHub"
                   width={56}
                   height={56}
-                  className="rounded-xl transition-transform duration-300 group-hover:scale-105"
+                  className="rounded-xl transition-transform duration-300 group-hover:scale-105 w-10 h-10 sm:w-14 sm:h-14"
                 />
               </div>
               <div className="flex flex-col leading-none">
-                <span className="font-serif text-xl font-extrabold tracking-tight text-[#0A2416]">
+                <span className="font-serif text-lg sm:text-xl font-extrabold tracking-tight text-[#0A2416]">
                   Badminton<span className="text-primary">Hub</span>
                 </span>
-                <span className="text-[11px] font-medium tracking-widest uppercase text-muted-foreground">
+                <span className="hidden sm:inline text-[11px] font-medium tracking-widest uppercase text-muted-foreground">
                   Hệ thống sân cầu lông
                 </span>
               </div>

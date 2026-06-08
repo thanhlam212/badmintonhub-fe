@@ -67,7 +67,7 @@ function HeroSection() {
   useEffect(() => { const t = setTimeout(() => setLoaded(true), 100); return () => clearTimeout(t) }, [])
 
   return (
-    <section className="relative w-full h-[600px] lg:h-[700px] bg-[#0A2416] overflow-hidden">
+    <section className="relative w-full h-[500px] md:h-[600px] lg:h-[700px] bg-[#0A2416] overflow-hidden">
       {/* Slideshow */}
       {heroImages.map((src, idx) => (
         <div
@@ -112,7 +112,7 @@ function HeroSection() {
           </div>
 
           <h1
-            className="font-serif text-4xl lg:text-6xl font-extrabold text-white leading-tight transition-all duration-700"
+            className="font-serif text-3xl sm:text-4xl lg:text-6xl font-extrabold text-white leading-tight transition-all duration-700"
             style={{ opacity: loaded ? 1 : 0, transform: loaded ? "translateY(0)" : "translateY(24px)", transitionDelay: "250ms" }}
           >
             Sân Cầu Lông<br />
@@ -161,8 +161,8 @@ function StatsRow() {
     <section className="relative overflow-hidden bg-[#0A2416]" ref={ref}>
       <Orb className="w-[500px] h-[500px] bg-[#1F6B3A]/25 -top-40 -left-40" />
       <Orb className="w-[400px] h-[400px] bg-[#FF6B35]/10 -bottom-20 -right-20" />
-      <div className="relative z-10 mx-auto max-w-7xl px-4 py-10">
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="relative z-10 mx-auto max-w-7xl px-4 py-8 lg:py-10">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
           {stats.map((s, i) => {
             const Icon = s.icon
             return (
@@ -174,7 +174,7 @@ function StatsRow() {
                 <div className="h-10 w-10 rounded-xl bg-[#FF6B35]/20 border border-[#FF6B35]/30 flex items-center justify-center">
                   <Icon className="h-5 w-5 text-[#FF6B35]" />
                 </div>
-                <p className="font-serif text-2xl font-extrabold text-white">
+                <p className="font-serif text-xl lg:text-2xl font-extrabold text-white">
                   {s.display ? s.display : <AnimatedNumber target={s.value} suffix={s.suffix} />}
                 </p>
                 <p className="text-xs text-white/50 font-medium">{s.label}</p>
