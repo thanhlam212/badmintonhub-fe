@@ -22,6 +22,7 @@ import {
   Copy, CalendarDays, CreditCard, Users, FileText,
   RefreshCw, SkipForward, XCircle, ChevronRight, Loader2,
 } from "lucide-react"
+import QRCode from "react-qr-code"
 import { useState, useEffect } from "react"
 import { formatVND, formatBookingReference } from "@/lib/utils"
 import { bookingApi, orderApi, fixedScheduleApi, type ApiBooking, type ApiOrder } from "@/lib/api"
@@ -190,8 +191,8 @@ function BookingDetailDialog({ booking }: { booking: ApiBooking }) {
           <div>
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">QR Check-in</p>
             <div className="flex items-center gap-4 rounded-lg bg-muted p-3">
-              <div className="h-20 w-20 bg-card rounded border-2 border-dashed border-border flex items-center justify-center shrink-0">
-                <QrCode className="h-10 w-10 text-muted-foreground" />
+              <div className="bg-white p-1.5 rounded shrink-0 border border-border shadow-sm">
+                <QRCode value={booking.bookingCode || booking.id.toString()} size={64} />
               </div>
               <div className="text-sm">
                 <p className="font-semibold">Xuất trình khi đến sân</p>
