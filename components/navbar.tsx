@@ -39,6 +39,7 @@ const navLinks = [
   },
   { href: "/shop", label: "Cửa hàng", icon: "🛍️" },
   { href: "/my-bookings", label: "Lịch đặt", icon: "📋" },
+  { href: "/community", label: "Cộng đồng", icon: "🏸" },
 ]
 
 export function Navbar() {

@@ -211,7 +211,7 @@ export default function HubDashboard() {
               <TableBody>
                 {pendingTransfers.map(t => (
                   <TableRow key={t.id}>
-                    <TableCell className="font-mono text-xs text-purple-600">{t.id}</TableCell>
+                    <TableCell className="font-mono text-xs text-purple-600">{t.reference}</TableCell>
                     <TableCell className="text-sm">{t.date}</TableCell>
                     <TableCell className="text-sm">
                       <div className="flex items-center gap-1">

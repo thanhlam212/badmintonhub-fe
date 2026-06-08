@@ -990,7 +990,7 @@ export default function AdminInventory() {
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex-1">
                           <div className="flex items-center gap-2 mb-1.5">
-                            <span className="font-mono text-sm font-bold text-purple-600">{t.id}</span>
+                            <span className="font-mono text-sm font-bold text-purple-600">{t.reference}</span>
                             <Badge className={cn("text-[10px]", pickupMethodColor(t.pickupMethod))}>
                               {t.pickupMethod === "employee" && <UserCheck className="h-3 w-3 mr-0.5" />}
                               {t.pickupMethod === "delivery" && <Truck className="h-3 w-3 mr-0.5" />}
@@ -1050,7 +1050,7 @@ export default function AdminInventory() {
                 <>
                   <DialogHeader>
                     <DialogTitle className="font-serif flex items-center gap-2">
-                      <Repeat className="h-5 w-5 text-purple-600" /> Phiếu {selectedTransfer.id}
+                      <Repeat className="h-5 w-5 text-purple-600" /> Phiếu {selectedTransfer.reference}
                     </DialogTitle>
                   </DialogHeader>
                   <div className="space-y-4">

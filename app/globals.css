@@ -44,6 +44,7 @@
 
 @theme inline {
   --font-sans: 'Plus Jakarta Sans', sans-serif;
+  --font-heading: 'Montserrat', sans-serif;
   --font-serif: 'Montserrat', sans-serif;
   --font-mono: 'Geist Mono', 'Geist Mono Fallback';
   --color-background: var(--background);
@@ -140,3 +141,71 @@
 .stagger-4 { animation-delay: 0.4s; }
 .stagger-5 { animation-delay: 0.5s; }
 .stagger-6 { animation-delay: 0.6s; }
+
+.community-zone {
+  --cm-paper: oklch(0.96 0.012 92);
+  --cm-paper-2: oklch(0.99 0.008 95);
+  --cm-ink: oklch(0.19 0.012 60);
+  --cm-ink-soft: oklch(0.44 0.012 60);
+  --cm-brick: oklch(0.56 0.16 33);
+  --cm-lime: oklch(0.86 0.19 124);
+  --cm-line: oklch(0.86 0.012 80);
+  --background: var(--cm-paper);
+  --foreground: var(--cm-ink);
+  --card: var(--cm-paper-2);
+  --card-foreground: var(--cm-ink);
+  --popover: var(--cm-paper-2);
+  --popover-foreground: var(--cm-ink);
+  --primary: var(--cm-brick);
+  --primary-foreground: oklch(0.98 0.01 95);
+  --secondary: oklch(0.92 0.012 88);
+  --secondary-foreground: var(--cm-ink);
+  --muted: oklch(0.93 0.01 88);
+  --muted-foreground: var(--cm-ink-soft);
+  --accent: var(--cm-lime);
+  --accent-foreground: oklch(0.22 0.04 124);
+  --destructive: oklch(0.55 0.2 27);
+  --destructive-foreground: oklch(0.98 0.01 95);
+  --border: var(--cm-line);
+  --input: var(--cm-line);
+  --ring: var(--cm-brick);
+  --radius: 1rem;
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+.community-zone .cm-dark {
+  --background: oklch(0.18 0.012 60);
+  --foreground: oklch(0.96 0.012 92);
+  --card: oklch(0.23 0.012 60);
+  --card-foreground: oklch(0.96 0.012 92);
+  --muted-foreground: oklch(0.72 0.012 80);
+  --border: oklch(1 0 0 / 12%);
+  --secondary: oklch(0.27 0.012 60);
+  --secondary-foreground: oklch(0.96 0.012 92);
+  background-color: var(--background);
+  color: var(--foreground);
+}
+
+.community-zone .font-heading,
+.community-zone h1,
+.community-zone h2,
+.community-zone h3 {
+  font-family: var(--font-heading);
+}
+
+@keyframes cm-zone-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.community-zone-enter {
+  animation: cm-zone-enter 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}

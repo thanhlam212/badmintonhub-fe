@@ -34,7 +34,7 @@ import {
 
 const EMP_INV_PAGE_SIZE = 20
 
-interface GrnRow { sku: string; qty: number; cost: number }
+interface GrnRow { sku: string; name?: string; qty: number; cost: number }
 interface ExportRow { sku: string; qty: number; reason: string }
 interface TransferRow { sku: string; qty: number }
 
@@ -57,7 +57,7 @@ export default function EmployeeInventory() {
   const [alertOnly, setAlertOnly] = useState(false)
 
   // GRN state
-  const [grnRows, setGrnRows] = useState<GrnRow[]>([{ sku: "", qty: 1, cost: 0 }])
+  const [grnRows, setGrnRows] = useState<GrnRow[]>([{ sku: "", name: "", qty: 1, cost: 0 }])
   const [grnWarehouse, setGrnWarehouse] = useState("")
   const [grnSupplier, setGrnSupplier] = useState("")
   const [grnPo, setGrnPo] = useState("")
@@ -108,6 +108,24 @@ export default function EmployeeInventory() {
 
   const categories = [...new Set(inventory.map(i => i.category))]
   const warehouses = [...new Set(inventory.map(i => i.warehouse))]
+  const grnSkuOptions = useMemo(() => {
+    const options = new Map<string, { sku: string; name: string; unitCost?: number }>()
+
+    for (const item of inventory) {
+      if (!options.has(item.sku)) {
+        options.set(item.sku, { sku: item.sku, name: item.name, unitCost: item.unitCost })
+      }
+    }
+
+    for (const row of grnRows) {
+      if (!row.sku) continue
+      if (!options.has(row.sku)) {
+        options.set(row.sku, { sku: row.sku, name: row.name || row.sku, unitCost: row.cost })
+      }
+    }
+
+    return Array.from(options.values())
+  }, [inventory, grnRows])
 
   // Công thức tổng hợp:
   // totalValue  = Σ(onHand × unitCost)               — tổng giá trị hàng vật lý trong kho
@@ -161,7 +179,7 @@ export default function EmployeeInventory() {
     await ctx.importItems({
       items: validRows.map(r => ({
         sku: r.sku,
-        name: inventory.find(it => it.sku === r.sku)?.name || r.sku,
+        name: inventory.find(it => it.sku === r.sku)?.name || r.name || r.sku,
         qty: r.qty,
         cost: r.cost,
       })),
@@ -172,7 +190,7 @@ export default function EmployeeInventory() {
     })
 
     setGrnSuccess(true)
-    setGrnRows([{ sku: "", qty: 1, cost: 0 }])
+    setGrnRows([{ sku: "", name: "", qty: 1, cost: 0 }])
     setGrnNote("")
     // Mark admin slip as processed if this import was from an admin slip
     if (processingSlipId) {
@@ -228,6 +246,7 @@ export default function EmployeeInventory() {
       // Pre-fill import (GRN) form
       setGrnRows(slip.items.map(item => ({
         sku: item.sku,
+        name: item.name,
         qty: item.qty,
         cost: item.unitCost,
       })))
@@ -607,7 +626,7 @@ export default function EmployeeInventory() {
                     <p className="text-sm font-medium text-blue-800">Đang xử lý phiếu từ Admin: <span className="font-mono">{processingSlipId}</span></p>
                     <p className="text-xs text-blue-600 mt-0.5">Kiểm tra sản phẩm và số lượng, sau đó bấm "Xác nhận nhập kho" để hoàn tất.</p>
                   </div>
-                  <Button variant="ghost" size="sm" className="text-blue-600 hover:text-blue-800" onClick={() => { setProcessingSlipId(null); setGrnRows([{ sku: "", qty: 1, cost: 0 }]); setGrnNote(""); setGrnPo(""); setGrnSupplier(""); setGrnWarehouse(myWarehouse) }}>
+                    <Button variant="ghost" size="sm" className="text-blue-600 hover:text-blue-800" onClick={() => { setProcessingSlipId(null); setGrnRows([{ sku: "", name: "", qty: 1, cost: 0 }]); setGrnNote(""); setGrnPo(""); setGrnSupplier(""); setGrnWarehouse(myWarehouse) }}>
                     Huỷ liên kết
                   </Button>
                 </div>
@@ -665,14 +684,17 @@ export default function EmployeeInventory() {
                         <Select value={row.sku} onValueChange={v => {
                           const newRows = [...grnRows]
                           newRows[i].sku = v
-                          const item = inventory.find(it => it.sku === v)
-                          if (item) newRows[i].cost = item.unitCost
+                          const item = grnSkuOptions.find(it => it.sku === v) || inventory.find(it => it.sku === v)
+                          if (item) {
+                            newRows[i].name = item.name
+                            if (typeof item.unitCost === "number") newRows[i].cost = item.unitCost
+                          }
                           setGrnRows(newRows)
                         }} disabled={!!processingSlipId}>
                           <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Chọn sản phẩm" /></SelectTrigger>
                           <SelectContent>
-                            {inventory.map(item => (
-                              <SelectItem key={item.id} value={item.sku}>{item.sku} - {item.name}</SelectItem>
+                            {grnSkuOptions.map(item => (
+                              <SelectItem key={item.sku} value={item.sku}>{item.sku} - {item.name}</SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
@@ -729,13 +751,13 @@ export default function EmployeeInventory() {
               </div>
 
               <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" onClick={() => setGrnRows([...grnRows, { sku: "", qty: 1, cost: 0 }])} disabled={!!processingSlipId}>
+                  <Button variant="outline" size="sm" onClick={() => setGrnRows([...grnRows, { sku: "", name: "", qty: 1, cost: 0 }])} disabled={!!processingSlipId}>
                   <Plus className="h-4 w-4 mr-1" /> Thêm dòng
                 </Button>
               </div>
 
               <div className="flex justify-end gap-2 pt-4 border-t">
-                <Button variant="outline" onClick={() => { setGrnRows([{ sku: "", qty: 1, cost: 0 }]); setGrnNote(""); setGrnPo(""); setGrnSupplier(""); setProcessingSlipId(null) }}>Huỷ</Button>
+                <Button variant="outline" onClick={() => { setGrnRows([{ sku: "", name: "", qty: 1, cost: 0 }]); setGrnNote(""); setGrnPo(""); setGrnSupplier(""); setProcessingSlipId(null) }}>Huỷ</Button>
                 <Dialog>
                   <DialogTrigger asChild>
                     <Button className="bg-green-600 hover:bg-green-700 text-white" disabled={!grnRows.some(r => r.sku && r.qty > 0)}>

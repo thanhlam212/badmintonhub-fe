@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react"
 import { inventoryApi, transferApi, purchaseOrderApi, getToken } from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
+import { formatTransferReference } from "@/lib/utils"
 
 export interface InventoryItem {
   id: number; sku: string; name: string; category: string; warehouse: string
@@ -15,6 +16,7 @@ export interface InventoryTransaction {
   note: string; warehouse?: string; operator?: string
 }
 export interface TransferRequest {
+  reference: string
   id: string; date: string; fromWarehouse: string; toWarehouse: string
   fromWarehouseId?: number; toWarehouseId?: number
   items: { sku: string; name: string; qty: number; available: number }[]
@@ -44,7 +46,7 @@ interface InventoryContextType {
   refreshInventory: () => Promise<void>
   importItems: (p: { items: { sku: string; name: string; qty: number; cost: number }[]; warehouse: string; note: string; date: string; operator: string }) => Promise<void>
   exportItems: (p: { items: { sku: string; name: string; qty: number; reason: string }[]; warehouse: string; note: string; date: string; operator: string }) => Promise<boolean>
-  createTransfer: (r: Omit<TransferRequest, "id">) => Promise<string>
+  createTransfer: (r: Omit<TransferRequest, "id" | "reference">) => Promise<string>
   updateTransferStatus: (id: string, status: TransferRequest["status"]) => Promise<void>
   exportTransferItems: (p: { transferId: string; qtys: Record<string, number>; date: string; note: string; operator: string }) => Promise<void>
   receiveTransferItems: (transferId: string, operator: string) => Promise<void>
@@ -94,7 +96,32 @@ function normalizeTransferStatus(s: string): TransferRequest["status"] {
   return (s || "pending") as TransferRequest["status"]
 }
 function txTfr(r: any): TransferRequest {
-  return { id: String(r.id), date: r.created_at?new Date(r.created_at).toISOString().split("T")[0]:r.date||"", fromWarehouse: textValue(r.from_warehouse_name||r.fromWarehouse||r.fromWarehouseName||r.from_warehouse), toWarehouse: textValue(r.to_warehouse_name||r.toWarehouse||r.toWarehouseName||r.to_warehouse), fromWarehouseId: r.from_warehouse_id, toWarehouseId: r.to_warehouse_id, items: (r.items||[]).map((i: any)=>({sku:textValue(i.sku),name:textValue(i.name||i.product_name||i.productName||i.product),qty:i.qty||i.quantity||0,available:i.available||0})), reason: textValue(r.reason||r.note), note: textValue(r.note), status: normalizeTransferStatus(r.status), pickupMethod: r.pickup_method||r.pickupMethod||"employee", createdBy: textValue(r.created_by_name||r.createdBy||r.created_by), customerName: textValue(r.customer_name||r.customerName), customerPhone: textValue(r.customer_phone||r.customerPhone), approvedBy: textValue(r.approved_by_name||r.approvedBy||r.approved_by), approvedAt: r.approved_at, completedAt: r.completed_at }
+  const createdAt = r.created_at || r.createdAt || r.date
+  return {
+    reference: formatTransferReference(r.code || r.reference || r.id, createdAt),
+    id: String(r.id),
+    date: createdAt ? new Date(createdAt).toISOString().split("T")[0] : "",
+    fromWarehouse: textValue(r.from_warehouse_name||r.fromWarehouse||r.fromWarehouseName||r.from_warehouse),
+    toWarehouse: textValue(r.to_warehouse_name||r.toWarehouse||r.toWarehouseName||r.to_warehouse),
+    fromWarehouseId: r.from_warehouse_id ?? r.fromWarehouseId,
+    toWarehouseId: r.to_warehouse_id ?? r.toWarehouseId,
+    items: (r.items||[]).map((i: any)=>({
+      sku:textValue(i.sku),
+      name:textValue(i.name||i.product_name||i.productName||i.product),
+      qty:i.qty||i.quantity||0,
+      available:i.available||i.availableAtRequest||i.available_at_request||0,
+    })),
+    reason: textValue(r.reason||r.note),
+    note: textValue(r.note),
+    status: normalizeTransferStatus(r.status),
+    pickupMethod: r.pickup_method||r.pickupMethod||"employee",
+    createdBy: textValue(r.created_by_name||r.createdByName||r.createdBy||r.created_by),
+    customerName: textValue(r.customer_name||r.customerName),
+    customerPhone: textValue(r.customer_phone||r.customerPhone),
+    approvedBy: textValue(r.approved_by_name||r.approvedByName||r.approvedBy||r.approved_by),
+    approvedAt: r.approved_at || r.approvedAt,
+    completedAt: r.completed_at || r.completedAt,
+  }
 }
 function txPO(r: any): PurchaseOrder {
   return { id: String(r.id), supplier: textValue(r.supplier_name||r.supplier), status: r.status||"", createdDate: r.created_at?new Date(r.created_at).toISOString().split("T")[0]:r.createdDate||"", totalValue: r.total_value??r.totalValue??0, items: r.item_count??r.items??0, warehouse: textValue(r.warehouse_name||r.warehouse), poItems: (r.po_items||r.poItems||[]).map((i:any)=>({sku:textValue(i.sku),name:textValue(i.name||i.product_name||i.productName||i.product),qty:i.qty||i.quantity||0,unitCost:i.unit_cost||i.unitCost||i.price||0})) }
@@ -138,7 +165,7 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     await Promise.all([fetchInv(),fetchTxn()]);return true}catch{return false}
   }, [fetchInv,fetchTxn])
 
-  const createTransfer = useCallback(async(request: Omit<TransferRequest,"id">):Promise<string>=>{
+  const createTransfer = useCallback(async(request: Omit<TransferRequest,"id"|"reference">):Promise<string>=>{
     await ensureWhMap(); const fid=whMap[request.fromWarehouse]||request.fromWarehouseId; const tid=whMap[request.toWarehouse]||request.toWarehouseId
     if(!fid||!tid)throw new Error("Kho not found")
     const r=await transferApi.create({from_warehouse_id:fid,to_warehouse_id:tid,note:`${request.reason||""} | ${request.note||""}`.trim(),items:request.items.map(i=>({sku:i.sku,quantity:i.qty}))})

@@ -150,7 +150,7 @@ export default function HubTransfersPage() {
         transferId: actionTransfer.id,
         qtys,
         date: today,
-        note: `Xuất hàng điều chuyển ${actionTransfer.id} đến ${actionTransfer.toWarehouse}`,
+        note: `Xuất hàng điều chuyển ${actionTransfer.reference} đến ${actionTransfer.toWarehouse}`,
         operator: user?.fullName || "NV Hub"
       })
     } else if (actionType === "receive") {
@@ -246,7 +246,7 @@ export default function HubTransfersPage() {
               )}
               {filtered.map(t => (
                 <TableRow key={t.id}>
-                  <TableCell className="font-mono text-xs text-purple-600">{t.id}</TableCell>
+                  <TableCell className="font-mono text-xs text-purple-600">{t.reference}</TableCell>
                   <TableCell className="text-sm">{t.date}</TableCell>
                   <TableCell className="text-sm">
                     <div className="flex items-center gap-1">
@@ -496,7 +496,7 @@ export default function HubTransfersPage() {
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div>
                   <p className="text-muted-foreground">Mã phiếu</p>
-                  <p className="font-mono font-medium text-purple-600">{actionTransfer.id}</p>
+                  <p className="font-mono font-medium text-purple-600">{actionTransfer.reference}</p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Trạng thái hiện tại</p>
@@ -576,7 +576,7 @@ export default function HubTransfersPage() {
           <DialogHeader>
             <DialogTitle className="font-serif flex items-center gap-2">
               <Repeat className="h-5 w-5 text-purple-600" />
-              Chi tiết điều chuyển {selectedTransfer?.id}
+              Chi tiết điều chuyển {selectedTransfer?.reference}
             </DialogTitle>
           </DialogHeader>
           {selectedTransfer && (

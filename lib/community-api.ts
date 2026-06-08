@@ -1,0 +1,258 @@
+import { apiFetch, getToken } from '@/lib/api'
+
+export type CommunityLevel = 'Mới chơi' | 'Trung bình' | 'Khá' | 'Nâng cao'
+export type CommunityDistrict = 'Cầu Giấy' | 'Thanh Xuân' | 'Long Biên'
+export type CommunityPostKind = 'Chia sẻ' | 'Tìm đội' | 'Check-in' | 'Review sân' | 'Mẹo chơi'
+export type CommunityNotificationKind = 'like' | 'comment' | 'follow' | 'match' | 'reminder'
+
+export interface CommunityPlayer {
+  username: string
+  name: string
+  avatar: string
+  level: CommunityLevel
+  district: CommunityDistrict | ''
+  bio: string
+  followers: number
+  following: number
+  matches: number
+  checkins: number
+  postsCount?: number
+  cover: string
+}
+
+export interface CommunityComment {
+  id: string
+  body: string
+  time: string
+  likes: number
+  author: CommunityPlayer
+}
+
+export interface CommunityPost {
+  id: string
+  kind: CommunityPostKind
+  body: string
+  time: string
+  createdAt: string
+  images: string[]
+  tags: string[]
+  court: string
+  district: CommunityDistrict | ''
+  level: CommunityLevel | ''
+  likes: number
+  saves: number
+  commentsCount: number
+  comments: CommunityComment[]
+  author: CommunityPlayer
+}
+
+export interface CommunityMatch {
+  id: string
+  title: string
+  district: CommunityDistrict
+  court: string
+  level: CommunityLevel
+  date: string
+  slot: string
+  filled: number
+  needed: number
+  price: string
+  note: string
+  joined?: boolean
+  host: CommunityPlayer
+}
+
+export interface CommunityTagTrend {
+  tag: string
+  count: string
+}
+
+export interface CommunityUpcomingSession {
+  court: string
+  time: string
+  label: string
+}
+
+export interface CommunityNotification {
+  id: string
+  kind: CommunityNotificationKind
+  text: string
+  time: string
+  unread: boolean
+  link: string
+  actor: CommunityPlayer | null
+}
+
+export interface CommunityLandingResponse {
+  featuredPlayers: CommunityPlayer[]
+  featuredPosts: CommunityPost[]
+  activeMatches: CommunityMatch[]
+}
+
+export interface CommunityFeedResponse {
+  posts: CommunityPost[]
+  trendingTags: CommunityTagTrend[]
+  suggestedPlayers: CommunityPlayer[]
+  upcomingSessions: CommunityUpcomingSession[]
+}
+
+export interface CommunityProfileResponse {
+  player: CommunityPlayer
+  posts: CommunityPost[]
+  checkins: CommunityPost[]
+  hostedMatches: CommunityMatch[]
+  savedPosts: CommunityPost[]
+}
+
+export interface CommunityPostDetailResponse {
+  post: CommunityPost
+  relatedPosts: CommunityPost[]
+}
+
+export interface CommunityMatchesResponse {
+  matches: CommunityMatch[]
+}
+
+export interface CommunityNotificationsResponse {
+  notifications: CommunityNotification[]
+}
+
+export interface CreateCommunityPostPayload {
+  kind: CommunityPostKind
+  body: string
+  district?: CommunityDistrict
+  level?: CommunityLevel
+  branch_id?: number
+  court_id?: number
+  image_urls?: string[]
+  tags?: string[]
+}
+
+export interface CreateCommunityMatchPayload {
+  booking_id: string
+  title: string
+  level: CommunityLevel
+  needed_players: number
+  price_per_person: number
+  note?: string
+}
+
+export const communityApi = {
+  getLanding: async (): Promise<CommunityLandingResponse> => {
+    const res = await apiFetch<CommunityLandingResponse>('/community/landing')
+    return (res.data as CommunityLandingResponse) || { featuredPlayers: [], featuredPosts: [], activeMatches: [] }
+  },
+
+  getFeed: async (kind?: string): Promise<CommunityFeedResponse> => {
+    const query = kind ? `?kind=${encodeURIComponent(kind)}` : ''
+    const res = await apiFetch<CommunityFeedResponse>(`/community/feed${query}`)
+    return (
+      (res.data as CommunityFeedResponse) || {
+        posts: [],
+        trendingTags: [],
+        suggestedPlayers: [],
+        upcomingSessions: [],
+      }
+    )
+  },
+
+  getProfile: async (username: string): Promise<CommunityProfileResponse | null> => {
+    const res = await apiFetch<CommunityProfileResponse>(`/community/players/${encodeURIComponent(username)}`)
+    return (res.data as CommunityProfileResponse) || null
+  },
+
+  getPostDetail: async (id: string): Promise<CommunityPostDetailResponse | null> => {
+    const res = await apiFetch<CommunityPostDetailResponse>(`/community/posts/${id}`)
+    return (res.data as CommunityPostDetailResponse) || null
+  },
+
+  getMatches: async (filters?: { district?: string; level?: string; slot?: string }): Promise<CommunityMatchesResponse> => {
+    const params = new URLSearchParams()
+    if (filters?.district) params.set('district', filters.district)
+    if (filters?.level) params.set('level', filters.level)
+    if (filters?.slot) params.set('slot', filters.slot)
+    const query = params.toString()
+    const res = await apiFetch<CommunityMatchesResponse>(`/community/matches${query ? `?${query}` : ''}`)
+    return (res.data as CommunityMatchesResponse) || { matches: [] }
+  },
+
+  getNotifications: async (): Promise<CommunityNotificationsResponse> => {
+    const res = await apiFetch<CommunityNotificationsResponse>('/community/notifications')
+    return (res.data as CommunityNotificationsResponse) || { notifications: [] }
+  },
+
+  markAllNotificationsRead: async () => {
+    return apiFetch('/community/notifications/read-all', { method: 'PATCH' })
+  },
+
+  markNotificationRead: async (id: string) => {
+    return apiFetch(`/community/notifications/${id}/read`, { method: 'PATCH' })
+  },
+
+  createPost: async (payload: CreateCommunityPostPayload) => {
+    const res = await apiFetch<CommunityPost>('/community/posts', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+    return { success: res.success, post: (res.data as CommunityPost) || null, error: res.message }
+  },
+
+  togglePostLike: async (id: string) => {
+    const res = await apiFetch<{ liked: boolean; likes: number }>(`/community/posts/${id}/like`, { method: 'POST' })
+    return { success: res.success, ...(res.data || {}), error: res.message }
+  },
+
+  togglePostSave: async (id: string) => {
+    const res = await apiFetch<{ saved: boolean; saves: number }>(`/community/posts/${id}/save`, { method: 'POST' })
+    return { success: res.success, ...(res.data || {}), error: res.message }
+  },
+
+  addComment: async (postId: string, body: string) => {
+    const res = await apiFetch<{ comment: CommunityComment; commentsCount: number }>(`/community/posts/${postId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ body }),
+    })
+    return { success: res.success, ...(res.data || {}), error: res.message }
+  },
+
+  toggleFollow: async (username: string) => {
+    const res = await apiFetch<{ following: boolean; followers: number }>(`/community/players/${encodeURIComponent(username)}/follow`, {
+      method: 'POST',
+    })
+    return { success: res.success, ...(res.data || {}), error: res.message }
+  },
+
+  createMatch: async (payload: CreateCommunityMatchPayload) => {
+    const res = await apiFetch<CommunityMatch>('/community/matches', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+    return { success: res.success, match: (res.data as CommunityMatch) || null, error: res.message }
+  },
+
+  joinMatch: async (id: string) => {
+    const res = await apiFetch<{ joined: boolean; match: CommunityMatch }>(`/community/matches/${id}/join`, {
+      method: 'POST',
+    })
+    return { success: res.success, ...(res.data || {}), error: res.message }
+  },
+
+  uploadImage: async (file: File) => {
+    const token = getToken()
+    const form = new FormData()
+    form.append('image', file)
+
+    const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/community/upload-image`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      body: form,
+    })
+    const json = await response.json()
+    if (!response.ok) {
+      const message = Array.isArray(json.message) ? json.message[0] : json.message
+      return { success: false, error: message || 'Upload thất bại', url: '' }
+    }
+    const data = json?.success ? json.data : json
+    return { success: true, url: data?.url || '' }
+  },
+}
