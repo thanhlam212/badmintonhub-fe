@@ -514,6 +514,14 @@ export const courtApi = {
     if (res.success && res.data) return res.data
     return []
   },
+
+  createReview: async (courtId: number, data: { rating: number; content?: string }) => {
+    const res = await apiFetch<any>(`/courts/${courtId}/reviews`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+    return { success: res.success, review: res.data, message: res.message }
+  },
 }
 
 // ═══════════════════════════════════════════════════════════════

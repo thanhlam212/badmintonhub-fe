@@ -251,13 +251,13 @@ export function Navbar() {
                     <span className="text-xs text-amber-700 font-medium">Khách</span>
                   </div>
                   <Link href="/login" onClick={() => logout()}>
-                    <Button variant="outline" size="sm" className="h-8 text-xs font-semibold rounded-md border-[#1F6B3A] text-[#1F6B3A] hover:bg-[#1F6B3A]/5 transition-all duration-200">
-                      <LogIn className="h-3.5 w-3.5 mr-1" />
+                    <Button className="h-10 px-4 text-sm font-bold rounded-lg bg-[#1F6B3A] text-white hover:bg-[#185a30] shadow-md shadow-green-900/15 transition-all duration-200 hover:-translate-y-0.5">
+                      <LogIn className="h-4 w-4 mr-1.5" />
                       Đăng nhập
                     </Button>
                   </Link>
                   <Link href="/register" onClick={() => logout()}>
-                    <Button size="sm" className="h-8 bg-[#1F6B3A] text-white hover:bg-[#185a30] text-xs font-semibold rounded-md transition-all duration-200 hover:shadow-md">
+                    <Button variant="outline" className="h-10 px-4 border-[#1F6B3A] text-[#1F6B3A] hover:bg-[#1F6B3A]/5 text-sm font-semibold rounded-lg transition-all duration-200">
                       Đăng ký
                     </Button>
                   </Link>
@@ -313,11 +313,10 @@ export function Navbar() {
             ) : (
               <Link href="/login">
                 <Button
-                  variant="ghost"
-                  className="h-9 rounded-lg text-gray-600 hover:text-[#0A2416] hover:bg-gray-100 gap-1.5 px-3 transition-all duration-200"
+                  className="h-11 rounded-xl bg-[#1F6B3A] text-white hover:bg-[#185a30] gap-2 px-5 text-base font-bold shadow-md shadow-green-900/15 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg"
                 >
-                  <LogIn className="h-4 w-4" />
-                  <span className="text-sm font-semibold">Đăng nhập</span>
+                  <LogIn className="h-5 w-5" />
+                  <span>Đăng nhập</span>
                 </Button>
               </Link>
             )}
@@ -361,6 +360,21 @@ export function Navbar() {
               </Button>
             </Link>
           </div>
+
+          {(!user || user.role === "guest") && (
+            <Link
+              href="/login"
+              className="md:hidden ml-auto"
+              onClick={() => {
+                if (user?.role === "guest") logout()
+              }}
+            >
+              <Button className="h-10 rounded-xl bg-[#1F6B3A] text-white hover:bg-[#185a30] px-3 text-sm font-bold shadow-md shadow-green-900/15">
+                <LogIn className="h-4 w-4 mr-1.5" />
+                Đăng nhập
+              </Button>
+            </Link>
+          )}
 
           {/* Mobile Menu Toggle */}
           <button
@@ -488,12 +502,12 @@ export function Navbar() {
                   </div>
                   <div className="flex gap-2 px-4">
                     <Link href="/login" className="flex-1" onClick={() => { logout(); setMobileOpen(false) }}>
-                      <Button variant="outline" className="w-full rounded-xl font-semibold border-[#1F6B3A] text-[#1F6B3A] transition-all duration-200">
+                      <Button className="w-full h-11 rounded-xl font-bold bg-[#1F6B3A] text-white hover:bg-[#185a30] transition-all duration-200">
                         Đăng nhập
                       </Button>
                     </Link>
                     <Link href="/register" className="flex-1" onClick={() => { logout(); setMobileOpen(false) }}>
-                      <Button className="w-full bg-[#1F6B3A] text-white hover:bg-[#185a30] rounded-xl font-semibold transition-all duration-200">
+                      <Button variant="outline" className="w-full h-11 rounded-xl font-semibold border-[#1F6B3A] text-[#1F6B3A] transition-all duration-200">
                         Đăng ký
                       </Button>
                     </Link>
@@ -538,12 +552,12 @@ export function Navbar() {
               ) : (
                 <div className="flex gap-2 px-4">
                   <Link href="/login" className="flex-1" onClick={() => setMobileOpen(false)}>
-                    <Button variant="outline" className="w-full rounded-xl font-semibold transition-all duration-200">
+                    <Button className="w-full h-11 rounded-xl bg-[#1F6B3A] text-white hover:bg-[#185a30] font-bold transition-all duration-200">
                       Đăng nhập
                     </Button>
                   </Link>
                   <Link href="/register" className="flex-1" onClick={() => setMobileOpen(false)}>
-                    <Button className="w-full bg-[#1F6B3A] text-white hover:bg-[#185a30] rounded-xl font-semibold transition-all duration-200">
+                    <Button variant="outline" className="w-full h-11 border-[#1F6B3A] text-[#1F6B3A] rounded-xl font-semibold transition-all duration-200">
                       Đăng ký
                     </Button>
                   </Link>

@@ -25,7 +25,7 @@ import {
 import QRCode from "react-qr-code"
 import { useState, useEffect } from "react"
 import { formatVND, formatBookingReference } from "@/lib/utils"
-import { bookingApi, orderApi, fixedScheduleApi, type ApiBooking, type ApiOrder } from "@/lib/api"
+import { bookingApi, courtApi, orderApi, fixedScheduleApi, type ApiBooking, type ApiOrder } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
 
@@ -212,15 +212,46 @@ function BookingDetailDialog({ booking }: { booking: ApiBooking }) {
 
 // ─── Booking Card ─────────────────────────────────────────────
 function BookingCard({ booking, onCancel }: { booking: ApiBooking; onCancel?: (id: string) => void }) {
+  const [reviewOpen, setReviewOpen] = useState(false)
   const [rating, setRating] = useState(0)
   const [hoverRating, setHoverRating] = useState(0)
   const [reviewContent, setReviewContent] = useState("")
+  const [reviewMessage, setReviewMessage] = useState("")
+  const [reviewSubmitting, setReviewSubmitting] = useState(false)
 
   const dateObj = new Date(booking.bookingDate)
   const dayNum = dateObj.getDate()
   const month = `Th${dateObj.getMonth() + 1}`
   const dayNames = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"]
   const dayName = dayNames[dateObj.getDay()]
+
+  const handleReviewSubmit = async () => {
+    if (rating === 0 || reviewSubmitting) return
+
+    setReviewSubmitting(true)
+    setReviewMessage("")
+
+    const result = await courtApi.createReview(booking.courtId, {
+      rating,
+      content: reviewContent.trim() || undefined,
+    })
+
+    setReviewSubmitting(false)
+
+    if (!result.success) {
+      setReviewMessage(result.message || "Không thể gửi đánh giá lúc này")
+      return
+    }
+
+    setReviewMessage("Đã gửi đánh giá. Cảm ơn bạn đã chia sẻ trải nghiệm!")
+    window.setTimeout(() => {
+      setReviewOpen(false)
+      setRating(0)
+      setHoverRating(0)
+      setReviewContent("")
+      setReviewMessage("")
+    }, 900)
+  }
 
   return (
     <Card className="hover:-translate-y-0.5 transition-all duration-200 hover:shadow-md">
@@ -279,7 +310,16 @@ function BookingCard({ booking, onCancel }: { booking: ApiBooking; onCancel?: (i
               )}
 
               {booking.status === "completed" && (
-                <Dialog>
+                <Dialog
+                  open={reviewOpen}
+                  onOpenChange={(open) => {
+                    setReviewOpen(open)
+                    if (!open) {
+                      setHoverRating(0)
+                      setReviewMessage("")
+                    }
+                  }}
+                >
                   <DialogTrigger asChild>
                     <Button size="sm" className="text-xs h-7 bg-primary text-primary-foreground hover:bg-primary/90">Đánh giá</Button>
                   </DialogTrigger>
@@ -300,8 +340,17 @@ function BookingCard({ booking, onCancel }: { booking: ApiBooking; onCancel?: (i
                         {rating === 0 ? "Chọn số sao" : `Bạn đánh giá ${rating} sao`}
                       </p>
                       <Textarea placeholder="Chia sẻ trải nghiệm của bạn về sân..." value={reviewContent} onChange={e => setReviewContent(e.target.value)} rows={3} />
-                      <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90 font-semibold" disabled={rating === 0}>
-                        Gửi đánh giá
+                      {reviewMessage && (
+                        <p className={cn("text-center text-sm", reviewMessage.startsWith("Đã gửi") ? "text-green-600" : "text-red-600")}>
+                          {reviewMessage}
+                        </p>
+                      )}
+                      <Button
+                        className="w-full bg-primary text-primary-foreground hover:bg-primary/90 font-semibold"
+                        disabled={rating === 0 || reviewSubmitting}
+                        onClick={handleReviewSubmit}
+                      >
+                        {reviewSubmitting ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Đang gửi...</> : "Gửi đánh giá"}
                       </Button>
                     </div>
                   </DialogContent>
@@ -1133,10 +1182,24 @@ export default function MyBookingsPage() {
   const [allBookings, setAllBookings] = useState<ApiBooking[]>([])
 
   useEffect(() => {
-    if (user && user.role !== "guest") {
-      bookingApi.getMyBookings().then(setAllBookings)
+    if (!user || user.role === "guest" || activePage !== "bookings") return
+
+    let cancelled = false
+
+    const loadBookings = async () => {
+      const bookings = await bookingApi.getMyBookings()
+      if (!cancelled) setAllBookings(bookings)
     }
-  }, [user])
+
+    loadBookings()
+
+    const intervalId = window.setInterval(loadBookings, 60_000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+  }, [activePage, user])
 
   const handleCancel = async (bookingId: string) => {
     const result = await bookingApi.cancel(bookingId)
