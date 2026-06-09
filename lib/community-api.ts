@@ -195,6 +195,12 @@ export interface CommunityChatSocketEvents {
   'chat:error': (payload: { message?: string }) => void
 }
 
+export interface CommunityChatJoinAck {
+  ok: boolean
+  roomId: string
+  messages: CommunityChatMessage[]
+}
+
 function getCommunitySocketUrl() {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'
   return apiUrl.replace(/\/api\/?$/, '')
