@@ -18,7 +18,7 @@ import { CommunityAvatar } from '@/components/community/primitives'
 
 export default function CommunityChatPage() {
   return (
-    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Dang mo chat...</div>}>
+    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Đang mở chat...</div>}>
       <CommunityChatContent />
     </Suspense>
   )
@@ -43,6 +43,20 @@ function CommunityChatContent() {
   const activeRoomIdRef = useRef(activeRoomId)
   const lastMessageAtRef = useRef('')
   const joinedRoomRef = useRef('')
+  const lastResumeSyncAtRef = useRef(0)
+
+  function normalizeMessage(message: CommunityChatMessage): CommunityChatMessage {
+    const mineById = message.senderId && user?.id ? message.senderId === user.id : undefined
+    const mineByUsername =
+      message.sender?.username && user?.username
+        ? message.sender.username === user.username
+        : undefined
+
+    return {
+      ...message,
+      mine: mineById ?? mineByUsername ?? Boolean(message.mine),
+    }
+  }
 
   function mergeMessages(
     current: CommunityChatMessage[],
@@ -52,7 +66,8 @@ function CommunityChatContent() {
     if (!incoming.length) return current
     const merged = [...current]
 
-    for (const message of incoming) {
+    for (const rawMessage of incoming) {
+      const message = normalizeMessage(rawMessage)
       const byIdIndex = merged.findIndex((item) => item.id === message.id)
       if (byIdIndex >= 0) {
         merged[byIdIndex] = { ...merged[byIdIndex], ...message, pending: false }
@@ -103,8 +118,9 @@ function CommunityChatContent() {
 
   function syncRoomLatestMessage(roomId: string, latestMessage: CommunityChatMessage) {
     setRooms((current) => {
+      const normalizedLatestMessage = normalizeMessage(latestMessage)
       const next = current.map((room) =>
-        room.id === roomId ? { ...room, latestMessage } : room,
+        room.id === roomId ? { ...room, latestMessage: normalizedLatestMessage } : room,
       )
 
       next.sort((left, right) => {
@@ -133,12 +149,12 @@ function CommunityChatContent() {
       )
 
       if (incremental) {
-      setMessages((current) => {
-        const merged = mergeMessages(current, res.messages)
-        const latest = merged[merged.length - 1]
-        if (latest) {
-          lastMessageAtRef.current = latest.createdAt
-          syncRoomLatestMessage(roomId, latest)
+        setMessages((current) => {
+          const merged = mergeMessages(current, res.messages)
+          const latest = merged[merged.length - 1]
+          if (latest) {
+            lastMessageAtRef.current = latest.createdAt
+            syncRoomLatestMessage(roomId, latest)
           }
           return merged
         })
@@ -146,8 +162,9 @@ function CommunityChatContent() {
         return
       }
 
-      setMessages(res.messages)
-      const latest = res.messages[res.messages.length - 1]
+      const normalizedMessages = res.messages.map(normalizeMessage)
+      setMessages(normalizedMessages)
+      const latest = normalizedMessages[normalizedMessages.length - 1]
       lastMessageAtRef.current = latest?.createdAt || ''
       if (latest) syncRoomLatestMessage(roomId, latest)
       scrollToBottom(true)
@@ -167,20 +184,22 @@ function CommunityChatContent() {
 
     const socket = socketRef.current
     if (socket?.connected) {
+      const socketClient = socket as Socket<any, any>
       if (joinedRoomRef.current && joinedRoomRef.current !== roomId) {
-        socket.emit('chat:leave_room', { roomId: joinedRoomRef.current })
+        socketClient.emit('chat:leave_room', { roomId: joinedRoomRef.current })
       }
 
       setLoadingMessages(true)
       try {
-        const response = (await socket.emitWithAck('chat:join_room', {
+        const response = (await socketClient.emitWithAck('chat:join_room', {
           roomId,
         })) as CommunityChatJoinAck | undefined
 
         if (response?.ok) {
           joinedRoomRef.current = roomId
-          setMessages(response.messages || [])
-          const latest = response.messages?.[response.messages.length - 1]
+          const normalizedMessages = (response.messages || []).map(normalizeMessage)
+          setMessages(normalizedMessages)
+          const latest = normalizedMessages[normalizedMessages.length - 1]
           lastMessageAtRef.current = latest?.createdAt || ''
           if (latest) syncRoomLatestMessage(roomId, latest)
           scrollToBottom(true)
@@ -200,6 +219,24 @@ function CommunityChatContent() {
     activeRoomIdRef.current = activeRoomId
   }, [activeRoomId])
 
+  async function loadChatRooms(preferredRoomId?: string) {
+    const res = await communityApi.getChatRooms()
+    setRooms(res.rooms)
+    setActiveRoomId((current) => {
+      const requested = preferredRoomId || requestedRoomId || current
+      if (requested && res.rooms.some((room) => room.id === requested)) {
+        return requested
+      }
+      return res.rooms[0]?.id || ''
+    })
+    return res.rooms
+  }
+
+  function selectRoom(roomId: string) {
+    setActiveRoomId(roomId)
+    router.replace(`/community/chat?room=${encodeURIComponent(roomId)}`, { scroll: false })
+  }
+
   useEffect(() => {
     if (!user) return
     if (user.role === 'guest') {
@@ -209,13 +246,7 @@ function CommunityChatContent() {
 
     let mounted = true
     setLoadingRooms(true)
-    communityApi
-      .getChatRooms()
-      .then((res) => {
-        if (!mounted) return
-        setRooms(res.rooms)
-        setActiveRoomId((current) => current || requestedRoomId || res.rooms[0]?.id || '')
-      })
+    loadChatRooms(requestedRoomId || undefined)
       .finally(() => {
         if (!mounted) return
         setLoadingRooms(false)
@@ -225,6 +256,11 @@ function CommunityChatContent() {
       mounted = false
     }
   }, [requestedRoomId, router, user])
+
+  useEffect(() => {
+    if (!requestedRoomId || requestedRoomId === activeRoomId) return
+    setActiveRoomId(requestedRoomId)
+  }, [requestedRoomId, activeRoomId])
 
   useEffect(() => {
     if (!user || user.role === 'guest') return
@@ -292,7 +328,13 @@ function CommunityChatContent() {
         const res = await communityApi.getChatRooms()
         if (!mounted) return
         setRooms(res.rooms)
-        setActiveRoomId((current) => current || requestedRoomId || res.rooms[0]?.id || '')
+        setActiveRoomId((current) => {
+          const requested = requestedRoomId || current
+          if (requested && res.rooms.some((room) => room.id === requested)) {
+            return requested
+          }
+          return res.rooms[0]?.id || ''
+        })
       } catch {
         // Keep current list until next refresh.
       }
@@ -313,7 +355,45 @@ function CommunityChatContent() {
       window.clearInterval(roomTimer)
       window.clearInterval(syncTimer)
     }
-  }, [requestedRoomId, user])
+  }, [requestedRoomId, socketConnected, user])
+
+  useEffect(() => {
+    if (!user || user.role === 'guest') return
+
+    const refreshAfterResume = async () => {
+      const now = Date.now()
+      if (now - lastResumeSyncAtRef.current < 1500) return
+      lastResumeSyncAtRef.current = now
+
+      const roomId = activeRoomIdRef.current
+      await loadChatRooms(roomId || undefined).catch(() => {})
+      if (roomId) {
+        await loadMessagesByHttp(roomId, { forceFull: true }).catch(() => {})
+      }
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshAfterResume().catch(() => {})
+      }
+    }
+
+    const handlePageShow = () => {
+      refreshAfterResume().catch(() => {})
+    }
+
+    window.addEventListener('focus', handlePageShow)
+    window.addEventListener('pageshow', handlePageShow)
+    window.addEventListener('online', handlePageShow)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      window.removeEventListener('focus', handlePageShow)
+      window.removeEventListener('pageshow', handlePageShow)
+      window.removeEventListener('online', handlePageShow)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [user, requestedRoomId])
 
   const activeRoom = useMemo(
     () => rooms.find((room) => room.id === activeRoomId) || null,
@@ -328,17 +408,18 @@ function CommunityChatContent() {
     const optimisticMessage: CommunityChatMessage = {
       id: clientTempId,
       roomId: activeRoomId,
+      senderId: user?.id,
       body,
       createdAt: new Date().toISOString(),
-      time: 'Dang gui...',
+      time: 'Đang gửi...',
       mine: true,
       pending: true,
       clientTempId,
       sender: {
         username: user?.username || 'me',
-        name: user?.fullName || user?.username || 'Ban',
+        name: user?.fullName || user?.username || 'Bạn',
         avatar: '',
-        level: 'Trung bÃ¬nh',
+        level: 'Trung bình',
         district: '',
         bio: '',
         followers: 0,
@@ -357,11 +438,12 @@ function CommunityChatContent() {
     try {
       const socket = socketRef.current
       if (socket?.connected) {
-        const response = await socket.emitWithAck('chat:send_message', {
+        const socketClient = socket as Socket<any, any>
+        const response = (await socketClient.emitWithAck('chat:send_message', {
           roomId: activeRoomId,
           message: body,
           clientTempId,
-        })
+        })) as { message?: CommunityChatMessage; clientTempId?: string } | undefined
 
         const message = response?.message as CommunityChatMessage | undefined
         if (message) {
@@ -391,7 +473,7 @@ function CommunityChatContent() {
         setMessages((current) =>
           current.map((message) =>
             message.clientTempId === clientTempId
-              ? { ...message, pending: false, time: 'Gui that bai' }
+              ? { ...message, pending: false, time: 'Gửi thất bại' }
               : message,
           ),
         )
@@ -405,26 +487,26 @@ function CommunityChatContent() {
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
       <div className="mb-5 rounded-3xl border border-border bg-card p-5">
         <p className="text-xs font-bold uppercase tracking-[0.2em] text-primary">Community chat</p>
-        <h1 className="mt-1 font-heading text-3xl font-semibold">Nhom chat keo san</h1>
+        <h1 className="mt-1 font-heading text-3xl font-semibold">Nhóm chat kèo sân</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Chat dang uu tien websocket va tu dong dong bo lai lich su de tranh mat tin nhan.
+          Chat ưu tiên WebSocket và tự động đồng bộ lại lịch sử để tránh mất tin nhắn.
         </p>
       </div>
 
-      <div className="grid min-h-[620px] gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
+      <div className="grid gap-4 lg:min-h-[620px] lg:grid-cols-[320px_minmax(0,1fr)]">
         <aside className="rounded-3xl border border-border bg-card p-3">
           <div className="mb-2 flex items-center gap-2 px-2 text-sm font-semibold">
             <MessageCircle className="size-4 text-primary" />
-            Phong chat cua ban
+            Phòng chat của bạn
           </div>
           {loadingRooms ? (
             <div className="flex items-center gap-2 px-2 py-4 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" />
-              Dang tai phong...
+              Đang tải phòng...
             </div>
           ) : rooms.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-border p-5 text-center text-sm text-muted-foreground">
-              Ban chua co nhom chat nao. Hay xin tham gia keo va cho chu keo duyet.
+              Bạn chưa có nhóm chat nào. Hãy xin tham gia kèo và chờ chủ kèo duyệt.
             </div>
           ) : (
             <div className="flex gap-2 overflow-x-auto lg:block lg:space-y-2 lg:overflow-visible">
@@ -432,9 +514,9 @@ function CommunityChatContent() {
                 <button
                   key={room.id}
                   type="button"
-                  onClick={() => setActiveRoomId(room.id)}
+                  onClick={() => selectRoom(room.id)}
                   className={cn(
-                    'min-w-[260px] rounded-2xl border p-3 text-left transition-colors lg:min-w-0 lg:w-full',
+                    'min-w-[220px] rounded-2xl border p-3 text-left transition-colors sm:min-w-[260px] lg:min-w-0 lg:w-full',
                     activeRoomId === room.id
                       ? 'border-foreground bg-foreground text-background'
                       : 'border-border hover:bg-secondary',
@@ -448,7 +530,7 @@ function CommunityChatContent() {
                     </span>
                   </div>
                   <p className="mt-1 truncate text-xs opacity-75">
-                    {room.latestMessage?.body || room.match?.slot || 'Chua co tin nhan'}
+                    {room.latestMessage?.body || room.match?.slot || 'Chưa có tin nhắn'}
                   </p>
                 </button>
               ))}
@@ -456,7 +538,7 @@ function CommunityChatContent() {
           )}
         </aside>
 
-        <section className="flex min-h-[560px] flex-col rounded-3xl border border-border bg-card">
+        <section className="flex h-[calc(100dvh-13rem)] min-h-[420px] flex-col overflow-hidden rounded-3xl border border-border bg-card sm:h-[calc(100dvh-15rem)] lg:min-h-[560px] lg:h-auto">
           {activeRoom ? (
             <>
               <div className="border-b border-border p-4">
@@ -474,7 +556,7 @@ function CommunityChatContent() {
                       <h2 className="font-heading text-xl font-semibold">{activeRoom.title}</h2>
                       <p className="mt-1 text-sm text-muted-foreground">
                         {activeRoom.type === 'private'
-                          ? 'Chat rieng 1-1'
+                          ? 'Chat riêng 1-1'
                           : `${activeRoom.match?.court || ''} · ${activeRoom.match?.slot || ''}`}
                       </p>
                     </div>
@@ -483,7 +565,7 @@ function CommunityChatContent() {
                     {refreshingMessages ? (
                       <span className="inline-flex items-center gap-2">
                         <Loader2 className="size-3.5 animate-spin" />
-                        Dong bo
+                        Đồng bộ
                       </span>
                     ) : null}
                     <span
@@ -493,21 +575,21 @@ function CommunityChatContent() {
                       )}
                     >
                       {socketConnected ? <Wifi className="size-3.5" /> : <WifiOff className="size-3.5" />}
-                      {socketConnected ? 'WebSocket on' : 'Fallback mode'}
+                      {socketConnected ? 'WebSocket on' : 'Chế độ dự phòng'}
                     </span>
                   </div>
                 </div>
               </div>
 
-              <div ref={messageListRef} className="flex-1 space-y-3 overflow-y-auto p-4">
+              <div ref={messageListRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
                 {loadingMessages ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="size-4 animate-spin" />
-                    Dang tai tin nhan...
+                    Đang tải tin nhắn...
                   </div>
                 ) : messages.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-                    Chua co tin nhan. Bat dau chao moi nguoi nao.
+                    Chưa có tin nhắn. Bắt đầu chào mọi người nào.
                   </div>
                 ) : (
                   messages.map((message) => (
@@ -536,7 +618,7 @@ function CommunityChatContent() {
                         ) : null}
                         <p className="whitespace-pre-wrap break-words">{message.body}</p>
                         <p className="mt-1 text-[10px] opacity-70">
-                          {message.pending ? 'Dang gui...' : message.time}
+                          {message.pending ? 'Đang gửi...' : message.time}
                         </p>
                       </div>
                     </div>
@@ -544,7 +626,7 @@ function CommunityChatContent() {
                 )}
               </div>
 
-              <div className="border-t border-border p-3">
+              <div className="border-t border-border bg-card/95 p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] backdrop-blur">
                 <div className="flex items-end gap-2">
                   <textarea
                     value={draft}
@@ -556,8 +638,8 @@ function CommunityChatContent() {
                       }
                     }}
                     rows={2}
-                    placeholder="Nhap tin nhan..."
-                    className="min-h-12 flex-1 resize-none rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
+                    placeholder="Nhập tin nhắn..."
+                    className="min-h-12 max-h-32 flex-1 resize-none rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
                   />
                   <button
                     type="button"
@@ -572,7 +654,7 @@ function CommunityChatContent() {
             </>
           ) : (
             <div className="grid flex-1 place-items-center p-8 text-center text-sm text-muted-foreground">
-              Chon mot nhom chat de bat dau.
+              Chọn một nhóm chat để bắt đầu.
             </div>
           )}
         </section>

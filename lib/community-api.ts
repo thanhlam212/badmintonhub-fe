@@ -87,6 +87,7 @@ export interface CommunityMatchParticipant {
 export interface CommunityChatMessage {
   id: string
   roomId: string
+  senderId?: string
   body: string
   createdAt: string
   time: string
