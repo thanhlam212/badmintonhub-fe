@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import {
   Home,
   Newspaper,
@@ -34,6 +34,7 @@ const baseNav: CommunityNavItem[] = [
 
 const communityNav: CommunityNavItem[] = [
   ...baseNav.slice(0, 3),
+  { href: '/community/players', label: 'Người chơi', icon: Users },
   { href: '/community/chat', label: 'Chat', icon: MessageCircle },
   ...baseNav.slice(3),
 ]
@@ -46,6 +47,8 @@ function useIsActive() {
 
 /* ---------------- Top header (all breakpoints) ---------------- */
 export function CommunityHeader() {
+  const router = useRouter()
+
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
@@ -58,6 +61,11 @@ export function CommunityHeader() {
               type="search"
               placeholder="Tìm người chơi, hashtag, kèo đấu…"
               className="w-full bg-transparent text-foreground outline-none placeholder:text-muted-foreground"
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter') return
+                const keyword = event.currentTarget.value.trim()
+                router.push(keyword ? `/community/players?q=${encodeURIComponent(keyword)}` : '/community/players')
+              }}
             />
           </label>
         </div>

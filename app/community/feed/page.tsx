@@ -1,10 +1,18 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { communityApi, type CommunityFeedResponse, type CommunityPostKind } from '@/lib/community-api'
+import { Check, UserPlus, X } from 'lucide-react'
+import {
+  communityApi,
+  type CommunityFeedResponse,
+  type CommunityFriendshipItem,
+  type CommunityPostKind,
+} from '@/lib/community-api'
+import { useAuth } from '@/lib/auth-context'
 import { PostCard } from '@/components/community/cards'
 import { CommunityLeftNav } from '@/components/community/navigation'
 import { CommunityRightSidebar, PostComposer } from '@/components/community/sidebar'
+import { CommunityAvatar } from '@/components/community/primitives'
 
 const tabs: ('Tất cả' | CommunityPostKind)[] = [
   'Tất cả',
@@ -22,9 +30,12 @@ const emptyFeed: CommunityFeedResponse = {
 }
 
 export default function FeedPage() {
+  const { user } = useAuth()
   const [active, setActive] = useState<(typeof tabs)[number]>('Tất cả')
   const [data, setData] = useState<CommunityFeedResponse>(emptyFeed)
+  const [incomingRequests, setIncomingRequests] = useState<CommunityFriendshipItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [friendBusy, setFriendBusy] = useState('')
 
   useEffect(() => {
     let mounted = true
@@ -38,6 +49,35 @@ export default function FeedPage() {
       mounted = false
     }
   }, [active])
+
+  useEffect(() => {
+    if (!user || user.role === 'guest') {
+      setIncomingRequests([])
+      return
+    }
+    communityApi.getFriends().then((res) => {
+      setIncomingRequests(res.incomingRequests)
+    })
+  }, [user])
+
+  async function handleFriendAction(
+    request: CommunityFriendshipItem,
+    action: 'accept' | 'reject',
+  ) {
+    setFriendBusy(request.player.username)
+    try {
+      const res =
+        action === 'accept'
+          ? await communityApi.acceptFriendRequest(request.player.username)
+          : await communityApi.rejectFriendRequest(request.player.username)
+      if (!res.success) return
+      setIncomingRequests((current) =>
+        current.filter((item) => item.player.username !== request.player.username),
+      )
+    } finally {
+      setFriendBusy('')
+    }
+  }
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
@@ -65,6 +105,64 @@ export default function FeedPage() {
               }))
             }
           />
+
+          {incomingRequests.length > 0 ? (
+            <section className="mt-5 rounded-3xl border border-amber-200 bg-[linear-gradient(135deg,#fff7ed,#fffbeb)] p-4 sm:p-5">
+              <div className="flex items-center gap-2">
+                <span className="grid size-10 place-items-center rounded-2xl bg-amber-100 text-amber-700">
+                  <UserPlus className="size-5" />
+                </span>
+                <div>
+                  <h2 className="font-heading text-lg font-semibold">Loi moi ket ban moi</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Co {incomingRequests.length} loi moi dang cho ban phan hoi.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                {incomingRequests.map((request) => (
+                  <div
+                    key={request.id}
+                    className="flex items-center justify-between gap-3 rounded-2xl border border-amber-100 bg-white/80 p-3"
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <CommunityAvatar
+                        src={request.player.avatar}
+                        name={request.player.name}
+                        size={40}
+                        className="size-10"
+                      />
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold">{request.player.name}</p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          @{request.player.username}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <button
+                        type="button"
+                        disabled={friendBusy === request.player.username}
+                        onClick={() => handleFriendAction(request, 'reject')}
+                        className="grid size-9 place-items-center rounded-full border border-border bg-background text-muted-foreground hover:bg-secondary disabled:opacity-60"
+                      >
+                        <X className="size-4" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={friendBusy === request.player.username}
+                        onClick={() => handleFriendAction(request, 'accept')}
+                        className="grid size-9 place-items-center rounded-full bg-emerald-600 text-white disabled:opacity-60"
+                      >
+                        <Check className="size-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           <div className="sticky top-16 z-30 -mx-4 mt-5 border-y border-border bg-background/90 px-4 py-2 backdrop-blur sm:mx-0 sm:rounded-full sm:border sm:px-2">
             <div className="flex items-center gap-1 overflow-x-auto">

@@ -163,10 +163,24 @@ function CommunityChatContent() {
           {activeRoom ? (
             <>
               <div className="border-b border-border p-4">
-                <h2 className="font-heading text-xl font-semibold">{activeRoom.title}</h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {activeRoom.match?.court} · {activeRoom.match?.slot}
-                </p>
+                <div className="flex items-center gap-3">
+                  {activeRoom.type === 'private' && activeRoom.otherPlayer ? (
+                    <CommunityAvatar
+                      src={activeRoom.otherPlayer.avatar}
+                      name={activeRoom.otherPlayer.name}
+                      size={40}
+                      className="size-10"
+                    />
+                  ) : null}
+                  <div>
+                    <h2 className="font-heading text-xl font-semibold">{activeRoom.title}</h2>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {activeRoom.type === 'private'
+                        ? 'Chat riêng 1-1'
+                        : `${activeRoom.match?.court || ''} · ${activeRoom.match?.slot || ''}`}
+                    </p>
+                  </div>
+                </div>
               </div>
 
               <div className="flex-1 space-y-3 overflow-y-auto p-4">

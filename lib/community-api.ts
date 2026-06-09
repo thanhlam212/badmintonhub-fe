@@ -6,6 +6,7 @@ export type CommunityPostKind = 'Chia sẻ' | 'Tìm đội' | 'Check-in' | 'Revi
 export type CommunityNotificationKind = 'like' | 'comment' | 'follow' | 'match' | 'reminder'
 export type CommunityMatchStatus = 'open' | 'full' | 'closed' | 'cancelled' | 'completed' | 'expired'
 export type CommunityParticipationStatus = 'requested' | 'joined' | 'rejected' | 'left'
+export type CommunityFriendshipStatus = 'self' | 'none' | 'outgoing' | 'incoming' | 'friends'
 
 export interface CommunityPlayer {
   username: string
@@ -20,6 +21,7 @@ export interface CommunityPlayer {
   checkins: number
   postsCount?: number
   cover: string
+  friendshipStatus?: CommunityFriendshipStatus
 }
 
 export interface CommunityComment {
@@ -93,10 +95,12 @@ export interface CommunityChatMessage {
 
 export interface CommunityChatRoom {
   id: string
+  type?: 'match' | 'private'
   title: string
-  matchId: string
+  matchId: string | null
   memberCount: number
   match: CommunityMatch | null
+  otherPlayer?: CommunityPlayer | null
   latestMessage: CommunityChatMessage | null
 }
 
@@ -155,6 +159,23 @@ export interface CommunityNotificationsResponse {
   notifications: CommunityNotification[]
 }
 
+export interface CommunityPlayersResponse {
+  players: CommunityPlayer[]
+}
+
+export interface CommunityFriendshipItem {
+  id: string
+  status: string
+  direction: 'incoming' | 'outgoing'
+  player: CommunityPlayer
+}
+
+export interface CommunityFriendsResponse {
+  friends: CommunityFriendshipItem[]
+  incomingRequests: CommunityFriendshipItem[]
+  outgoingRequests: CommunityFriendshipItem[]
+}
+
 export interface CommunityChatRoomsResponse {
   rooms: CommunityChatRoom[]
 }
@@ -205,6 +226,42 @@ export const communityApi = {
   getProfile: async (username: string): Promise<CommunityProfileResponse | null> => {
     const res = await apiFetch<CommunityProfileResponse>(`/community/players/${encodeURIComponent(username)}`)
     return (res.data as CommunityProfileResponse) || null
+  },
+
+  getPlayers: async (filters?: { q?: string; district?: string; level?: string }): Promise<CommunityPlayersResponse> => {
+    const params = new URLSearchParams()
+    if (filters?.q) params.set('q', filters.q)
+    if (filters?.district) params.set('district', filters.district)
+    if (filters?.level) params.set('level', filters.level)
+    const query = params.toString()
+    const res = await apiFetch<CommunityPlayersResponse>(`/community/players${query ? `?${query}` : ''}`)
+    return (res.data as CommunityPlayersResponse) || { players: [] }
+  },
+
+  getFriends: async (): Promise<CommunityFriendsResponse> => {
+    const res = await apiFetch<CommunityFriendsResponse>('/community/friends')
+    return (res.data as CommunityFriendsResponse) || { friends: [], incomingRequests: [], outgoingRequests: [] }
+  },
+
+  sendFriendRequest: async (username: string) => {
+    const res = await apiFetch<{ friendshipStatus: CommunityFriendshipStatus }>(`/community/friends/${encodeURIComponent(username)}/request`, {
+      method: 'POST',
+    })
+    return { success: res.success, friendshipStatus: res.data?.friendshipStatus || 'none', error: res.message }
+  },
+
+  acceptFriendRequest: async (username: string) => {
+    const res = await apiFetch<{ friendshipStatus: CommunityFriendshipStatus }>(`/community/friends/${encodeURIComponent(username)}/accept`, {
+      method: 'PATCH',
+    })
+    return { success: res.success, friendshipStatus: res.data?.friendshipStatus || 'none', error: res.message }
+  },
+
+  rejectFriendRequest: async (username: string) => {
+    const res = await apiFetch<{ friendshipStatus: CommunityFriendshipStatus }>(`/community/friends/${encodeURIComponent(username)}/reject`, {
+      method: 'PATCH',
+    })
+    return { success: res.success, friendshipStatus: res.data?.friendshipStatus || 'none', error: res.message }
   },
 
   getPostDetail: async (id: string): Promise<CommunityPostDetailResponse | null> => {
@@ -307,6 +364,13 @@ export const communityApi = {
     return (res.data as CommunityChatRoomsResponse) || { rooms: [] }
   },
 
+  startPrivateChat: async (username: string) => {
+    const res = await apiFetch<{ room: CommunityChatRoom }>(`/community/chat/private/${encodeURIComponent(username)}`, {
+      method: 'POST',
+    })
+    return { success: res.success, room: res.data?.room || null, error: res.message }
+  },
+
   getChatMessages: async (roomId: string): Promise<CommunityChatMessagesResponse> => {
     const res = await apiFetch<CommunityChatMessagesResponse>(`/community/chat/rooms/${roomId}/messages`)
     return (res.data as CommunityChatMessagesResponse) || { messages: [] }
@@ -318,6 +382,14 @@ export const communityApi = {
       body: JSON.stringify({ body }),
     })
     return { success: res.success, message: res.data?.message || null, error: res.message }
+  },
+
+  updateProfile: async (payload: { avatar_url?: string; cover_image_url?: string }) => {
+    const res = await apiFetch<{ player: CommunityPlayer }>('/community/profile', {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    })
+    return { success: res.success, player: res.data?.player || null, error: res.message }
   },
 
   uploadImage: async (file: File) => {

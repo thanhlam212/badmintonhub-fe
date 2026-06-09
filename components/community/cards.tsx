@@ -233,7 +233,8 @@ export function MatchCard({
   const [participants, setParticipants] = useState<CommunityMatchParticipant[]>([])
   const [loadingRequests, setLoadingRequests] = useState(false)
   const slots = Array.from({ length: match.needed })
-  const blocked = match.expired || match.status === 'expired' || match.status === 'full' || match.canJoin === false
+  const isHostByUsername = !!user?.username && match.host.username === user.username
+  const blocked = match.expired || match.status === 'expired' || match.status === 'full' || isHostByUsername
   const joinDisabled = joined || requested || blocked
   const statusLabel = match.expired || match.status === 'expired' ? 'Quá hạn' : match.statusLabel || 'Đang tìm người'
 
