@@ -184,6 +184,11 @@ export interface CommunityChatMessagesResponse {
   messages: CommunityChatMessage[]
 }
 
+export interface CommunityChatMessagesQuery {
+  after?: string
+  limit?: number
+}
+
 export interface CreateCommunityPostPayload {
   kind: CommunityPostKind
   body: string
@@ -371,8 +376,12 @@ export const communityApi = {
     return { success: res.success, room: res.data?.room || null, error: res.message }
   },
 
-  getChatMessages: async (roomId: string): Promise<CommunityChatMessagesResponse> => {
-    const res = await apiFetch<CommunityChatMessagesResponse>(`/community/chat/rooms/${roomId}/messages`)
+  getChatMessages: async (roomId: string, query?: CommunityChatMessagesQuery): Promise<CommunityChatMessagesResponse> => {
+    const params = new URLSearchParams()
+    if (query?.after) params.set('after', query.after)
+    if (query?.limit) params.set('limit', String(query.limit))
+    const suffix = params.size ? `?${params.toString()}` : ''
+    const res = await apiFetch<CommunityChatMessagesResponse>(`/community/chat/rooms/${roomId}/messages${suffix}`)
     return (res.data as CommunityChatMessagesResponse) || { messages: [] }
   },
 
