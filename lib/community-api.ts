@@ -4,6 +4,8 @@ export type CommunityLevel = 'Mới chơi' | 'Trung bình' | 'Khá' | 'Nâng cao
 export type CommunityDistrict = 'Cầu Giấy' | 'Thanh Xuân' | 'Long Biên'
 export type CommunityPostKind = 'Chia sẻ' | 'Tìm đội' | 'Check-in' | 'Review sân' | 'Mẹo chơi'
 export type CommunityNotificationKind = 'like' | 'comment' | 'follow' | 'match' | 'reminder'
+export type CommunityMatchStatus = 'open' | 'full' | 'closed' | 'cancelled' | 'completed' | 'expired'
+export type CommunityParticipationStatus = 'requested' | 'joined' | 'rejected' | 'left'
 
 export interface CommunityPlayer {
   username: string
@@ -49,6 +51,8 @@ export interface CommunityPost {
 export interface CommunityMatch {
   id: string
   title: string
+  status?: CommunityMatchStatus
+  statusLabel?: string
   district: CommunityDistrict
   court: string
   level: CommunityLevel
@@ -56,10 +60,44 @@ export interface CommunityMatch {
   slot: string
   filled: number
   needed: number
+  pricePerPerson?: number
   price: string
   note: string
   joined?: boolean
+  requested?: boolean
+  canJoin?: boolean
+  expired?: boolean
+  isHost?: boolean
+  roomId?: string | null
+  pendingParticipants?: number
+  participants?: CommunityMatchParticipant[]
   host: CommunityPlayer
+}
+
+export interface CommunityMatchParticipant {
+  userId: string
+  status: CommunityParticipationStatus
+  requestedAt?: string
+  player: CommunityPlayer
+}
+
+export interface CommunityChatMessage {
+  id: string
+  roomId: string
+  body: string
+  createdAt: string
+  time: string
+  mine?: boolean
+  sender: CommunityPlayer
+}
+
+export interface CommunityChatRoom {
+  id: string
+  title: string
+  matchId: string
+  memberCount: number
+  match: CommunityMatch | null
+  latestMessage: CommunityChatMessage | null
 }
 
 export interface CommunityTagTrend {
@@ -115,6 +153,14 @@ export interface CommunityMatchesResponse {
 
 export interface CommunityNotificationsResponse {
   notifications: CommunityNotification[]
+}
+
+export interface CommunityChatRoomsResponse {
+  rooms: CommunityChatRoom[]
+}
+
+export interface CommunityChatMessagesResponse {
+  messages: CommunityChatMessage[]
 }
 
 export interface CreateCommunityPostPayload {
@@ -231,10 +277,47 @@ export const communityApi = {
   },
 
   joinMatch: async (id: string) => {
-    const res = await apiFetch<{ joined: boolean; match: CommunityMatch }>(`/community/matches/${id}/join`, {
+    const res = await apiFetch<{ joined: boolean; requested?: boolean; match: CommunityMatch }>(`/community/matches/${id}/join`, {
       method: 'POST',
     })
     return { success: res.success, ...(res.data || {}), error: res.message }
+  },
+
+  getMatchParticipants: async (id: string) => {
+    const res = await apiFetch<{ participants: CommunityMatchParticipant[] }>(`/community/matches/${id}/participants`)
+    return { success: res.success, participants: res.data?.participants || [], error: res.message }
+  },
+
+  approveMatchParticipant: async (matchId: string, userId: string) => {
+    const res = await apiFetch<{ match: CommunityMatch }>(`/community/matches/${matchId}/participants/${userId}/approve`, {
+      method: 'PATCH',
+    })
+    return { success: res.success, match: res.data?.match || null, error: res.message }
+  },
+
+  rejectMatchParticipant: async (matchId: string, userId: string) => {
+    const res = await apiFetch<{ success: boolean }>(`/community/matches/${matchId}/participants/${userId}/reject`, {
+      method: 'PATCH',
+    })
+    return { success: res.success, error: res.message }
+  },
+
+  getChatRooms: async (): Promise<CommunityChatRoomsResponse> => {
+    const res = await apiFetch<CommunityChatRoomsResponse>('/community/chat/rooms')
+    return (res.data as CommunityChatRoomsResponse) || { rooms: [] }
+  },
+
+  getChatMessages: async (roomId: string): Promise<CommunityChatMessagesResponse> => {
+    const res = await apiFetch<CommunityChatMessagesResponse>(`/community/chat/rooms/${roomId}/messages`)
+    return (res.data as CommunityChatMessagesResponse) || { messages: [] }
+  },
+
+  sendChatMessage: async (roomId: string, body: string) => {
+    const res = await apiFetch<{ message: CommunityChatMessage }>(`/community/chat/rooms/${roomId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ body }),
+    })
+    return { success: res.success, message: res.data?.message || null, error: res.message }
   },
 
   uploadImage: async (file: File) => {

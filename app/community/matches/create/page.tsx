@@ -18,7 +18,14 @@ function isEligibleMatchBooking(booking: ApiBooking) {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
   bookingDate.setHours(0, 0, 0, 0)
-  return bookingDate >= today
+  if (bookingDate > today) return true
+  if (bookingDate < today) return false
+
+  const [hourRaw, minuteRaw] = (booking.timeEnd || booking.timeStart).split(':')
+  const endMinutes = Number(hourRaw || 0) * 60 + Number(minuteRaw || 0)
+  const now = new Date()
+  const nowMinutes = now.getHours() * 60 + now.getMinutes()
+  return endMinutes > nowMinutes
 }
 
 function formatBookingLabel(booking: ApiBooking) {
@@ -33,8 +40,8 @@ export default function CreateMatchPage() {
   const [selectedBookingId, setSelectedBookingId] = useState('')
   const [title, setTitle] = useState('')
   const [level, setLevel] = useState<CommunityLevel>('Trung bình')
-  const [neededPlayers, setNeededPlayers] = useState(4)
-  const [pricePerPerson, setPricePerPerson] = useState(0)
+  const [neededPlayers] = useState(4)
+  const [pricePerPerson] = useState(0)
   const [note, setNote] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
@@ -70,6 +77,8 @@ export default function CreateMatchPage() {
     () => bookings.find((booking) => booking.id === selectedBookingId) || null,
     [bookings, selectedBookingId],
   )
+  const totalPlayers = Math.max(2, selectedBooking?.slots || neededPlayers || 2)
+  const splitPrice = selectedBooking ? Math.round(selectedBooking.amount / totalPlayers) : pricePerPerson
 
   async function handleSubmit() {
     if (!selectedBookingId) {
@@ -89,8 +98,8 @@ export default function CreateMatchPage() {
         booking_id: selectedBookingId,
         title: title.trim(),
         level,
-        needed_players: neededPlayers,
-        price_per_person: pricePerPerson,
+        needed_players: totalPlayers,
+        price_per_person: splitPrice,
         note: note.trim() || undefined,
       })
 
@@ -191,10 +200,11 @@ export default function CreateMatchPage() {
               type="number"
               min={2}
               max={20}
-              value={neededPlayers}
-              onChange={(event) => setNeededPlayers(Number(event.target.value || 2))}
-              className="mt-2 w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
+              value={totalPlayers}
+              readOnly
+              className="mt-2 w-full rounded-2xl border border-border bg-secondary/70 px-4 py-3 text-sm outline-none"
             />
+            <p className="mt-1 text-xs text-muted-foreground">Lấy theo số người bạn đã chọn khi đặt sân.</p>
           </div>
 
           <div>
@@ -202,10 +212,11 @@ export default function CreateMatchPage() {
             <input
               type="number"
               min={0}
-              value={pricePerPerson}
-              onChange={(event) => setPricePerPerson(Number(event.target.value || 0))}
-              className="mt-2 w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
+              value={splitPrice}
+              readOnly
+              className="mt-2 w-full rounded-2xl border border-border bg-secondary/70 px-4 py-3 text-sm outline-none"
             />
+            <p className="mt-1 text-xs text-muted-foreground">Tổng tiền sân chia đều cho {totalPlayers} người.</p>
           </div>
 
           <div className="sm:col-span-2">

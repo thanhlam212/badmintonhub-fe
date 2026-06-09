@@ -11,6 +11,7 @@ import {
   User,
   ArrowLeft,
   Search,
+  MessageCircle,
 } from 'lucide-react'
 import { useAuth } from '@/lib/auth-context'
 import { cn } from '@/lib/utils'
@@ -29,6 +30,12 @@ const baseNav: CommunityNavItem[] = [
   { href: '/community/feed', label: 'Bảng tin', icon: Newspaper },
   { href: '/community/matches', label: 'Tìm đội', icon: Users },
   { href: '/community/notifications', label: 'Thông báo', icon: Bell },
+]
+
+const communityNav: CommunityNavItem[] = [
+  ...baseNav.slice(0, 3),
+  { href: '/community/chat', label: 'Chat', icon: MessageCircle },
+  ...baseNav.slice(3),
 ]
 
 function useIsActive() {
@@ -57,11 +64,12 @@ export function CommunityHeader() {
 
         <div className="flex items-center gap-2">
           <Link
-            href="/"
-            className="hidden items-center gap-1.5 rounded-full border border-border px-3 py-2 text-sm font-medium transition-colors hover:bg-secondary sm:inline-flex"
+            href="/courts"
+            className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-2 text-sm font-medium transition-colors hover:bg-secondary sm:px-3"
           >
             <ArrowLeft className="size-4" />
-            Về đặt sân
+            <span className="hidden min-[420px]:inline">Về đặt sân</span>
+            <span className="min-[420px]:hidden">Sân</span>
           </Link>
           <Link
             href="/community/create"
@@ -81,7 +89,7 @@ export function CommunityLeftNav() {
   const { user } = useAuth()
   const isActive = useIsActive()
   const nav = [
-    ...baseNav,
+    ...communityNav,
     {
       href: user && user.role !== 'guest' ? `/community/profile/${user.username}` : '/login',
       label: 'Hồ sơ',
@@ -89,47 +97,78 @@ export function CommunityLeftNav() {
     },
   ]
   return (
-    <nav className="sticky top-24 hidden h-fit flex-col gap-1 lg:flex">
-      {nav.map((item) => {
-        const active = isActive(item.href, item.exact)
-        const Icon = item.icon
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            className={cn(
-              'group flex items-center gap-3 rounded-xl px-4 py-3 text-[15px] font-medium transition-colors',
-              active
-                ? 'bg-foreground text-background'
-                : 'text-foreground hover:bg-secondary',
-            )}
-          >
-            <Icon className="size-5" />
-            <span className="flex-1">{item.label}</span>
-            {item.badge ? (
-              <span
-                className={cn(
-                  'grid size-5 place-items-center rounded-full text-[11px] font-bold',
-                  active
-                    ? 'bg-background text-foreground'
-                    : 'bg-primary text-primary-foreground',
-                )}
-              >
-                {item.badge}
-              </span>
-            ) : null}
-          </Link>
-        )
-      })}
+    <>
+      <nav className="-mx-1 flex gap-2 overflow-x-auto pb-1 lg:hidden">
+        {nav.map((item) => {
+          const active = isActive(item.href, item.exact)
+          const Icon = item.icon
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={cn(
+                'inline-flex shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-sm font-semibold transition-colors',
+                active
+                  ? 'border-foreground bg-foreground text-background'
+                  : 'border-border bg-card text-foreground hover:bg-secondary',
+              )}
+            >
+              <Icon className="size-4" />
+              {item.label}
+            </Link>
+          )
+        })}
+        <Link
+          href="/community/create"
+          className="inline-flex shrink-0 items-center gap-2 rounded-full bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground"
+        >
+          <PenSquare className="size-4" />
+          Tạo bài
+        </Link>
+      </nav>
 
-      <Link
-        href="/community/create"
-        className="mt-3 flex items-center justify-center gap-2 rounded-xl border border-dashed border-primary/50 bg-primary/5 px-4 py-3 text-sm font-semibold text-primary transition-colors hover:bg-primary hover:text-primary-foreground"
-      >
-        <PenSquare className="size-4" />
-        Tạo bài viết
-      </Link>
-    </nav>
+      <nav className="sticky top-24 hidden h-fit flex-col gap-1 lg:flex">
+        {nav.map((item) => {
+          const active = isActive(item.href, item.exact)
+          const Icon = item.icon
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={cn(
+                'group flex items-center gap-3 rounded-xl px-4 py-3 text-[15px] font-medium transition-colors',
+                active
+                  ? 'bg-foreground text-background'
+                  : 'text-foreground hover:bg-secondary',
+              )}
+            >
+              <Icon className="size-5" />
+              <span className="flex-1">{item.label}</span>
+              {item.badge ? (
+                <span
+                  className={cn(
+                    'grid size-5 place-items-center rounded-full text-[11px] font-bold',
+                    active
+                      ? 'bg-background text-foreground'
+                      : 'bg-primary text-primary-foreground',
+                  )}
+                >
+                  {item.badge}
+                </span>
+              ) : null}
+            </Link>
+          )
+        })}
+
+        <Link
+          href="/community/create"
+          className="mt-3 flex items-center justify-center gap-2 rounded-xl border border-dashed border-primary/50 bg-primary/5 px-4 py-3 text-sm font-semibold text-primary transition-colors hover:bg-primary hover:text-primary-foreground"
+        >
+          <PenSquare className="size-4" />
+          Tạo bài viết
+        </Link>
+      </nav>
+    </>
   )
 }
 
@@ -138,7 +177,7 @@ export function CommunityMobileNav() {
   const { user } = useAuth()
   const isActive = useIsActive()
   const nav = [
-    ...baseNav,
+    ...communityNav,
     {
       href: user && user.role !== 'guest' ? `/community/profile/${user.username}` : '/login',
       label: 'Hồ sơ',
