@@ -44,15 +44,40 @@ function CommunityChatContent() {
   const lastMessageAtRef = useRef('')
   const joinedRoomRef = useRef('')
 
-  function mergeMessages(current: CommunityChatMessage[], incoming: CommunityChatMessage[]) {
+  function mergeMessages(
+    current: CommunityChatMessage[],
+    incoming: CommunityChatMessage[],
+    clientTempId?: string | null,
+  ) {
     if (!incoming.length) return current
-    const seen = new Set(current.map((message) => message.id))
     const merged = [...current]
+
     for (const message of incoming) {
-      if (seen.has(message.id)) continue
-      merged.push(message)
-      seen.add(message.id)
+      const byIdIndex = merged.findIndex((item) => item.id === message.id)
+      if (byIdIndex >= 0) {
+        merged[byIdIndex] = { ...merged[byIdIndex], ...message, pending: false }
+        continue
+      }
+
+      const byTempIndex = clientTempId
+        ? merged.findIndex((item) => item.clientTempId === clientTempId)
+        : message.clientTempId
+          ? merged.findIndex((item) => item.clientTempId === message.clientTempId)
+          : -1
+
+      if (byTempIndex >= 0) {
+        merged[byTempIndex] = {
+          ...merged[byTempIndex],
+          ...message,
+          pending: false,
+          clientTempId: clientTempId || message.clientTempId,
+        }
+        continue
+      }
+
+      merged.push({ ...message, pending: false })
     }
+
     merged.sort((left, right) => {
       const leftAt = new Date(left.createdAt).getTime()
       const rightAt = new Date(right.createdAt).getTime()
@@ -108,12 +133,12 @@ function CommunityChatContent() {
       )
 
       if (incremental) {
-        setMessages((current) => {
-          const merged = mergeMessages(current, res.messages)
-          const latest = merged[merged.length - 1]
-          if (latest) {
-            lastMessageAtRef.current = latest.createdAt
-            syncRoomLatestMessage(roomId, latest)
+      setMessages((current) => {
+        const merged = mergeMessages(current, res.messages)
+        const latest = merged[merged.length - 1]
+        if (latest) {
+          lastMessageAtRef.current = latest.createdAt
+          syncRoomLatestMessage(roomId, latest)
           }
           return merged
         })
@@ -224,12 +249,12 @@ function CommunityChatContent() {
       setSocketConnected(false)
     }
 
-    const handleNewMessage: CommunityChatSocketEvents['chat:new_message'] = ({ roomId, message }) => {
+    const handleNewMessage: CommunityChatSocketEvents['chat:new_message'] = ({ roomId, message, clientTempId }) => {
       syncRoomLatestMessage(roomId, message)
       if (roomId !== activeRoomIdRef.current) return
 
       setMessages((current) => {
-        const merged = mergeMessages(current, [message])
+        const merged = mergeMessages(current, [message], clientTempId)
         const latest = merged[merged.length - 1]
         if (latest) lastMessageAtRef.current = latest.createdAt
         return merged
@@ -276,11 +301,12 @@ function CommunityChatContent() {
     const syncTimer = window.setInterval(async () => {
       const roomId = activeRoomIdRef.current
       if (!roomId) return
+      if (socketConnected && lastMessageAtRef.current) return
       await loadMessagesByHttp(roomId, {
         incremental: Boolean(lastMessageAtRef.current),
         forceFull: !lastMessageAtRef.current,
       }).catch(() => {})
-    }, 7000)
+    }, 15000)
 
     return () => {
       mounted = false
@@ -298,6 +324,35 @@ function CommunityChatContent() {
     const body = draft.trim()
     if (!activeRoomId || !body || sending) return
 
+    const clientTempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const optimisticMessage: CommunityChatMessage = {
+      id: clientTempId,
+      roomId: activeRoomId,
+      body,
+      createdAt: new Date().toISOString(),
+      time: 'Dang gui...',
+      mine: true,
+      pending: true,
+      clientTempId,
+      sender: {
+        username: user?.username || 'me',
+        name: user?.fullName || user?.username || 'Ban',
+        avatar: '',
+        level: 'Trung bÃ¬nh',
+        district: '',
+        bio: '',
+        followers: 0,
+        following: 0,
+        matches: 0,
+        checkins: 0,
+        cover: '',
+      },
+    }
+
+    setMessages((current) => mergeMessages(current, [optimisticMessage], clientTempId))
+    syncRoomLatestMessage(activeRoomId, optimisticMessage)
+    setDraft('')
+    scrollToBottom(true)
     setSending(true)
     try {
       const socket = socketRef.current
@@ -305,18 +360,18 @@ function CommunityChatContent() {
         const response = await socket.emitWithAck('chat:send_message', {
           roomId: activeRoomId,
           message: body,
+          clientTempId,
         })
 
         const message = response?.message as CommunityChatMessage | undefined
         if (message) {
           setMessages((current) => {
-            const merged = mergeMessages(current, [message])
+            const merged = mergeMessages(current, [message], response?.clientTempId || clientTempId)
             const latest = merged[merged.length - 1]
             if (latest) lastMessageAtRef.current = latest.createdAt
             return merged
           })
           syncRoomLatestMessage(activeRoomId, message)
-          setDraft('')
           scrollToBottom(true)
           return
         }
@@ -325,14 +380,21 @@ function CommunityChatContent() {
       const res = await communityApi.sendChatMessage(activeRoomId, body)
       if (res.success && res.message) {
         setMessages((current) => {
-          const merged = mergeMessages(current, [res.message!])
+          const merged = mergeMessages(current, [res.message!], clientTempId)
           const latest = merged[merged.length - 1]
           if (latest) lastMessageAtRef.current = latest.createdAt
           return merged
         })
         syncRoomLatestMessage(activeRoomId, res.message)
-        setDraft('')
         scrollToBottom(true)
+      } else {
+        setMessages((current) =>
+          current.map((message) =>
+            message.clientTempId === clientTempId
+              ? { ...message, pending: false, time: 'Gui that bai' }
+              : message,
+          ),
+        )
       }
     } finally {
       setSending(false)
@@ -473,7 +535,9 @@ function CommunityChatContent() {
                           <p className="mb-0.5 text-[11px] font-semibold opacity-80">{message.sender.name}</p>
                         ) : null}
                         <p className="whitespace-pre-wrap break-words">{message.body}</p>
-                        <p className="mt-1 text-[10px] opacity-70">{message.time}</p>
+                        <p className="mt-1 text-[10px] opacity-70">
+                          {message.pending ? 'Dang gui...' : message.time}
+                        </p>
                       </div>
                     </div>
                   ))

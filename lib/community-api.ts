@@ -91,6 +91,8 @@ export interface CommunityChatMessage {
   createdAt: string
   time: string
   mine?: boolean
+  pending?: boolean
+  clientTempId?: string
   sender: CommunityPlayer
 }
 
@@ -191,7 +193,7 @@ export interface CommunityChatMessagesQuery {
 }
 
 export interface CommunityChatSocketEvents {
-  'chat:new_message': (payload: { roomId: string; message: CommunityChatMessage }) => void
+  'chat:new_message': (payload: { roomId: string; message: CommunityChatMessage; clientTempId?: string | null }) => void
   'chat:error': (payload: { message?: string }) => void
 }
 
