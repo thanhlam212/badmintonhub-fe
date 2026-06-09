@@ -1,4 +1,5 @@
 import { apiFetch, getToken } from '@/lib/api'
+import { io, type Socket } from 'socket.io-client'
 
 export type CommunityLevel = 'Mới chơi' | 'Trung bình' | 'Khá' | 'Nâng cao'
 export type CommunityDistrict = 'Cầu Giấy' | 'Thanh Xuân' | 'Long Biên'
@@ -187,6 +188,16 @@ export interface CommunityChatMessagesResponse {
 export interface CommunityChatMessagesQuery {
   after?: string
   limit?: number
+}
+
+export interface CommunityChatSocketEvents {
+  'chat:new_message': (payload: { roomId: string; message: CommunityChatMessage }) => void
+  'chat:error': (payload: { message?: string }) => void
+}
+
+function getCommunitySocketUrl() {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'
+  return apiUrl.replace(/\/api\/?$/, '')
 }
 
 export interface CreateCommunityPostPayload {
@@ -419,4 +430,14 @@ export const communityApi = {
     const data = json?.success ? json.data : json
     return { success: true, url: data?.url || '' }
   },
+}
+
+export function createCommunityChatSocket(): Socket<CommunityChatSocketEvents, Record<string, never>> | null {
+  const token = getToken()
+  if (!token) return null
+
+  return io(`${getCommunitySocketUrl()}/community-chat`, {
+    transports: ['websocket'],
+    auth: { token },
+  })
 }
