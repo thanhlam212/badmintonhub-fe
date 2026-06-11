@@ -15,11 +15,12 @@ import { Textarea } from "@/components/ui/textarea"
 import { POStatusBadge } from "@/components/shared"
 import { formatPOReference, formatVND } from "@/lib/utils"
 import { inventoryApi, purchaseOrderApi } from "@/lib/api"
+import { printWarehouseSlip } from "@/lib/print-utils"
 import { cn } from "@/lib/utils"
 import {
   Search, Plus, Eye, FileText, Truck, Package, Clock,
   CheckCircle2, XCircle, Phone, Mail, MapPin, Calendar,
-  Send, ChevronRight, Warehouse, Trash2
+  Send, ChevronRight, Warehouse, Trash2, Printer
 } from "lucide-react"
 import { useInventory } from "@/lib/inventory-context"
 
@@ -53,6 +54,11 @@ function getPOStep(status: string) {
 }
 
 const ALL_WAREHOUSES = ["Kho Hub", "Kho Cầu Giấy", "Kho Thanh Xuân", "Kho Long Biên"]
+
+function buildWarehouseSlipCode(prefix: "PNK" | "PXK", seed?: string) {
+  const source = String(seed || Date.now()).replace(/[^a-zA-Z0-9]/g, "").toUpperCase()
+  return `${prefix}-${new Date().getFullYear()}-${source.slice(-6)}`
+}
 
 function mapPurchaseOrder(p: any): PurchaseOrder {
   const rawId = String(p.id || "")
@@ -89,15 +95,31 @@ function PODetailSheet({ po, suppliers, onUpdateStatus }: { po: PurchaseOrder; s
   const { adminSlips, createAdminSlip } = useInventory()
   const poImportSlip = adminSlips.find(s => s.type === "import" && (s.poRawId === po.id || s.poId === po.code))
 
+  const printPOImportSlip = (id: string, date: string, statusNote = `Nhap kho theo PO ${po.code} - ${po.supplier}`) => {
+    printWarehouseSlip({
+      id,
+      type: "import",
+      date,
+      warehouse: po.warehouse,
+      supplier: po.supplier,
+      poId: po.code,
+      note: statusNote,
+      createdBy: "Admin",
+      assignedTo: po.warehouse,
+      items: safeItems.map(i => ({ sku: i.sku, name: i.name, qty: i.qty, unitCost: i.unitCost })),
+    })
+  }
+
   const handleCreateImportSlip = () => {
     if (poImportSlip) return
-    createAdminSlip({
+    const slipDate = new Date().toISOString().split("T")[0]
+    const slipId = createAdminSlip({
       type: "import",
       source: "admin",
       poId: po.code,
       poRawId: po.id,
       supplier: po.supplier,
-      date: new Date().toISOString().split("T")[0],
+      date: slipDate,
       warehouse: po.warehouse,
       items: safeItems.map(i => ({ sku: i.sku, name: i.name, qty: i.qty, unitCost: i.unitCost })),
       note: `Nhap kho theo PO ${po.code} - ${po.supplier}`,
@@ -105,6 +127,7 @@ function PODetailSheet({ po, suppliers, onUpdateStatus }: { po: PurchaseOrder; s
       createdBy: "Admin",
       assignedTo: po.warehouse,
     })
+    printPOImportSlip(slipId || buildWarehouseSlipCode("PNK", po.id || po.code), slipDate)
   }
 
   return (
@@ -261,8 +284,13 @@ function PODetailSheet({ po, suppliers, onUpdateStatus }: { po: PurchaseOrder; s
                 <span className="text-sm font-medium">{po.warehouse}</span>
               </div>
               {poImportSlip ? (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                  Đã tạo phiếu nhập kho <span className="font-mono font-semibold">{poImportSlip.id}</span>. Chờ kho xác nhận nhập.
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 space-y-2">
+                  <div>
+                    Đã tạo phiếu nhập kho <span className="font-mono font-semibold">{poImportSlip.id}</span>. Chờ kho xác nhận nhập.
+                  </div>
+                  <Button variant="outline" size="sm" className="h-8 bg-white" onClick={() => printPOImportSlip(poImportSlip.id, poImportSlip.date, poImportSlip.note)}>
+                    <Printer className="h-4 w-4 mr-1" /> In phieu
+                  </Button>
                 </div>
               ) : (
                 <Button className="w-full bg-secondary hover:bg-secondary/90 text-secondary-foreground"

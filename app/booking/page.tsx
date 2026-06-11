@@ -199,6 +199,7 @@ export default function BookingPage() {
   const [sepayStatus, setSepayStatus]       = useState<'waiting' | 'failed' | 'expired'>('waiting')
   const [sepayCountdown, setSepayCountdown] = useState(600) // 10 minutes
   const [copied, setCopied]                 = useState(false)
+  const [existingInvoiceId, setExistingInvoiceId] = useState<string | null>(null)
 
   // Contact info
   const [contactName, setContactName]       = useState(user?.fullName === "Khách" ? "" : (user?.fullName || ""))
@@ -394,7 +395,7 @@ export default function BookingPage() {
                 <div>
                   <p className="text-sm font-bold text-amber-800">Hết thời gian thanh toán</p>
                   <p className="text-xs text-amber-700 mt-0.5">
-                    Mã QR đã hết hạn sau 10 phút. Vui lòng tạo lại giao dịch thanh toán.
+                    Mã QR đã hết hạn sau 10 phút. Vui lòng thử lại thanh toán.
                   </p>
                 </div>
               </div>
@@ -492,10 +493,60 @@ export default function BookingPage() {
     if (code === 'BADMINTON10' || code === 'GIAM10') setDiscountApplied(true)
   }
 
+  // ─── Helper: xử lý kết quả payment gateway ────────────────────
+  const handlePaymentGateway = async (invoiceId: string) => {
+    const payResult = await paymentApi.create(invoiceId, paymentMethod as 'vnpay' | 'momo' | 'sepay')
+    if (paymentMethod === 'sepay' && payResult.success && payResult.paymentId) {
+      if (payResult.qrImageUrl) {
+        setSepayPayment({
+          paymentId: payResult.paymentId,
+          qrImageUrl: payResult.qrImageUrl,
+          bankCode: payResult.bankCode || '',
+          accountNumber: payResult.accountNumber || '',
+          transferContent: payResult.transferContent || invoiceId,
+          amount: payResult.amount || total,
+        })
+        setSubmitting(false)
+        return
+      }
+      if (payResult.checkoutUrl && payResult.formFields) {
+        const form = document.createElement("form")
+        form.method = "POST"
+        form.action = payResult.checkoutUrl
+        Object.entries(payResult.formFields).forEach(([name, value]) => {
+          const input = document.createElement("input")
+          input.type = "hidden"
+          input.name = name
+          input.value = String(value)
+          form.appendChild(input)
+        })
+        document.body.appendChild(form)
+        form.submit()
+        return
+      }
+      setSubmitError('SePay chưa được cấu hình đầy đủ. Vui lòng chọn phương thức thanh toán khác.')
+      setSubmitting(false)
+      return
+    } else if (payResult.success && payResult.payUrl) {
+      window.location.href = payResult.payUrl
+      return
+    } else {
+      setSubmitError(payResult.error || 'Không thể tạo liên kết thanh toán. Vui lòng thanh toán tại quầy.')
+      setSubmitting(false)
+      return
+    }
+  }
+
   const handleSubmit = async () => {
     setSubmitting(true)
     setSubmitError("")
     try {
+      // Nếu đã có booking + invoice từ lần trước (payment thất bại) → chỉ tạo payment mới
+      if (existingInvoiceId && (paymentMethod === 'vnpay' || paymentMethod === 'momo' || paymentMethod === 'sepay')) {
+        await handlePaymentGateway(existingInvoiceId)
+        return
+      }
+
       const dates     = booking.date.split(',').map((d: string) => d.trim())
       const [dayStr, monthStr] = dates[0].split('/')
       const year       = new Date().getFullYear()
@@ -539,55 +590,19 @@ export default function BookingPage() {
         localStorage.setItem('completedBooking', JSON.stringify(completedData))
         localStorage.removeItem('pendingBooking')
 
+        // Lưu invoice ID để retry payment nếu cần
+        if (result.booking.invoice_id) {
+          setExistingInvoiceId(result.booking.invoice_id)
+        }
+
         // For payment gateways: redirect or submit checkout form
         if ((paymentMethod === 'vnpay' || paymentMethod === 'momo' || paymentMethod === 'sepay') && result.booking.invoice_id) {
           if (result.booking.status === 'confirmed' || result.booking.invoice_status === 'paid') {
             setTimeout(() => router.push('/booking/success'), 800)
             return
           }
-          const payResult = await paymentApi.create(result.booking.invoice_id, paymentMethod as 'vnpay' | 'momo' | 'sepay')
-          if (paymentMethod === 'sepay' && payResult.success && payResult.paymentId) {
-            // Prefer QR mode (VietQR) — works with just bank info
-            if (payResult.qrImageUrl) {
-              setSepayPayment({
-                paymentId: payResult.paymentId,
-                qrImageUrl: payResult.qrImageUrl,
-                bankCode: payResult.bankCode || '',
-                accountNumber: payResult.accountNumber || '',
-                transferContent: payResult.transferContent || result.booking.invoice_id,
-                amount: payResult.amount || total,
-              })
-              setSubmitting(false)
-              return
-            }
-            // Fallback: checkout form POST (requires merchant config)
-            if (payResult.checkoutUrl && payResult.formFields) {
-              const form = document.createElement("form")
-              form.method = "POST"
-              form.action = payResult.checkoutUrl
-              Object.entries(payResult.formFields).forEach(([name, value]) => {
-                const input = document.createElement("input")
-                input.type = "hidden"
-                input.name = name
-                input.value = String(value)
-                form.appendChild(input)
-              })
-              document.body.appendChild(form)
-              form.submit()
-              return
-            }
-            // Neither QR nor checkout available
-            setSubmitError('SePay chưa được cấu hình đầy đủ. Vui lòng chọn phương thức thanh toán khác.')
-            setSubmitting(false)
-            return
-          } else if (payResult.success && payResult.payUrl) {
-            window.location.href = payResult.payUrl
-            return
-          } else {
-            setSubmitError(payResult.error || 'Không thể tạo liên kết thanh toán. Vui lòng thanh toán tại quầy.')
-            setSubmitting(false)
-            return
-          }
+          await handlePaymentGateway(result.booking.invoice_id)
+          return
         }
 
         // For cash / bank / wallet: go to success page

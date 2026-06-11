@@ -16,6 +16,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { StockLevelIndicator } from "@/components/shared"
 import { formatVND, formatTransferReference } from "@/lib/utils"
+import { printTransferSlip, printWarehouseSlip } from "@/lib/print-utils"
 import { purchaseOrderApi } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
@@ -24,7 +25,7 @@ import {
   Search, Package, AlertTriangle, XOctagon, DollarSign, Plus,
   Trash2, Eye, CheckCircle2, ArrowDownToLine, ArrowUpFromLine,
   FileText, ClipboardCheck, Clock, Inbox, Repeat, MapPin, ArrowRight, Truck, Download, Upload,
-  UserCheck, Users, ChevronsUpDown, Check, FileSpreadsheet
+  UserCheck, Users, ChevronsUpDown, Check, FileSpreadsheet, Printer
 } from "lucide-react"
 import { exportInventoryCheckSheet } from "@/lib/export-inventory-check"
 import {
@@ -37,6 +38,11 @@ const EMP_INV_PAGE_SIZE = 20
 interface GrnRow { sku: string; name?: string; qty: number; cost: number }
 interface ExportRow { sku: string; qty: number; reason: string }
 interface TransferRow { sku: string; qty: number }
+
+function buildWarehouseSlipCode(prefix: "PNK" | "PXK", seed?: string) {
+  const source = String(seed || Date.now()).replace(/[^a-zA-Z0-9]/g, "").toUpperCase()
+  return `${prefix}-${new Date().getFullYear()}-${source.slice(-6)}`
+}
 
 export default function EmployeeInventory() {
   const { user } = useAuth()
@@ -172,9 +178,75 @@ export default function EmployeeInventory() {
     return pages
   }
 
+  const getInventoryCost = (sku: string, warehouse?: string) => {
+    return inventory.find(i => i.sku === sku && (!warehouse || i.warehouse === warehouse))?.unitCost
+      || inventory.find(i => i.sku === sku)?.unitCost
+      || 0
+  }
+
+  const printEmployeeWarehouseSlip = (slip: {
+    id?: string
+    type: "import" | "export"
+    date: string
+    warehouse: string
+    supplier?: string
+    poId?: string
+    note: string
+    assignedTo?: string
+    items: { sku: string; name: string; qty: number; unitCost?: number }[]
+  }) => {
+    printWarehouseSlip({
+      id: slip.id || buildWarehouseSlipCode(slip.type === "import" ? "PNK" : "PXK"),
+      type: slip.type,
+      date: slip.date,
+      warehouse: slip.warehouse,
+      supplier: slip.supplier,
+      poId: slip.poId,
+      note: slip.note,
+      createdBy: user?.fullName || "Nhan vien",
+      assignedTo: slip.assignedTo || slip.warehouse,
+      processedBy: user?.fullName || "Nhan vien",
+      items: slip.items.map(item => ({
+        sku: item.sku,
+        name: item.name,
+        qty: item.qty,
+        unitCost: item.unitCost ?? getInventoryCost(item.sku, slip.warehouse),
+      })),
+    })
+  }
+
+  const selectedSlipToPrint = (slip: typeof adminSlips[0]) => ({
+    id: slip.id,
+    type: slip.type,
+    date: slip.date,
+    warehouse: slip.warehouse,
+    supplier: slip.supplier,
+    poId: slip.poId,
+    note: slip.note,
+    assignedTo: slip.assignedTo,
+    items: slip.items,
+  })
+
+  const printEmployeeTransferSlip = (transfer: TransferRequest) => {
+    printTransferSlip({
+      code: formatTransferReference(transfer.id, transfer.date),
+      date: transfer.date,
+      fromWarehouse: transfer.fromWarehouse,
+      toWarehouse: transfer.toWarehouse,
+      reason: transfer.reason,
+      note: transfer.note,
+      status: transfer.status,
+      createdBy: transfer.createdBy,
+      pickupMethod: transfer.pickupMethod,
+      items: transfer.items.map(item => ({ sku: item.sku, name: item.name, qty: item.qty })),
+    })
+  }
+
   const handleGrnConfirm = async () => {
     const validRows = grnRows.filter(r => r.sku && r.qty > 0)
     if (validRows.length === 0) return
+    const processingSlip = processingSlipId ? adminSlips.find(s => s.id === processingSlipId) : undefined
+    const warehouse = grnWarehouse || myWarehouse
 
     await ctx.importItems({
       items: validRows.map(r => ({
@@ -183,10 +255,27 @@ export default function EmployeeInventory() {
         qty: r.qty,
         cost: r.cost,
       })),
-      warehouse: grnWarehouse || myWarehouse,
+      warehouse,
       note: grnNote,
       date: grnDate,
       operator: user?.fullName || "Nhân viên",
+    })
+
+    printEmployeeWarehouseSlip({
+      id: processingSlip?.id || buildWarehouseSlipCode("PNK", grnPo || grnDate),
+      type: "import",
+      date: grnDate,
+      warehouse,
+      supplier: processingSlip?.supplier || suppliers.find(s => s.id.toString() === grnSupplier)?.name,
+      poId: processingSlip?.poId || grnPo || undefined,
+      note: grnNote,
+      assignedTo: processingSlip?.assignedTo,
+      items: validRows.map(r => ({
+        sku: r.sku,
+        name: inventory.find(it => it.sku === r.sku)?.name || r.name || r.sku,
+        qty: r.qty,
+        unitCost: r.cost,
+      })),
     })
 
     setGrnSuccess(true)
@@ -194,7 +283,7 @@ export default function EmployeeInventory() {
     setGrnNote("")
     // Mark admin slip as processed if this import was from an admin slip
     if (processingSlipId) {
-      const slip = adminSlips.find(s => s.id === processingSlipId)
+      const slip = processingSlip
       ctx.processAdminSlip(processingSlipId, user?.fullName || "Nhân viên")
       const poStatusId = slip?.poRawId || slip?.poId
       if (poStatusId) {
@@ -205,11 +294,12 @@ export default function EmployeeInventory() {
     setTimeout(() => setGrnSuccess(false), 3000)
   }
 
-  const handleExportConfirm = () => {
+  const handleExportConfirm = async () => {
     const validRows = exportRows.filter(r => r.sku && r.qty > 0)
     if (validRows.length === 0) return
+    const processingSlip = processingSlipId ? adminSlips.find(s => s.id === processingSlipId) : undefined
 
-    const success = ctx.exportItems({
+    const success = await ctx.exportItems({
       items: validRows.map(r => ({
         sku: r.sku,
         name: inventory.find(it => it.sku === r.sku)?.name || r.sku,
@@ -223,6 +313,21 @@ export default function EmployeeInventory() {
     })
 
     if (!success) return
+
+    printEmployeeWarehouseSlip({
+      id: processingSlip?.id || buildWarehouseSlipCode("PXK", exportDate),
+      type: "export",
+      date: exportDate,
+      warehouse: myWarehouse,
+      note: exportNote,
+      assignedTo: processingSlip?.assignedTo,
+      items: validRows.map(r => ({
+        sku: r.sku,
+        name: inventory.find(it => it.sku === r.sku)?.name || r.sku,
+        qty: r.qty,
+        unitCost: getInventoryCost(r.sku, myWarehouse),
+      })),
+    })
 
     setExportSuccess(true)
     setExportRows([{ sku: "", qty: 1, reason: "" }])
@@ -275,7 +380,7 @@ export default function EmployeeInventory() {
     return inventory.filter(i => i.warehouse === transferSource && i.available > 0)
   }, [inventory, transferSource])
 
-  const handleTransferConfirm = () => {
+  const handleTransferConfirm = async () => {
     const validRows = transferRows.filter(r => r.sku && r.qty > 0)
     if (validRows.length === 0 || !myWarehouse || !transferSource || myWarehouse === transferSource) return
 
@@ -285,14 +390,15 @@ export default function EmployeeInventory() {
       if (!item || item.available < row.qty) return
     }
 
-    ctx.createTransfer({
+    const transferItems = validRows.map(row => {
+      const item = inventory.find(i => i.sku === row.sku && i.warehouse === transferSource)
+      return { sku: row.sku, name: item?.name || row.sku, qty: row.qty, available: item?.available || 0 }
+    })
+    const createdId = await ctx.createTransfer({
       date: transferDate,
       fromWarehouse: transferSource,
       toWarehouse: myWarehouse,
-      items: validRows.map(row => {
-        const item = inventory.find(i => i.sku === row.sku && i.warehouse === transferSource)
-        return { sku: row.sku, name: item?.name || row.sku, qty: row.qty, available: item?.available || 0 }
-      }),
+      items: transferItems,
       reason: transferReason,
       note: transferNote,
       status: "pending",
@@ -300,6 +406,19 @@ export default function EmployeeInventory() {
       createdBy: user?.fullName || "Nhân viên",
       customerName: transferCustomerName || undefined,
       customerPhone: transferCustomerPhone || undefined,
+    })
+
+    printTransferSlip({
+      code: formatTransferReference(createdId || `DC-${Date.now()}`, transferDate),
+      date: transferDate,
+      fromWarehouse: transferSource,
+      toWarehouse: myWarehouse,
+      reason: transferReason,
+      note: transferNote,
+      status: "pending",
+      createdBy: user?.fullName || "Nhan vien",
+      pickupMethod: transferPickupMethod,
+      items: transferItems.map(item => ({ sku: item.sku, name: item.name, qty: item.qty })),
     })
 
     // NOTE: Items are NOT deducted yet — wait for source warehouse to approve & export
@@ -332,7 +451,7 @@ export default function EmployeeInventory() {
   }
 
   // Confirm export transfer form → create export slip and update status
-  const handleExportTransferConfirm = () => {
+  const handleExportTransferConfirm = async () => {
     if (!exportTransferTarget) return
     const t = exportTransferTarget
 
@@ -346,12 +465,28 @@ export default function EmployeeInventory() {
       if (!inv || inv.available < (exportTransferQtys[item.sku] || 0)) return
     }
 
-    ctx.exportTransferItems({
+    await ctx.exportTransferItems({
       transferId: t.id,
       qtys: exportTransferQtys,
       date: exportTransferDate,
       note: exportTransferNote || "Không có ghi chú",
       operator: user?.fullName || "Nhân viên",
+    })
+
+    printEmployeeWarehouseSlip({
+      id: buildWarehouseSlipCode("PXK", `DC${t.id}`),
+      type: "export",
+      date: exportTransferDate,
+      warehouse: t.fromWarehouse,
+      poId: formatTransferReference(t.id, t.date),
+      note: exportTransferNote || t.note,
+      assignedTo: t.toWarehouse,
+      items: t.items.map(item => ({
+        sku: item.sku,
+        name: item.name,
+        qty: exportTransferQtys[item.sku] || item.qty,
+        unitCost: getInventoryCost(item.sku, t.fromWarehouse),
+      })),
     })
 
     // Clean up
@@ -362,16 +497,34 @@ export default function EmployeeInventory() {
     setSelectedTransfer(null)
   }
 
-  const handleUpdateTransferStatus = (id: string, newStatus: TransferRequest["status"]) => {
+  const handleUpdateTransferStatus = async (id: string, newStatus: TransferRequest["status"]) => {
+    const transfer = transferRequests.find(t => t.id === id)
     if (newStatus === "completed") {
       // Destination warehouse confirms reception → add items to dest warehouse
-      ctx.receiveTransferItems(id, user?.fullName || "Nhân viên")
+      await ctx.receiveTransferItems(id, user?.fullName || "Nhân viên")
+      if (transfer) {
+        printEmployeeWarehouseSlip({
+          id: buildWarehouseSlipCode("PNK", `DC${transfer.id}`),
+          type: "import",
+          date: new Date().toISOString().split("T")[0],
+          warehouse: transfer.toWarehouse,
+          poId: formatTransferReference(transfer.id, transfer.date),
+          note: transfer.note,
+          assignedTo: transfer.toWarehouse,
+          items: transfer.items.map(item => ({
+            sku: item.sku,
+            name: item.name,
+            qty: item.qty,
+            unitCost: getInventoryCost(item.sku, transfer.toWarehouse),
+          })),
+        })
+      }
     } else if (newStatus === "rejected") {
-      ctx.updateTransferStatus(id, "rejected")
+      await ctx.updateTransferStatus(id, "rejected")
     } else if (newStatus === "in-transit") {
       // Handled by handleExportTransferConfirm instead
     } else {
-      ctx.updateTransferStatus(id, newStatus)
+      await ctx.updateTransferStatus(id, newStatus)
     }
     setTransferDetailOpen(false)
     setSelectedTransfer(null)
@@ -1407,6 +1560,9 @@ export default function EmployeeInventory() {
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
+                            <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => printEmployeeTransferSlip(t)}>
+                              <Printer className="h-3.5 w-3.5 mr-1" /> In
+                            </Button>
                             <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => { setSelectedTransfer(t); setTransferDetailOpen(true) }}>
                               <Eye className="h-3.5 w-3.5 mr-1" /> Chi tiết
                             </Button>
@@ -1529,6 +1685,9 @@ export default function EmployeeInventory() {
                   </div>
                   <DialogFooter className="flex-col sm:flex-row gap-2">
                     <DialogClose asChild><Button variant="outline">Đóng</Button></DialogClose>
+                    <Button variant="outline" size="sm" onClick={() => printEmployeeTransferSlip(selectedTransfer)}>
+                      <Printer className="h-4 w-4 mr-1" /> In phieu
+                    </Button>
                     {/* Source warehouse employee can reject or create export slip */}
                     {selectedTransfer.status === "pending" && selectedTransfer.fromWarehouse === myWarehouse && (
                       <>
@@ -1554,7 +1713,7 @@ export default function EmployeeInventory() {
 
           {/* Export Transfer Form Dialog — source warehouse creates phiếu xuất kho điều chuyển */}
           <Dialog open={exportTransferOpen} onOpenChange={(open) => { setExportTransferOpen(open); if (!open) setExportTransferTarget(null) }}>
-            <DialogContent className="w-[95vw] max-w-5xl max-h-[92vh] overflow-y-auto">
+            <DialogContent className="w-[95vw] sm:max-w-4xl max-h-[92vh] overflow-y-auto">
               {exportTransferTarget && (
                 <>
                   <DialogHeader>
@@ -1605,7 +1764,7 @@ export default function EmployeeInventory() {
                             <TableHead className="text-xs">Sản phẩm</TableHead>
                             <TableHead className="text-xs text-center w-20">Yêu cầu</TableHead>
                             <TableHead className="text-xs text-center w-20">Tồn kho</TableHead>
-                            <TableHead className="text-xs w-28">SL xuất</TableHead>
+                            <TableHead className="text-xs text-center w-32">SL xuất</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -1621,7 +1780,7 @@ export default function EmployeeInventory() {
                                 <TableCell className="text-center text-sm">
                                   <span className={cn(available < item.qty ? "text-red-600 font-bold" : "text-green-600")}>{available}</span>
                                 </TableCell>
-                                <TableCell>
+                                <TableCell className="text-center">
                                   <Input
                                     type="number"
                                     min={0}
@@ -1632,7 +1791,7 @@ export default function EmployeeInventory() {
                                       const val = parseInt(e.target.value) || 0
                                       setExportTransferQtys(prev => ({ ...prev, [item.sku]: val }))
                                     }}
-                                    className={cn("h-8 text-xs text-center", exportQty > available ? "border-red-400 bg-red-50" : exportQty === 0 ? "border-amber-300 bg-amber-50/50" : "border-green-400 bg-green-50/50")}
+                                    className={cn("h-8 text-xs text-center w-24 mx-auto [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none", exportQty > available ? "border-red-400 bg-red-50" : exportQty === 0 ? "border-amber-300 bg-amber-50/50" : "border-green-400 bg-green-50/50")}
                                   />
                                 </TableCell>
                               </TableRow>
@@ -1826,6 +1985,9 @@ export default function EmployeeInventory() {
                         )}
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
+                        <Button variant="outline" size="sm" onClick={() => printEmployeeWarehouseSlip(selectedSlipToPrint(slip))}>
+                          <Printer className="h-4 w-4 mr-1" /> In
+                        </Button>
                         <Button variant="outline" size="sm" onClick={() => { setSelectedSlip(slip); setSlipDetailOpen(true) }}>
                           <Eye className="h-4 w-4 mr-1" /> Chi tiết
                         </Button>
@@ -1903,6 +2065,9 @@ export default function EmployeeInventory() {
                     <DialogClose asChild>
                       <Button variant="outline">Đóng</Button>
                     </DialogClose>
+                    <Button variant="outline" onClick={() => printEmployeeWarehouseSlip(selectedSlipToPrint(selectedSlip))}>
+                      <Printer className="h-4 w-4 mr-1" /> In phieu
+                    </Button>
                     {selectedSlip.status === "pending" && (
                       <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={() => handleRedirectSlipToTab(selectedSlip)}>
                         <ClipboardCheck className="h-4 w-4 mr-1" /> {selectedSlip.type === "import" ? "Chuyển sang nhập kho" : "Chuyển sang xuất kho"}

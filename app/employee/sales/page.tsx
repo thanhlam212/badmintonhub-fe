@@ -16,7 +16,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { formatVND, formatSalesOrderReference, formatHDReference } from "@/lib/utils"
 import { productApi, salesOrderApi, orderApi } from "@/lib/api"
 import { useInventory } from "@/lib/inventory-context"
-import { printWarehouseSlip, printWarrantyCard } from "@/lib/print-utils"
+import { printOrderInvoice, printWarehouseSlip, printWarrantyCard } from "@/lib/print-utils"
 import { cn } from "@/lib/utils"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
@@ -39,6 +39,7 @@ interface SaleRecord {
   date: string
   time: string
   customer: string
+  phone?: string
   items: CartItem[]
   total: number
   discount: number
@@ -74,9 +75,10 @@ interface ExportSlip {
   id: string
   orderId: string
   date: string
-  items: { name: string; qty: number; price: number }[]
+  items: { productId?: number; name: string; qty: number; price: number }[]
   total: number
   customer: string
+  phone?: string
   note: string
   status: "pending" | "completed"
   createdBy: string
@@ -99,6 +101,16 @@ interface OnlineOrder {
   userId: string
   type: "online"
   fulfillingWarehouseId?: number | null
+}
+
+interface ExistingCustomer {
+  id: string | null
+  user_code: string
+  username: string
+  full_name: string
+  email: string
+  phone: string
+  role: string
 }
 
 const orderStatusConfig: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
@@ -127,8 +139,14 @@ export default function EmployeeSales() {
   const { user } = useAuth()
   const [search, setSearch] = useState("")
   const [cart, setCart] = useState<CartItem[]>([])
+  const [customerMode, setCustomerMode] = useState<"guest" | "account">("guest")
   const [customerName, setCustomerName] = useState("")
   const [customerPhone, setCustomerPhone] = useState("")
+  const [customerPickerOpen, setCustomerPickerOpen] = useState(false)
+  const [customerQuery, setCustomerQuery] = useState("")
+  const [customerOptions, setCustomerOptions] = useState<ExistingCustomer[]>([])
+  const [selectedCustomer, setSelectedCustomer] = useState<ExistingCustomer | null>(null)
+  const [isSearchingCustomers, setIsSearchingCustomers] = useState(false)
   const [discount, setDiscount] = useState(0)
   const [discountType, setDiscountType] = useState<"percent" | "fixed">("percent")
   const [paymentMethod, setPaymentMethod] = useState("cash")
@@ -231,6 +249,40 @@ export default function EmployeeSales() {
     }
   }, [saleSuccess])
 
+  useEffect(() => {
+    if (customerMode !== "account") {
+      setCustomerOptions([])
+      setIsSearchingCustomers(false)
+      return
+    }
+
+    const keyword = customerQuery.trim()
+    if (keyword.length < 2) {
+      setCustomerOptions([])
+      setIsSearchingCustomers(false)
+      return
+    }
+
+    let active = true
+    setIsSearchingCustomers(true)
+
+    const timeoutId = window.setTimeout(async () => {
+      const res = await salesOrderApi
+        .getCustomers(keyword)
+        .catch(() => ({ success: false, data: [] as ExistingCustomer[] }))
+
+      if (!active) return
+
+      setCustomerOptions(res.success ? res.data : [])
+      setIsSearchingCustomers(false)
+    }, 250)
+
+    return () => {
+      active = false
+      window.clearTimeout(timeoutId)
+    }
+  }, [customerMode, customerQuery])
+
   const filteredSalesOrders = useMemo(() => {
     return salesOrders.filter(o => {
       if (orderStatusFilter !== "all" && o.status !== orderStatusFilter) return false
@@ -239,16 +291,54 @@ export default function EmployeeSales() {
     })
   }, [salesOrders, orderStatusFilter, orderSearch])
 
+  const salesExportSlips = useMemo<ExportSlip[]>(() => {
+    const fromOrders = salesOrders
+      .filter(order => order.status === "approved" || order.status === "exported")
+      .map(order => ({
+        id: `PXK-${(order.rawId || order.id).slice(0, 8).toUpperCase()}`,
+        orderId: order.id,
+        date: order.date,
+        items: order.items,
+        total: order.finalTotal,
+        customer: order.customer,
+        phone: order.phone,
+        note: order.note,
+        status: order.status === "exported" ? "completed" as const : "pending" as const,
+        createdBy: order.createdBy,
+        completedAt: order.status === "exported" ? order.approvedAt : undefined,
+        completedBy: order.approvedBy,
+      }))
+
+    const existingIds = new Set(fromOrders.map(slip => slip.id))
+    return [...fromOrders, ...exportSlips.filter(slip => !existingIds.has(slip.id))]
+  }, [salesOrders, exportSlips])
+
   const filteredExportSlips = useMemo(() => {
-    return exportSlips.filter(s => {
+    return salesExportSlips.filter(s => {
       if (slipStatusFilter !== "all" && s.status !== slipStatusFilter) return false
       if (slipSearch && !s.id.toLowerCase().includes(slipSearch.toLowerCase()) && !s.orderId.toLowerCase().includes(slipSearch.toLowerCase())) return false
       return true
     })
-  }, [exportSlips, slipStatusFilter, slipSearch])
+  }, [salesExportSlips, slipStatusFilter, slipSearch])
+
+  const salesHistoryRecords = useMemo<SaleRecord[]>(() => {
+    return salesOrders.map(order => ({
+      id: order.id,
+      date: order.date,
+      time: order.time,
+      customer: order.customer,
+      phone: order.phone,
+      items: order.items,
+      total: order.total,
+      discount: order.discount,
+      finalTotal: order.finalTotal,
+      paymentMethod: paymentLabels[order.paymentMethod] || order.paymentMethod,
+      note: order.note,
+    }))
+  }, [salesOrders])
 
   const pendingOrdersCount = salesOrders.filter(o => o.status === "pending").length
-  const pendingSlipsCount = exportSlips.filter(s => s.status === "pending").length
+  const pendingSlipsCount = salesExportSlips.filter(s => s.status === "pending").length
 
   const availableProducts = products.filter(p => p.inStock)
 
@@ -384,6 +474,32 @@ export default function EmployeeSales() {
     setCart(prev => prev.filter(item => item.productId !== productId))
   }
 
+  const handleCustomerModeChange = (mode: "guest" | "account") => {
+    setCustomerMode(mode)
+
+    if (mode === "guest") {
+      setCustomerPickerOpen(false)
+      setCustomerOptions([])
+      setCustomerQuery("")
+      if (selectedCustomer) {
+        setSelectedCustomer(null)
+        setCustomerName("")
+        setCustomerPhone("")
+      }
+      return
+    }
+
+    setCustomerQuery(customerName || customerPhone || "")
+  }
+
+  const handleSelectCustomer = (customer: ExistingCustomer) => {
+    setSelectedCustomer(customer)
+    setCustomerName(customer.full_name || customer.username || "Khách hàng")
+    setCustomerPhone(customer.phone || "")
+    setCustomerQuery([customer.full_name || customer.username, customer.phone].filter(Boolean).join(" • "))
+    setCustomerPickerOpen(false)
+  }
+
   const handleConfirmSale = async () => {
     if (cart.length === 0) return
 
@@ -393,6 +509,7 @@ export default function EmployeeSales() {
       date: now.toISOString().split("T")[0],
       time: `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
       customer: customerName || "Khách lẻ",
+      phone: customerPhone || "",
       items: [...cart],
       total: cartTotal,
       discount: discountAmount,
@@ -412,6 +529,9 @@ export default function EmployeeSales() {
       customer_phone: customerPhone || undefined,
       note: note || undefined,
       payment_method: paymentMethod,
+      total: cartTotal,
+      discount: discountAmount,
+      final_total: finalTotal,
       items: cart.map(c => ({
         product_id: c.productId > 0 ? c.productId : undefined,
         product_name: c.name,
@@ -428,8 +548,13 @@ export default function EmployeeSales() {
 
     // Reset form
     setCart([])
+    setCustomerMode("guest")
     setCustomerName("")
     setCustomerPhone("")
+    setCustomerPickerOpen(false)
+    setCustomerQuery("")
+    setCustomerOptions([])
+    setSelectedCustomer(null)
     setDiscount(0)
     setNote("")
 
@@ -459,6 +584,80 @@ export default function EmployeeSales() {
     return wh ? wh.warehouse : "—"
   }, [selectedOnlineOrder, inventoryItems])
 
+  const printSaleInvoice = (sale: SaleRecord) => {
+    printOrderInvoice({
+      code: sale.id,
+      date: `${sale.date} ${sale.time}`,
+      customerName: sale.customer,
+      customerPhone: sale.phone,
+      paymentMethod: sale.paymentMethod,
+      note: sale.note,
+      items: sale.items.map(item => ({
+        sku: productIdToSku[item.productId] || undefined,
+        name: item.name,
+        qty: item.qty,
+        price: item.price,
+      })),
+      subtotal: sale.total,
+      discount: sale.discount,
+      total: sale.finalTotal,
+    })
+  }
+
+  const printSalesOrderInvoice = (order: SalesOrder) => {
+    printSaleInvoice({
+      id: order.id,
+      date: order.date,
+      time: order.time,
+      customer: order.customer,
+      phone: order.phone,
+      items: order.items,
+      total: order.total,
+      discount: order.discount,
+      finalTotal: order.finalTotal,
+      paymentMethod: paymentLabels[order.paymentMethod] || order.paymentMethod,
+      note: order.note,
+    })
+  }
+
+  const printSalesOrderWarehouseSlip = (order: SalesOrder) => {
+    printWarehouseSlip({
+      id: `PXK-${(order.rawId || order.id).slice(0, 8).toUpperCase()}`,
+      type: "export",
+      date: order.date,
+      warehouse: selectedWarehouse && selectedWarehouse !== "__all__" ? selectedWarehouse : user?.warehouse || "Kho bán hàng",
+      note: order.note || "",
+      createdBy: order.createdBy || user?.fullName || "Nhân viên",
+      assignedTo: order.customer,
+      processedBy: order.approvedBy || user?.fullName || "Nhân viên",
+      items: order.items.map(item => ({
+        sku: productIdToSku[item.productId] || String(item.productId),
+        name: item.name,
+        qty: item.qty,
+        unitCost: item.price,
+      })),
+    })
+  }
+
+  const printExportSlip = (slip: ExportSlip) => {
+    printWarehouseSlip({
+      id: slip.id,
+      type: "export",
+      date: slip.date,
+      warehouse: selectedWarehouse && selectedWarehouse !== "__all__" ? selectedWarehouse : user?.warehouse || "Kho bán hàng",
+      note: slip.note || "",
+      createdBy: slip.createdBy || user?.fullName || "Nhân viên",
+      assignedTo: slip.customer,
+      processedBy: slip.completedBy || user?.fullName || "Nhân viên",
+      items: slip.items.map(item => ({
+        sku: item.productId ? productIdToSku[item.productId] || String(item.productId) : item.name,
+        name: item.name,
+        qty: item.qty,
+        unitCost: item.price,
+      })),
+    })
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -479,6 +678,9 @@ export default function EmployeeSales() {
               Tổng tiền: {formatVND(lastSale.finalTotal)} • Khách hàng: {lastSale.customer} • {lastSale.paymentMethod}
             </p>
           </div>
+          <Button size="sm" variant="outline" className="shrink-0 text-xs" onClick={() => printSaleInvoice(lastSale)}>
+            <Printer className="h-3.5 w-3.5 mr-1" /> In HD
+          </Button>
           <Button size="sm" variant="outline" className="shrink-0 text-xs" onClick={() => router.push("/employee/approval")}>
             Xem duyệt đơn
           </Button>
@@ -695,6 +897,102 @@ export default function EmployeeSales() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {/* Customer Info */}
+                  <div className="space-y-3">
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant={customerMode === "guest" ? "default" : "outline"}
+                        className="h-8 flex-1 text-xs"
+                        onClick={() => handleCustomerModeChange("guest")}
+                      >
+                        Khách lẻ
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={customerMode === "account" ? "default" : "outline"}
+                        className="h-8 flex-1 text-xs"
+                        onClick={() => handleCustomerModeChange("account")}
+                      >
+                        Khách có tài khoản
+                      </Button>
+                    </div>
+
+                    {customerMode === "account" && (
+                      <div>
+                        <Label className="text-xs">Chọn tài khoản khách hàng</Label>
+                        <Popover open={customerPickerOpen} onOpenChange={setCustomerPickerOpen}>
+                          <PopoverTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              role="combobox"
+                              aria-expanded={customerPickerOpen}
+                              className="mt-1 h-8 w-full justify-between text-xs font-normal"
+                            >
+                              <span className="truncate">
+                                {selectedCustomer
+                                  ? `${selectedCustomer.full_name || selectedCustomer.username} • ${selectedCustomer.phone}`
+                                  : "Tìm theo tên, SĐT hoặc email"}
+                              </span>
+                              <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[360px] p-0" align="start">
+                            <Command shouldFilter={false}>
+                              <CommandInput
+                                placeholder="Nhập tên, SĐT hoặc email..."
+                                value={customerQuery}
+                                onValueChange={setCustomerQuery}
+                                className="h-8 text-xs"
+                              />
+                              <CommandList>
+                                {isSearchingCustomers ? (
+                                  <div className="px-3 py-4 text-xs text-muted-foreground">
+                                    Đang tìm khách hàng...
+                                  </div>
+                                ) : customerQuery.trim().length < 2 ? (
+                                  <div className="px-3 py-4 text-xs text-muted-foreground">
+                                    Nhập ít nhất 2 ký tự để tìm tài khoản.
+                                  </div>
+                                ) : (
+                                  <CommandEmpty>Không tìm thấy khách hàng.</CommandEmpty>
+                                )}
+                                {customerOptions.length > 0 && (
+                                  <CommandGroup heading="Khách hàng">
+                                    {customerOptions.map(option => (
+                                      <CommandItem
+                                        key={option.id ?? `${option.phone}-${option.username}`}
+                                        value={`${option.full_name} ${option.username} ${option.phone} ${option.email}`}
+                                        onSelect={() => handleSelectCustomer(option)}
+                                        className="items-start py-2 text-xs"
+                                      >
+                                        <div className="flex min-w-0 flex-1 flex-col">
+                                          <span className="font-medium">
+                                            {option.full_name || option.username || option.phone}
+                                          </span>
+                                          <span className="text-muted-foreground">
+                                            {option.phone || "Không có SĐT"}
+                                            {option.email ? ` • ${option.email}` : ""}
+                                          </span>
+                                        </div>
+                                        {selectedCustomer?.id === option.id && (
+                                          <Check className="h-3.5 w-3.5 text-blue-600" />
+                                        )}
+                                      </CommandItem>
+                                    ))}
+                                  </CommandGroup>
+                                )}
+                              </CommandList>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          Hóa đơn sẽ dùng đúng thông tin từ tài khoản khách đã chọn.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <Label className="text-xs">Khách hàng</Label>
@@ -704,6 +1002,7 @@ export default function EmployeeSales() {
                           placeholder="Khách lẻ"
                           value={customerName}
                           onChange={e => setCustomerName(e.target.value)}
+                          readOnly={customerMode === "account"}
                           className="h-8 text-xs pl-8"
                         />
                       </div>
@@ -714,6 +1013,7 @@ export default function EmployeeSales() {
                         placeholder="SĐT"
                         value={customerPhone}
                         onChange={e => setCustomerPhone(e.target.value)}
+                        readOnly={customerMode === "account"}
                         className="h-8 text-xs mt-1"
                       />
                     </div>
@@ -1141,6 +1441,14 @@ export default function EmployeeSales() {
                     )}
                   </div>
                   <DialogFooter>
+                    <Button variant="outline" onClick={() => printSalesOrderInvoice(selectedOrderDetail)}>
+                      <Printer className="h-4 w-4 mr-1" /> In HD
+                    </Button>
+                    {(selectedOrderDetail.status === "approved" || selectedOrderDetail.status === "exported") && (
+                      <Button variant="outline" onClick={() => printSalesOrderWarehouseSlip(selectedOrderDetail)}>
+                        <ArrowUpFromLine className="h-4 w-4 mr-1" /> In phieu xuat
+                      </Button>
+                    )}
                     <Button variant="outline" onClick={() => setSelectedOrderDetail(null)}>Đóng</Button>
                   </DialogFooter>
                 </>
@@ -1415,6 +1723,9 @@ export default function EmployeeSales() {
                     </div>
                   </div>
                   <DialogFooter>
+                    <Button variant="outline" onClick={() => printExportSlip(selectedSlipDetail)}>
+                      <Printer className="h-4 w-4 mr-1" /> In phiếu
+                    </Button>
                     <Button variant="outline" onClick={() => setSelectedSlipDetail(null)}>Đóng</Button>
                   </DialogFooter>
                 </>
@@ -1432,7 +1743,7 @@ export default function EmployeeSales() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {salesHistory.length === 0 ? (
+              {salesHistoryRecords.length === 0 ? (
                 <div className="py-12 text-center">
                   <Receipt className="h-12 w-12 text-muted-foreground mx-auto mb-4 opacity-30" />
                   <p className="text-muted-foreground">Chưa có đơn bán nào trong phiên này</p>
@@ -1450,10 +1761,11 @@ export default function EmployeeSales() {
                       <TableHead className="text-xs text-right">Thành tiền</TableHead>
                       <TableHead className="text-xs">PTTT</TableHead>
                       <TableHead className="text-xs">Ghi chú</TableHead>
+                      <TableHead className="text-xs w-24"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {salesHistory.map(sale => (
+                    {salesHistoryRecords.map(sale => (
                       <TableRow key={sale.id}>
                         <TableCell className="font-mono text-xs text-blue-600">{sale.id}</TableCell>
                         <TableCell className="text-sm">{sale.date} {sale.time}</TableCell>
@@ -1468,6 +1780,11 @@ export default function EmployeeSales() {
                           <Badge variant="outline" className="text-xs">{sale.paymentMethod}</Badge>
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground max-w-[120px] truncate">{sale.note || "-"}</TableCell>
+                        <TableCell className="text-right">
+                          <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => printSaleInvoice(sale)}>
+                            <Printer className="h-3 w-3 mr-1" /> In
+                          </Button>
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

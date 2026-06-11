@@ -1082,6 +1082,7 @@ export const salesOrderApi = {
     branch_id?: number; customer_name?: string; customer_phone?: string
     note?: string; order_type?: string; fulfillment_mode?: string
     fulfill_warehouse_id?: number; payment_method?: string
+    total?: number; discount?: number; final_total?: number
     items: { product_id?: number; product_name: string; price: number; quantity: number }[]
   }) => {
     const res = await apiFetch('/sales-orders', {
@@ -1095,6 +1096,9 @@ export const salesOrderApi = {
         fulfillment_mode:     dto.fulfillment_mode,
         fulfill_warehouse_id: dto.fulfill_warehouse_id,
         payment_method:       dto.payment_method,
+        total:                dto.total,
+        discount:             dto.discount,
+        final_total:          dto.final_total,
         items: dto.items.map(i => ({
           product_id:   i.product_id ?? null,
           product_name: i.product_name || '',

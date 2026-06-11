@@ -5,7 +5,7 @@ import Image from "next/image"
 import { useState, useEffect, useRef } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { Menu, X, ShoppingCart, User, Phone, MapPin, LogOut, Shield, LogIn, ChevronDown, Calendar, Sparkles } from "lucide-react"
+import { Menu, X, ShoppingCart, User, Phone, MapPin, LogOut, Shield, LogIn, ChevronDown } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -114,7 +114,7 @@ export function Navbar() {
             : "bg-white border-b border-gray-100"
         )}
       >
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 h-16 sm:h-20">
+        <div className="px-4 sm:px-6 lg:px-8 h-16 sm:h-20">
           <div className="flex items-center justify-between h-full gap-4 sm:gap-8">
             {/* Logo - Bên trái */}
             <Link href="/" className="flex items-center gap-2 sm:gap-3 group shrink-0">
@@ -239,7 +239,19 @@ export function Navbar() {
           </nav>
 
           {/* Desktop Actions */}
-          <div className="hidden md:flex items-center gap-2">
+          <div className="hidden md:flex items-center justify-end gap-2 shrink-0">
+            {/* Cart */}
+            <Link href="/shop">
+              <Button variant="ghost" size="icon" className="h-9 w-9 rounded-lg text-gray-600 hover:text-[#0A2416] hover:bg-gray-100 relative transition-all duration-200">
+                <ShoppingCart className="h-5 w-5" />
+                {totalItems > 0 && (
+                  <span className="absolute -top-1 -right-1 h-4 w-4 flex items-center justify-center rounded-full bg-primary text-[9px] text-primary-foreground font-bold">
+                    {totalItems > 9 ? '9+' : totalItems}
+                  </span>
+                )}
+              </Button>
+            </Link>
+
             {user ? (
               user.role === "guest" ? (
                 /* Guest user - show register/login options */
@@ -311,54 +323,22 @@ export function Navbar() {
               </DropdownMenu>
               )
             ) : (
-              <Link href="/login">
-                <Button
-                  className="h-11 rounded-xl bg-[#1F6B3A] text-white hover:bg-[#185a30] gap-2 px-5 text-base font-bold shadow-md shadow-green-900/15 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg"
-                >
-                  <LogIn className="h-5 w-5" />
-                  <span>Đăng nhập</span>
-                </Button>
-              </Link>
+              <div className="flex items-center gap-2">
+                <Link href="/login">
+                  <Button
+                    className="h-10 rounded-lg bg-[#1F6B3A] text-white hover:bg-[#185a30] gap-2 px-4 text-sm font-bold shadow-md shadow-green-900/15 transition-all duration-200 hover:-translate-y-0.5"
+                  >
+                    <LogIn className="h-4 w-4" />
+                    <span>Đăng nhập</span>
+                  </Button>
+                </Link>
+                <Link href="/register">
+                  <Button variant="outline" className="h-10 rounded-lg border-[#1F6B3A] text-[#1F6B3A] hover:bg-[#1F6B3A]/5 px-4 text-sm font-semibold transition-all duration-200">
+                    Đăng ký
+                  </Button>
+                </Link>
+              </div>
             )}
-
-            {/* Cart */}
-            <Link href="/shop">
-              <Button variant="ghost" size="icon" className="h-9 w-9 rounded-lg text-gray-600 hover:text-[#0A2416] hover:bg-gray-100 relative transition-all duration-200">
-                <ShoppingCart className="h-5 w-5" />
-                {totalItems > 0 && (
-                  <span className="absolute -top-1 -right-1 h-4 w-4 flex items-center justify-center rounded-full bg-primary text-[9px] text-primary-foreground font-bold">
-                    {totalItems > 9 ? '9+' : totalItems}
-                  </span>
-                )}
-              </Button>
-            </Link>
-
-            <div className="w-px h-6 bg-gray-200 mx-1" />
-
-            {/* Primary CTA */}
-            <Link href="/courts">
-              <Button className="bg-[#1F6B3A] text-white hover:bg-[#185a30] font-semibold rounded-lg px-5 h-9 text-sm shadow-md shadow-green-900/15 transition-all duration-200 hover:shadow-lg hover:shadow-green-900/20 hover:-translate-y-0.5">
-                🏸 Đặt sân ngay
-              </Button>
-            </Link>
-
-            {/* ✨ Secondary CTA - Fixed Schedule */}
-            <Link href="/booking/fixed-schedule">
-              <Button 
-                variant="outline" 
-                className="relative border-2 border-green-600 text-green-700 hover:bg-green-50 font-semibold rounded-lg px-4 h-9 text-sm transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 overflow-hidden group"
-              >
-                <span className="relative z-10 flex items-center gap-1.5">
-                  <Calendar className="h-4 w-4" />
-                  <span>Gói cố định</span>
-                </span>
-                <span className="absolute -top-1 -right-1 px-1.5 py-0.5 bg-gradient-to-r from-green-600 to-emerald-600 text-white text-[9px] font-bold rounded-full shadow-sm z-20 animate-pulse">
-                  MỚI
-                </span>
-                {/* Sparkle effect on hover */}
-                <Sparkles className="absolute top-1 right-8 h-3 w-3 text-green-400 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-              </Button>
-            </Link>
           </div>
 
           {(!user || user.role === "guest") && (
@@ -478,14 +458,6 @@ export function Navbar() {
               })}
             </nav>
             
-            <div className="flex gap-2 mt-4 pt-4 border-t border-gray-100">
-              <Link href="/courts" className="flex-1" onClick={() => setMobileOpen(false)}>
-                <Button className="w-full bg-[#1F6B3A] text-white hover:bg-[#185a30] font-semibold rounded-xl shadow-md transition-all duration-200 active:scale-95">
-                  🏸 Đặt sân ngay
-                </Button>
-              </Link>
-            </div>
-
             {/* Mobile Auth */}
             <div className="flex flex-col gap-2 mt-4 pt-4 border-t border-gray-100">
               {user && user.role === "guest" ? (

@@ -12,10 +12,11 @@ import { Textarea } from "@/components/ui/textarea"
 import { formatVND, formatSalesOrderReference } from "@/lib/utils"
 import { salesOrderApi } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { printOrderInvoice, printWarehouseSlip } from "@/lib/print-utils"
 import {
   Search, CheckCircle2, XCircle, Clock, Eye, Receipt,
   ArrowUpFromLine, Package, AlertTriangle, Loader2,
-  DollarSign, ShoppingCart
+  DollarSign, ShoppingCart, Printer
 } from "lucide-react"
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -85,6 +86,45 @@ function mapOrder(o: any): SalesOrder {
 }
 
 // ─── Order Detail Dialog ──────────────────────────────────────────────────────
+function printApprovalOrderInvoice(order: SalesOrder) {
+  printOrderInvoice({
+    code: formatSalesOrderReference(order.id, order.date),
+    date: `${order.date} ${order.time}`,
+    customerName: order.customer,
+    customerPhone: order.phone,
+    paymentMethod: order.paymentMethod,
+    note: order.note,
+    items: order.items.map(item => ({
+      sku: String(item.productId || ""),
+      name: item.name,
+      qty: item.qty,
+      price: item.price,
+    })),
+    subtotal: order.total,
+    discount: order.discount,
+    total: order.finalTotal,
+  })
+}
+
+function printApprovalWarehouseSlip(order: SalesOrder) {
+  printWarehouseSlip({
+    id: `PXK-${order.id.slice(0, 8).toUpperCase()}`,
+    type: "export",
+    date: order.date,
+    warehouse: "Kho bán hàng",
+    note: order.note || "",
+    createdBy: order.creatorName || order.createdBy || "Nhân viên",
+    assignedTo: order.customer,
+    processedBy: order.approvedBy || "Nhân viên",
+    items: order.items.map(item => ({
+      sku: String(item.productId || ""),
+      name: item.name,
+      qty: item.qty,
+      unitCost: item.price,
+    })),
+  })
+}
+
 function OrderDetail({ order }: { order: SalesOrder }) {
   return (
     <div className="space-y-4 mt-2">
@@ -135,6 +175,16 @@ function OrderDetail({ order }: { order: SalesOrder }) {
           )}
         </div>
       )}
+      <div className="flex justify-end gap-2 border-t pt-3">
+        <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={() => printApprovalOrderInvoice(order)}>
+          <Printer className="h-3.5 w-3.5" /> In HD
+        </Button>
+        {(order.status === "approved" || order.status === "exported") && (
+          <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={() => printApprovalWarehouseSlip(order)}>
+            <ArrowUpFromLine className="h-3.5 w-3.5" /> In phieu xuat
+          </Button>
+        )}
+      </div>
     </div>
   )
 }
@@ -552,10 +602,13 @@ export default function ApprovalPage() {
                               </Badge>
                             ))}
                           </div>
-                        </div>
-                        <div className="text-right shrink-0">
-                          <p className="font-bold text-primary">{formatVND(order.finalTotal)}</p>
-                          <Dialog>
+	                        </div>
+	                        <div className="text-right shrink-0">
+	                          <p className="font-bold text-primary">{formatVND(order.finalTotal)}</p>
+	                          <Button variant="outline" size="sm" className="text-xs gap-1 mt-2 mr-2" onClick={() => printApprovalWarehouseSlip(order)}>
+	                            <Printer className="h-3.5 w-3.5" /> In phieu
+	                          </Button>
+	                          <Dialog>
                             <DialogTrigger asChild>
                               <Button size="sm" className="bg-orange-600 hover:bg-orange-700 text-white text-xs gap-1 mt-2">
                                 <Package className="h-3.5 w-3.5" /> Xuất kho
@@ -618,10 +671,16 @@ export default function ApprovalPage() {
                         <span className="font-mono text-sm font-semibold text-green-700">{order.id.slice(0,8).toUpperCase()}</span>
                         <span className="text-xs text-muted-foreground ml-2">{order.customer} • {order.date}</span>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-bold text-green-700">{formatVND(order.finalTotal)}</span>
-                        <StatusBadge status="exported" />
-                      </div>
+	                      <div className="flex items-center gap-2">
+	                        <span className="text-sm font-bold text-green-700">{formatVND(order.finalTotal)}</span>
+	                        <StatusBadge status="exported" />
+	                        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => printApprovalWarehouseSlip(order)}>
+	                          <Printer className="h-3.5 w-3.5" /> In phieu
+	                        </Button>
+	                        <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => printApprovalOrderInvoice(order)}>
+	                          <Receipt className="h-3.5 w-3.5" /> In HD
+	                        </Button>
+	                      </div>
                     </div>
                   ))}
                   {doneExport.length > 20 && (

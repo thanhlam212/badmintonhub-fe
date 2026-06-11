@@ -125,8 +125,8 @@ function VNPayReturnContent() {
             ) : (
               <>
                 <Button asChild className="w-full">
-                  <Link href="/booking">
-                    <ArrowLeft className="h-4 w-4 mr-2" /> Thử đặt sân lại
+                  <Link href="/my-bookings">
+                    <ArrowLeft className="h-4 w-4 mr-2" /> Xem đơn đặt sân & thử lại
                   </Link>
                 </Button>
                 <Button asChild variant="outline" className="w-full">
