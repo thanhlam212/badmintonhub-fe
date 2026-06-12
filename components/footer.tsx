@@ -7,7 +7,6 @@ const footerLinks = [
   { href: "/courts", label: "Đặt sân" },
   { href: "/shop", label: "Cửa hàng" },
   { href: "/my-bookings", label: "Lịch đặt của tôi" },
-  { href: "/admin", label: "Quản trị" },
 ]
 
 const branches = [

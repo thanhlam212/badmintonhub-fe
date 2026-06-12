@@ -131,7 +131,7 @@ const SLIP_KEY = "bh_admin_slips"
 function loadSlips(): AdminWarehouseSlip[] { if(typeof window==="undefined")return[]; try{const r=localStorage.getItem(SLIP_KEY);return r?JSON.parse(r):[]}catch{return[]} }
 function saveSlips(s: AdminWarehouseSlip[]) { if(typeof window==="undefined")return; try{localStorage.setItem(SLIP_KEY,JSON.stringify(s))}catch{} }
 
-let whMap: Record<string, number> = {}
+const whMap: Record<string, number> = {}
 async function ensureWhMap() { if(Object.keys(whMap).length>0)return; try{const r=await inventoryApi.getWarehouses();if(r.success&&r.data)for(const w of r.data)whMap[w.name]=w.id}catch{} }
 
 export function InventoryProvider({ children }: { children: ReactNode }) {

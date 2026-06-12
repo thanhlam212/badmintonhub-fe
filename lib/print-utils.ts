@@ -32,7 +32,7 @@ const PRINT_STYLES = `
 function openPrint(html: string) {
   const w = window.open("", "_blank", "width=800,height=700")
   if (!w) return
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${PRINT_STYLES}</style></head><body>${html}<script>window.onload=function(){window.print();window.close()}<\/script></body></html>`)
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${PRINT_STYLES}</style></head><body>${html}<script>window.onload=function(){window.print();window.close()}</script></body></html>`)
   w.document.close()
 }
 
