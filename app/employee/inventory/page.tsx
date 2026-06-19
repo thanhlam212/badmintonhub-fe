@@ -70,6 +70,7 @@ export default function EmployeeInventory() {
   const [grnDate, setGrnDate] = useState(new Date().toISOString().split("T")[0])
   const [grnNote, setGrnNote] = useState("")
   const [grnSuccess, setGrnSuccess] = useState(false)
+  const [grnSubmitting, setGrnSubmitting] = useState(false)
 
   // Export state
   const [exportRows, setExportRows] = useState<ExportRow[]>([{ sku: "", qty: 1, reason: "" }])
@@ -243,12 +244,24 @@ export default function EmployeeInventory() {
   }
 
   const handleGrnConfirm = async () => {
+    if (grnSubmitting) return
     const validRows = grnRows.filter(r => r.sku && r.qty > 0)
     if (validRows.length === 0) return
+    setGrnSubmitting(true)
     const processingSlip = processingSlipId ? adminSlips.find(s => s.id === processingSlipId) : undefined
     const warehouse = grnWarehouse || myWarehouse
+    const poStatusId = processingSlip?.poRawId
 
-    await ctx.importItems({
+    try {
+      if (poStatusId) {
+        const res = await purchaseOrderApi.updateStatus(poStatusId, "received")
+        if (!res.success) {
+          alert(res.error || "Loi cap nhat PO")
+          return
+        }
+        await ctx.refreshInventory()
+      } else {
+        await ctx.importItems({
       items: validRows.map(r => ({
         sku: r.sku,
         name: inventory.find(it => it.sku === r.sku)?.name || r.name || r.sku,
@@ -259,7 +272,8 @@ export default function EmployeeInventory() {
       note: grnNote,
       date: grnDate,
       operator: user?.fullName || "Nhân viên",
-    })
+        })
+      }
 
     printEmployeeWarehouseSlip({
       id: processingSlip?.id || buildWarehouseSlipCode("PNK", grnPo || grnDate),
@@ -283,15 +297,13 @@ export default function EmployeeInventory() {
     setGrnNote("")
     // Mark admin slip as processed if this import was from an admin slip
     if (processingSlipId) {
-      const slip = processingSlip
       ctx.processAdminSlip(processingSlipId, user?.fullName || "Nhân viên")
-      const poStatusId = slip?.poRawId || slip?.poId
-      if (poStatusId) {
-        await ctx.updatePOStatus(poStatusId, "received").catch(() => {})
-      }
       setProcessingSlipId(null)
     }
     setTimeout(() => setGrnSuccess(false), 3000)
+    } finally {
+      setGrnSubmitting(false)
+    }
   }
 
   const handleExportConfirm = async () => {
@@ -913,7 +925,7 @@ export default function EmployeeInventory() {
                 <Button variant="outline" onClick={() => { setGrnRows([{ sku: "", name: "", qty: 1, cost: 0 }]); setGrnNote(""); setGrnPo(""); setGrnSupplier(""); setProcessingSlipId(null) }}>Huỷ</Button>
                 <Dialog>
                   <DialogTrigger asChild>
-                    <Button className="bg-green-600 hover:bg-green-700 text-white" disabled={!grnRows.some(r => r.sku && r.qty > 0)}>
+                    <Button className="bg-green-600 hover:bg-green-700 text-white" disabled={grnSubmitting || !grnRows.some(r => r.sku && r.qty > 0)}>
                       Xác nhận nhập kho
                     </Button>
                   </DialogTrigger>
@@ -939,7 +951,7 @@ export default function EmployeeInventory() {
                         <Button variant="outline">Huỷ</Button>
                       </DialogClose>
                       <DialogClose asChild>
-                        <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={handleGrnConfirm}>Xác nhận</Button>
+                        <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={handleGrnConfirm} disabled={grnSubmitting}>Xác nhận</Button>
                       </DialogClose>
                     </DialogFooter>
                   </DialogContent>
