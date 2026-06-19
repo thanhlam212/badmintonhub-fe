@@ -67,8 +67,8 @@ function RelatedProductCard({ product, index = 0 }: { product: ApiProduct; index
           )}
           <span className="text-5xl text-muted-foreground/10 font-serif font-bold absolute group-hover:scale-125 transition-transform duration-500">{product.brand[0]}</span>
           <div className="absolute top-2 left-2 flex flex-col gap-1">
-            {product.badges.map(b => (
-              <Badge key={b} className={cn(
+            {product.badges.map((b, badgeIndex) => (
+              <Badge key={`${product.id}-${b}-${badgeIndex}`} className={cn(
                 "text-[10px] rounded-full",
                 b === "Bán chạy" ? "bg-primary text-primary-foreground" :
                   b === "Mới" ? "bg-secondary text-secondary-foreground" :
@@ -158,8 +158,8 @@ function ImageGallery({ images, name, brand, badges, category, maxTensionLimit =
 
         {/* Badges */}
         <div className="absolute top-4 left-4 flex flex-col gap-1.5 z-10">
-          {badges.map(b => (
-            <Badge key={b} className={cn(
+          {badges.map((b, badgeIndex) => (
+            <Badge key={`${b}-${badgeIndex}`} className={cn(
               "text-xs px-2.5 py-1",
               b === "Bán chạy" ? "bg-primary text-primary-foreground" :
                 b === "Mới" ? "bg-secondary text-secondary-foreground" :

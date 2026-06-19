@@ -138,6 +138,7 @@ export interface ApiBooking {
   userId: string | null
   customerName: string
   customerPhone: string
+  customerEmail?: string | null
   bookingDate: string
   timeStart: string
   timeEnd: string
@@ -146,6 +147,10 @@ export interface ApiBooking {
   status: string
   paymentMethod: string | null
   note: string | null
+  cancellationReason?: string | null
+  cancelledAt?: string | null
+  cancelledByName?: string | null
+  cancelledByRole?: string | null
   createdAt: string
   pricePerHour: number
   fixedScheduleId: string | null
@@ -239,6 +244,12 @@ function extractProductMeta(description?: string | null) {
 
 function transformProduct(raw: any): ApiProduct {
   const meta = extractProductMeta(raw.description)
+  const badges = Array.from(new Set<string>(
+    (raw.badges || [])
+      .map((b: any) => typeof b === 'string' ? b : b.badge)
+      .filter((badge: unknown): badge is string => typeof badge === 'string' && badge.length > 0),
+  ))
+
   return {
     id: raw.id,
     sku: raw.sku,
@@ -255,7 +266,7 @@ function transformProduct(raw: any): ApiProduct {
     features: raw.features || [],
     inStock: raw.in_stock ?? raw.inStock ?? true,
     gender: raw.gender,
-    badges: raw.badges?.map((b: any) => typeof b === 'string' ? b : b.badge) || [],
+    badges,
     supplierName: raw.supplier_name ?? meta.supplierName ?? null,
   }
 }
@@ -289,6 +300,7 @@ function transformBooking(raw: any): ApiBooking {
     userId:      raw.userId      ?? raw.user_id      ?? null,
     customerName:  raw.customerName  || raw.customer_name  || '',
     customerPhone: raw.customerPhone || raw.customer_phone || '',
+    customerEmail: raw.customerEmail || raw.customer_email || null,
     bookingDate:   raw.bookingDate   || raw.booking_date   || '',
     timeStart:     raw.timeStart     || raw.time_start     || '',
     timeEnd:       raw.timeEnd       || raw.time_end       || '',
@@ -297,6 +309,10 @@ function transformBooking(raw: any): ApiBooking {
     status:  raw.status || '',
     paymentMethod: raw.paymentMethod || raw.payment_method || null,
     note:    raw.note || null,
+    cancellationReason: raw.cancellationReason || raw.cancellation_reason || null,
+    cancelledAt: raw.cancelledAt || raw.cancelled_at || null,
+    cancelledByName: raw.cancelledByName || raw.cancelled_by_name || null,
+    cancelledByRole: raw.cancelledByRole || raw.cancelled_by_role || null,
     createdAt: raw.createdAt || raw.created_at || '',
     pricePerHour: parseFloat(String(raw.pricePerHour ?? raw.price_per_hour ?? 0)),
     fixedScheduleId: raw.fixedScheduleId || raw.fixed_schedule_id || null,
@@ -707,25 +723,43 @@ export const bookingApi = {
   // PATCH /api/bookings/:id/confirm
   confirm: async (id: string) => {
     const res = await apiFetch<any>(`/bookings/${id}/confirm`, { method: 'PATCH' })
-    return { success: res.success, error: res.message }
+    if (res.success && res.data) {
+      return { success: true, booking: transformBooking(res.data) }
+    }
+    return { success: false, error: res.message }
   },
 
   // PATCH /api/bookings/:id/cancel
-  cancel: async (id: string) => {
-    const res = await apiFetch<any>(`/bookings/${id}/cancel`, { method: 'PATCH' })
-    return { success: res.success, error: res.message }
+  cancel: async (id: string, payload?: { reason?: string }) => {
+    const res = await apiFetch<any>(`/bookings/${id}/cancel`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload || {}),
+    })
+    if (res.success && res.data) {
+      return { success: true, booking: transformBooking(res.data) }
+    }
+    return { success: false, error: res.message }
   },
 
   // PATCH /api/bookings/:id/status — Admin đổi trạng thái
-  updateStatus: async (id: string, status: string) => {
+  updateStatus: async (id: string, status: string, payload?: { reason?: string }) => {
     // Map từ action → endpoint đúng
     if (status === 'confirmed') {
       const res = await apiFetch<any>(`/bookings/${id}/confirm`, { method: 'PATCH' })
-      return { success: res.success, error: res.message }
+      if (res.success && res.data) {
+        return { success: true, booking: transformBooking(res.data) }
+      }
+      return { success: false, error: res.message }
     }
     if (status === 'cancelled') {
-      const res = await apiFetch<any>(`/bookings/${id}/cancel`, { method: 'PATCH' })
-      return { success: res.success, error: res.message }
+      const res = await apiFetch<any>(`/bookings/${id}/cancel`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload || {}),
+      })
+      if (res.success && res.data) {
+        return { success: true, booking: transformBooking(res.data) }
+      }
+      return { success: false, error: res.message }
     }
     // playing, completed → dùng /status
     const res = await apiFetch<any>(`/bookings/${id}/status`, {

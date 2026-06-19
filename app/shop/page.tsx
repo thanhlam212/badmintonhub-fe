@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge"
 import { Star, Heart, ShoppingCart, Search, Minus, Plus, ChevronDown, ChevronRight, Package, X, SlidersHorizontal, Grid3X3, LayoutList, Filter, Eye, Truck, Shield, RotateCcw, Check } from "lucide-react"
 import { useState, useMemo, useEffect, useRef } from "react"
 import { useCart } from "@/lib/cart-context"
+import Image from "next/image"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { formatVND } from "@/lib/utils"
@@ -27,6 +28,88 @@ import {
 } from "@/components/ui/pagination"
 
 const SHOP_PAGE_SIZE = 12
+
+const PRODUCT_IMAGE_FALLBACKS: Record<string, string> = {
+  "Vá»£t cáº§u lÃ´ng": "https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?w=800&q=80",
+  "Cáº§u lÃ´ng": "https://images.unsplash.com/photo-1544117519-31a4b719223d?w=800&q=80",
+  "GiÃ y cáº§u lÃ´ng": "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=800&q=80",
+  "TÃºi & Balo": "https://images.unsplash.com/photo-1553062407-98eeb64c6a62?w=800&q=80",
+  "DÃ¢y Ä‘an": "https://images.unsplash.com/photo-1593341646782-e0b495cff86d?w=800&q=80",
+  "Quáº§n Ã¡o": "https://images.unsplash.com/photo-1571945153237-4929e783af4a?w=800&q=80",
+}
+
+function _getProductFallbackImage(product: ApiProduct) {
+  return PRODUCT_IMAGE_FALLBACKS[product.category] || "https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?w=800&q=80"
+}
+
+const PRODUCT_IMAGE_FALLBACK_BY_KIND = {
+  racket: "https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?w=800&q=80",
+  shuttle: "https://images.unsplash.com/photo-1544117519-31a4b719223d?w=800&q=80",
+  shoes: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=800&q=80",
+  bag: "https://images.unsplash.com/photo-1553062407-98eeb64c6a62?w=800&q=80",
+  strings: "https://images.unsplash.com/photo-1593341646782-e0b495cff86d?w=800&q=80",
+  apparel: "https://images.unsplash.com/photo-1571945153237-4929e783af4a?w=800&q=80",
+}
+
+function toSearchableProductText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase()
+}
+
+function getProductImageFallbackByKind(product: ApiProduct) {
+  const text = toSearchableProductText(`${product.name} ${product.category}`)
+
+  if (text.includes("day dan") || /\bbg\d+/.test(text)) return PRODUCT_IMAGE_FALLBACK_BY_KIND.strings
+  if (text.includes("giay") || text.includes("power cushion") || text.includes("a362")) return PRODUCT_IMAGE_FALLBACK_BY_KIND.shoes
+  if (text.includes("tui") || text.includes("balo") || text.includes("absq") || text.includes("ba82226")) return PRODUCT_IMAGE_FALLBACK_BY_KIND.bag
+  if (text.includes("quan ao") || text.includes("ao ") || text.includes("vay") || text.includes("10559") || text.includes("askr")) return PRODUCT_IMAGE_FALLBACK_BY_KIND.apparel
+  if (text.includes("mavis") || text.includes("as-50")) return PRODUCT_IMAGE_FALLBACK_BY_KIND.shuttle
+
+  return PRODUCT_IMAGE_FALLBACK_BY_KIND.racket
+}
+
+function ProductImage({
+  product,
+  className,
+  sizes,
+}: {
+  product: ApiProduct
+  className?: string
+  sizes: string
+}) {
+  const fallbackSrc = getProductImageFallbackByKind(product)
+  const [src, setSrc] = useState(product.image || fallbackSrc)
+  const [hidden, setHidden] = useState(false)
+
+  useEffect(() => {
+    setSrc(product.image || fallbackSrc)
+    setHidden(false)
+  }, [fallbackSrc, product.image])
+
+  if (hidden) return null
+
+  return (
+    <Image
+      src={src}
+      alt={product.name}
+      fill
+      loading="eager"
+      sizes={sizes}
+      className={className}
+      onError={() => {
+        if (src !== fallbackSrc) {
+          setSrc(fallbackSrc)
+        } else {
+          setHidden(true)
+        }
+      }}
+    />
+  )
+}
 
 // CartItem type from shared context
 import type { CartItem } from "@/lib/cart-context"
@@ -223,11 +306,16 @@ function ProductCard({ product, onAddToCart, onViewDetail, wishlist, onToggleWis
     >
       <Card className="group overflow-hidden hover:-translate-y-1.5 transition-all duration-300 hover:shadow-xl cursor-pointer" onClick={onViewDetail}>
         <div className="relative aspect-square bg-gradient-to-br from-muted to-background flex items-center justify-center overflow-hidden">
-          <span className="text-5xl text-muted-foreground/15 font-serif font-bold group-hover:scale-110 transition-transform duration-500">{product.brand[0]}</span>
+          <span className="absolute z-0 text-5xl text-muted-foreground/15 font-serif font-bold group-hover:scale-110 transition-transform duration-500">{product.brand[0]}</span>
+          <ProductImage
+            product={product}
+            sizes="(max-width: 768px) 100vw, (max-width: 1200px) 33vw, 25vw"
+            className="z-10 object-contain p-5 transition-transform duration-500 group-hover:scale-105"
+          />
           {/* Badges */}
-          <div className="absolute top-2 left-2 flex flex-col gap-1">
-            {product.badges.map(b => (
-              <span key={b} className={cn(
+          <div className="absolute top-2 left-2 z-20 flex flex-col gap-1">
+            {product.badges.map((b, badgeIndex) => (
+              <span key={`${product.id}-${b}-${badgeIndex}`} className={cn(
                 "text-xs font-semibold px-2 py-0.5 rounded-full",
                 b === 'Bán chạy' ? 'bg-primary text-primary-foreground' :
                   b === 'Mới' ? 'bg-secondary text-secondary-foreground' :
@@ -238,12 +326,12 @@ function ProductCard({ product, onAddToCart, onViewDetail, wishlist, onToggleWis
           {/* Wishlist */}
           <button
             onClick={(e) => { e.stopPropagation(); onToggleWishlist() }}
-            className="absolute top-2 right-2 p-1.5 rounded-full bg-card/80 hover:bg-card transition-all duration-200 hover:scale-110"
+            className="absolute top-2 right-2 z-20 p-1.5 rounded-full bg-card/80 hover:bg-card transition-all duration-200 hover:scale-110"
           >
             <Heart className={cn("h-4 w-4 transition-all duration-200", wishlist ? "fill-red-500 text-red-500 scale-110" : "text-muted-foreground")} />
           </button>
           {/* Hover overlay */}
-          <div className="absolute inset-x-0 bottom-0 translate-y-full group-hover:translate-y-0 transition-transform duration-250 flex">
+          <div className="absolute inset-x-0 bottom-0 z-20 translate-y-full group-hover:translate-y-0 transition-transform duration-250 flex">
             <Button onClick={(e) => { e.stopPropagation(); onViewDetail() }} variant="secondary" className="flex-1 rounded-none font-semibold gap-1 h-10">
               <Eye className="h-4 w-4" /> Xem chi tiết
             </Button>
@@ -308,10 +396,15 @@ function ProductDetailDialog({ product, open, onOpenChange, onAddToCart, wishlis
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mt-2">
           {/* Product Image */}
           <div className="relative aspect-square rounded-xl bg-gradient-to-br from-muted to-background flex items-center justify-center overflow-hidden">
-            <span className="text-7xl text-muted-foreground/10 font-serif font-bold">{product.brand[0]}</span>
-            <div className="absolute top-3 left-3 flex flex-col gap-1">
-              {product.badges.map(b => (
-                <Badge key={b} className={cn(
+            <span className="absolute z-0 text-7xl text-muted-foreground/10 font-serif font-bold">{product.brand[0]}</span>
+            <ProductImage
+              product={product}
+              sizes="(max-width: 640px) 100vw, 50vw"
+              className="z-10 object-contain p-6"
+            />
+            <div className="absolute top-3 left-3 z-20 flex flex-col gap-1">
+              {product.badges.map((b, badgeIndex) => (
+                <Badge key={`${product.id}-${b}-${badgeIndex}`} className={cn(
                   b === 'Bán chạy' ? 'bg-primary text-primary-foreground' :
                     b === 'Mới' ? 'bg-secondary text-secondary-foreground' :
                       'bg-red-500 text-white'
@@ -320,7 +413,7 @@ function ProductDetailDialog({ product, open, onOpenChange, onAddToCart, wishlis
             </div>
             <button
               onClick={onToggleWishlist}
-              className="absolute top-3 right-3 p-2 rounded-full bg-card/80 hover:bg-card transition-colors"
+              className="absolute top-3 right-3 z-20 p-2 rounded-full bg-card/80 hover:bg-card transition-colors"
             >
               <Heart className={cn("h-5 w-5", wishlist ? "fill-red-500 text-red-500" : "text-muted-foreground")} />
             </button>

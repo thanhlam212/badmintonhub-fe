@@ -578,7 +578,10 @@ export default function BookingPage() {
 
       if (result.success && result.booking) {
         const completedData = {
-          id: result.booking.id, courtName: booking.courtName,
+          id: result.booking.id,
+          bookingCode: result.booking.bookingCode,
+          createdAt: result.booking.createdAt,
+          courtName: booking.courtName,
           courtType: booking.courtType, branch: booking.branch,
           courtAddress: booking.courtAddress, courtLat: booking.courtLat, courtLng: booking.courtLng,
           date: booking.date, timeRange: booking.timeRange,

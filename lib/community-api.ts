@@ -224,6 +224,7 @@ export interface CreateCommunityMatchPayload {
   booking_id: string
   title: string
   level: CommunityLevel
+  current_players: number
   needed_players: number
   price_per_person: number
   note?: string
@@ -386,6 +387,7 @@ export const communityApi = {
 
   getChatRooms: async (): Promise<CommunityChatRoomsResponse> => {
     const res = await apiFetch<CommunityChatRoomsResponse>('/community/chat/rooms')
+    if (!res.success) throw new Error(res.message || 'Khong tai duoc phong chat')
     return (res.data as CommunityChatRoomsResponse) || { rooms: [] }
   },
 
@@ -402,6 +404,7 @@ export const communityApi = {
     if (query?.limit) params.set('limit', String(query.limit))
     const suffix = params.size ? `?${params.toString()}` : ''
     const res = await apiFetch<CommunityChatMessagesResponse>(`/community/chat/rooms/${roomId}/messages${suffix}`)
+    if (!res.success) throw new Error(res.message || 'Khong tai duoc tin nhan')
     return (res.data as CommunityChatMessagesResponse) || { messages: [] }
   },
 

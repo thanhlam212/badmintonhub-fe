@@ -16,6 +16,36 @@ import { useAuth } from '@/lib/auth-context'
 import { cn } from '@/lib/utils'
 import { CommunityAvatar } from '@/components/community/primitives'
 
+const CHAT_MESSAGE_CACHE_PREFIX = 'communityChat.messages'
+
+function getChatMessageCacheKey(userId: string, roomId: string) {
+  return `${CHAT_MESSAGE_CACHE_PREFIX}:${userId}:${roomId}`
+}
+
+function readCachedChatMessages(userId: string, roomId: string) {
+  if (typeof window === 'undefined') return []
+
+  try {
+    const raw = window.localStorage.getItem(getChatMessageCacheKey(userId, roomId))
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed as CommunityChatMessage[] : []
+  } catch {
+    return []
+  }
+}
+
+function writeCachedChatMessages(userId: string, roomId: string, messages: CommunityChatMessage[]) {
+  if (typeof window === 'undefined' || !userId || !roomId) return
+
+  try {
+    const stableMessages = messages.filter((message) => !message.pending).slice(-200)
+    window.localStorage.setItem(getChatMessageCacheKey(userId, roomId), JSON.stringify(stableMessages))
+  } catch {
+    // Cache is best-effort only.
+  }
+}
+
 export default function CommunityChatPage() {
   return (
     <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Đang mở chat...</div>}>
@@ -27,7 +57,7 @@ export default function CommunityChatPage() {
 function CommunityChatContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { user } = useAuth()
+  const { user, isLoading: authLoading } = useAuth()
   const requestedRoomId = searchParams.get('room')
   const [rooms, setRooms] = useState<CommunityChatRoom[]>([])
   const [activeRoomId, setActiveRoomId] = useState(requestedRoomId || '')
@@ -41,6 +71,7 @@ function CommunityChatContent() {
   const messageListRef = useRef<HTMLDivElement | null>(null)
   const socketRef = useRef<Socket<CommunityChatSocketEvents, Record<string, never>> | null>(null)
   const activeRoomIdRef = useRef(activeRoomId)
+  const messagesRoomIdRef = useRef(activeRoomId)
   const lastMessageAtRef = useRef('')
   const joinedRoomRef = useRef('')
   const lastResumeSyncAtRef = useRef(0)
@@ -156,6 +187,7 @@ function CommunityChatContent() {
             lastMessageAtRef.current = latest.createdAt
             syncRoomLatestMessage(roomId, latest)
           }
+          if (user?.id) writeCachedChatMessages(user.id, roomId, merged)
           return merged
         })
         if (res.messages.length) scrollToBottom()
@@ -163,7 +195,9 @@ function CommunityChatContent() {
       }
 
       const normalizedMessages = res.messages.map(normalizeMessage)
+      messagesRoomIdRef.current = roomId
       setMessages(normalizedMessages)
+      if (user?.id) writeCachedChatMessages(user.id, roomId, normalizedMessages)
       const latest = normalizedMessages[normalizedMessages.length - 1]
       lastMessageAtRef.current = latest?.createdAt || ''
       if (latest) syncRoomLatestMessage(roomId, latest)
@@ -198,7 +232,9 @@ function CommunityChatContent() {
         if (response?.ok) {
           joinedRoomRef.current = roomId
           const normalizedMessages = (response.messages || []).map(normalizeMessage)
+          messagesRoomIdRef.current = roomId
           setMessages(normalizedMessages)
+          if (user?.id) writeCachedChatMessages(user.id, roomId, normalizedMessages)
           const latest = normalizedMessages[normalizedMessages.length - 1]
           lastMessageAtRef.current = latest?.createdAt || ''
           if (latest) syncRoomLatestMessage(roomId, latest)
@@ -219,6 +255,24 @@ function CommunityChatContent() {
     activeRoomIdRef.current = activeRoomId
   }, [activeRoomId])
 
+  useEffect(() => {
+    if (!user?.id || !activeRoomId) return
+
+    const cachedMessages = readCachedChatMessages(user.id, activeRoomId).map(normalizeMessage)
+    if (!cachedMessages.length) {
+      messagesRoomIdRef.current = activeRoomId
+      setMessages([])
+      lastMessageAtRef.current = ''
+      return
+    }
+
+    messagesRoomIdRef.current = activeRoomId
+    setMessages(cachedMessages)
+    const latest = cachedMessages[cachedMessages.length - 1]
+    lastMessageAtRef.current = latest?.createdAt || ''
+    scrollToBottom(true)
+  }, [user?.id, activeRoomId])
+
   async function loadChatRooms(preferredRoomId?: string) {
     const res = await communityApi.getChatRooms()
     setRooms(res.rooms)
@@ -238,7 +292,11 @@ function CommunityChatContent() {
   }
 
   useEffect(() => {
-    if (!user) return
+    if (authLoading) return
+    if (!user) {
+      router.replace('/login')
+      return
+    }
     if (user.role === 'guest') {
       router.replace('/login')
       return
@@ -255,7 +313,7 @@ function CommunityChatContent() {
     return () => {
       mounted = false
     }
-  }, [requestedRoomId, router, user])
+  }, [authLoading, requestedRoomId, router, user])
 
   useEffect(() => {
     if (!requestedRoomId || requestedRoomId === activeRoomId) return
@@ -263,7 +321,7 @@ function CommunityChatContent() {
   }, [requestedRoomId, activeRoomId])
 
   useEffect(() => {
-    if (!user || user.role === 'guest') return
+    if (authLoading || !user || user.role === 'guest') return
 
     const socket = createCommunityChatSocket()
     socketRef.current = socket
@@ -293,6 +351,8 @@ function CommunityChatContent() {
         const merged = mergeMessages(current, [message], clientTempId)
         const latest = merged[merged.length - 1]
         if (latest) lastMessageAtRef.current = latest.createdAt
+        messagesRoomIdRef.current = roomId
+        if (user?.id) writeCachedChatMessages(user.id, roomId, merged)
         return merged
       })
       scrollToBottom()
@@ -313,14 +373,15 @@ function CommunityChatContent() {
       joinedRoomRef.current = ''
       setSocketConnected(false)
     }
-  }, [user])
+  }, [authLoading, user])
 
   useEffect(() => {
+    if (authLoading || !user || user.role === 'guest') return
     joinActiveRoom(activeRoomId).catch(() => {})
-  }, [activeRoomId])
+  }, [activeRoomId, authLoading, user])
 
   useEffect(() => {
-    if (!user || user.role === 'guest') return
+    if (authLoading || !user || user.role === 'guest') return
 
     let mounted = true
     const roomTimer = window.setInterval(async () => {
@@ -355,10 +416,10 @@ function CommunityChatContent() {
       window.clearInterval(roomTimer)
       window.clearInterval(syncTimer)
     }
-  }, [requestedRoomId, socketConnected, user])
+  }, [authLoading, requestedRoomId, socketConnected, user])
 
   useEffect(() => {
-    if (!user || user.role === 'guest') return
+    if (authLoading || !user || user.role === 'guest') return
 
     const refreshAfterResume = async () => {
       const now = Date.now()
@@ -393,7 +454,7 @@ function CommunityChatContent() {
       window.removeEventListener('online', handlePageShow)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [user, requestedRoomId])
+  }, [authLoading, user, requestedRoomId])
 
   const activeRoom = useMemo(
     () => rooms.find((room) => room.id === activeRoomId) || null,
@@ -451,6 +512,8 @@ function CommunityChatContent() {
             const merged = mergeMessages(current, [message], response?.clientTempId || clientTempId)
             const latest = merged[merged.length - 1]
             if (latest) lastMessageAtRef.current = latest.createdAt
+            messagesRoomIdRef.current = activeRoomId
+            if (user?.id) writeCachedChatMessages(user.id, activeRoomId, merged)
             return merged
           })
           syncRoomLatestMessage(activeRoomId, message)
@@ -465,6 +528,8 @@ function CommunityChatContent() {
           const merged = mergeMessages(current, [res.message!], clientTempId)
           const latest = merged[merged.length - 1]
           if (latest) lastMessageAtRef.current = latest.createdAt
+          messagesRoomIdRef.current = activeRoomId
+          if (user?.id) writeCachedChatMessages(user.id, activeRoomId, merged)
           return merged
         })
         syncRoomLatestMessage(activeRoomId, res.message)

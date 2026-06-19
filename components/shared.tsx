@@ -152,6 +152,48 @@ function buildCheckinNotifications(bookings: ApiBooking[], now = new Date()): Ap
   })
 }
 
+function getCancellerRoleLabel(role?: string | null) {
+  switch (role) {
+    case "admin":
+      return "Admin"
+    case "employee":
+      return "Nhân viên"
+    case "user":
+      return "Khách hàng"
+    default:
+      return "Hệ thống"
+  }
+}
+
+function buildCancellationNotifications(bookings: ApiBooking[], now = new Date()): AppNotification[] {
+  const recentWindowMs = 7 * 24 * 60 * 60 * 1000
+
+  return bookings.flatMap<AppNotification>((booking) => {
+    if (booking.status !== "cancelled" || !booking.cancelledAt) return []
+
+    const cancelledAt = new Date(booking.cancelledAt)
+    if (Number.isNaN(cancelledAt.getTime())) return []
+    if (now.getTime() - cancelledAt.getTime() > recentWindowMs) return []
+
+    const bookingRef = booking.bookingCode || booking.id.slice(0, 8)
+    const courtText = [booking.courtName || "Sân", booking.branchName].filter(Boolean).join(" - ")
+    const customerText = [booking.customerName || "Khách", booking.customerPhone].filter(Boolean).join(" | ")
+    const reasonText = booking.cancellationReason?.trim() || "Không có lý do cụ thể."
+    const cancelledBy = [getCancellerRoleLabel(booking.cancelledByRole), booking.cancelledByName].filter(Boolean).join(" - ")
+
+    return [{
+      id: `booking-cancelled-${booking.id}-${booking.cancelledAt}`,
+      title: "Booking vừa bị hủy",
+      message: `${courtText} đã bị hủy${cancelledBy ? ` bởi ${cancelledBy}` : ""}. Booking ${bookingRef}${customerText ? ` - ${customerText}` : ""}. Lý do: ${reasonText}`,
+      time: `Hủy lúc ${cancelledAt.toLocaleString("vi-VN")}`,
+      category: "booking" as const,
+      severity: "warning" as const,
+      createdAt: cancelledAt.getTime(),
+      dismissible: true,
+    }]
+  }).sort((a, b) => b.createdAt - a.createdAt)
+}
+
 // Default notifications (will be replaced by real API later)
 const defaultNotifications = [
   { id: 1, title: "Đơn hàng mới", message: "Có 3 đơn hàng mới cần xử lý", time: "5 phút trước", read: false, priority: "high" as const },
@@ -165,6 +207,7 @@ export function BookingStatusBadge({ status }: { status: string }) {
     pending: { label: "Chờ xác nhận", className: "bg-amber-100 text-amber-800 border-amber-200", icon: <Clock className="h-3 w-3" /> },
     deposited: { label: "Đã đặt cọc", className: "bg-orange-100 text-orange-800 border-orange-200", icon: <CheckCircle2 className="h-3 w-3" /> },
     confirmed: { label: "Đã xác nhận", className: "bg-blue-100 text-blue-800 border-blue-200", icon: <CheckCircle2 className="h-3 w-3" /> },
+    missed_checkin: { label: "Chưa check-in", className: "bg-red-100 text-red-800 border-red-200", icon: <AlertTriangle className="h-3 w-3" /> },
     playing: { label: "Đang chơi", className: "bg-green-100 text-green-800 border-green-200", icon: <Play className="h-3 w-3" /> },
     completed: { label: "Hoàn thành", className: "bg-gray-100 text-gray-600 border-gray-200", icon: <CheckCircle2 className="h-3 w-3" /> },
     cancelled: { label: "Đã huỷ", className: "bg-red-100 text-red-800 border-red-200", icon: <XCircle className="h-3 w-3" /> },
@@ -258,7 +301,13 @@ export function NotificationBell() {
     setIsLoading(true)
     try {
       const res = await bookingApi.getAll()
-      const generated = buildCheckinNotifications(res.bookings || [])
+      const generated = [
+        ...buildCheckinNotifications(res.bookings || []),
+        ...buildCancellationNotifications(res.bookings || []),
+      ].sort((a, b) => {
+        const severityOrder: Record<NotificationSeverity, number> = { critical: 0, warning: 1, info: 2 }
+        return severityOrder[a.severity] - severityOrder[b.severity] || b.createdAt - a.createdAt
+      })
       setNotifs(generated.filter((item) => item.severity === "critical" || !dismissedSet.has(item.id)))
     } catch (error) {
       console.error("Failed to load booking notifications", error)
@@ -282,7 +331,12 @@ export function NotificationBell() {
   useEffect(() => {
     loadNotifications()
     const timer = window.setInterval(loadNotifications, 60000)
-    return () => window.clearInterval(timer)
+    const refresh = () => loadNotifications()
+    window.addEventListener("bh-notifications-refresh", refresh)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener("bh-notifications-refresh", refresh)
+    }
   }, [loadNotifications])
 
   const persistDismissedIds = (nextIds: string[]) => {

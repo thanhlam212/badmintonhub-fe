@@ -88,10 +88,10 @@ function BookingDetailDialog({ booking }: { booking: ApiBooking }) {
   }
 
   const statusSteps = [
-    { key: "pending",   label: "Chờ xác nhận" },
+    { key: "pending", label: "Chờ xác nhận" },
     { key: "deposited", label: "Đã đặt cọc" },
     { key: "confirmed", label: "Đã xác nhận" },
-    { key: "playing",   label: "Đang chơi" },
+    { key: "playing", label: "Đang chơi" },
     { key: "completed", label: "Hoàn thành" },
   ]
   const currentStep = statusSteps.findIndex(s => s.key === booking.status)
@@ -417,19 +417,19 @@ interface FixedScheduleDetail extends FixedScheduleSummary {
 }
 
 const FIXED_STATUS_CONFIG: Record<string, { label: string; color: string }> = {
-  pending:   { label: "Chờ thanh toán", color: "bg-amber-100 text-amber-800 border-amber-200" },
-  deposited: { label: "Đã cọc",         color: "bg-blue-100 text-blue-800 border-blue-200" },
-  confirmed: { label: "Đã xác nhận",    color: "bg-green-100 text-green-800 border-green-200" },
-  completed: { label: "Hoàn thành",     color: "bg-gray-100 text-gray-600 border-gray-200" },
-  cancelled: { label: "Đã hủy",         color: "bg-red-100 text-red-600 border-red-200" },
+  pending: { label: "Chờ thanh toán", color: "bg-amber-100 text-amber-800 border-amber-200" },
+  deposited: { label: "Đã cọc", color: "bg-blue-100 text-blue-800 border-blue-200" },
+  confirmed: { label: "Đã xác nhận", color: "bg-green-100 text-green-800 border-green-200" },
+  completed: { label: "Hoàn thành", color: "bg-gray-100 text-gray-600 border-gray-200" },
+  cancelled: { label: "Đã hủy", color: "bg-red-100 text-red-600 border-red-200" },
 }
 
 const OCC_STATUS_CONFIG: Record<string, { label: string; icon: React.ReactNode; rowClass: string; badgeClass: string }> = {
-  scheduled:  { label: "Sắp tới",    icon: <Clock className="h-3 w-3" />,        rowClass: "bg-white",         badgeClass: "bg-green-50 text-green-700 border-green-100" },
-  completed:  { label: "Hoàn thành", icon: <CheckCircle2 className="h-3 w-3" />, rowClass: "bg-muted/30",      badgeClass: "bg-blue-50 text-blue-600 border-blue-100" },
-  skipped:    { label: "Bỏ qua",     icon: <SkipForward className="h-3 w-3" />,  rowClass: "bg-muted/30",      badgeClass: "bg-gray-100 text-gray-500 border-gray-200" },
-  rescheduled:{ label: "Đổi lịch",   icon: <RefreshCw className="h-3 w-3" />,    rowClass: "bg-blue-50/30",    badgeClass: "bg-blue-50 text-blue-600 border-blue-100" },
-  cancelled:  { label: "Đã hủy",     icon: <XCircle className="h-3 w-3" />,      rowClass: "bg-red-50/20",     badgeClass: "bg-red-50 text-red-500 border-red-100" },
+  scheduled: { label: "Sắp tới", icon: <Clock className="h-3 w-3" />, rowClass: "bg-white", badgeClass: "bg-green-50 text-green-700 border-green-100" },
+  completed: { label: "Hoàn thành", icon: <CheckCircle2 className="h-3 w-3" />, rowClass: "bg-muted/30", badgeClass: "bg-blue-50 text-blue-600 border-blue-100" },
+  skipped: { label: "Bỏ qua", icon: <SkipForward className="h-3 w-3" />, rowClass: "bg-muted/30", badgeClass: "bg-gray-100 text-gray-500 border-gray-200" },
+  rescheduled: { label: "Đổi lịch", icon: <RefreshCw className="h-3 w-3" />, rowClass: "bg-blue-50/30", badgeClass: "bg-blue-50 text-blue-600 border-blue-100" },
+  cancelled: { label: "Đã hủy", icon: <XCircle className="h-3 w-3" />, rowClass: "bg-red-50/20", badgeClass: "bg-red-50 text-red-500 border-red-100" },
 }
 
 // ─── Fixed Schedule Card ──────────────────────────────────────
@@ -491,10 +491,10 @@ function FixedScheduleCard({
           {/* Row 3: Stats */}
           <div className="grid grid-cols-4 gap-2">
             {[
-              { label: "Tổng",    value: schedule.occurrenceSummary.total,     color: "text-foreground" },
+              { label: "Tổng", value: schedule.occurrenceSummary.total, color: "text-foreground" },
               { label: "Còn lại", value: schedule.occurrenceSummary.scheduled, color: "text-green-600" },
-              { label: "Xong",    value: schedule.occurrenceSummary.completed, color: "text-blue-600" },
-              { label: "Bỏ",      value: schedule.occurrenceSummary.skipped,   color: "text-muted-foreground" },
+              { label: "Xong", value: schedule.occurrenceSummary.completed, color: "text-blue-600" },
+              { label: "Bỏ", value: schedule.occurrenceSummary.skipped, color: "text-muted-foreground" },
             ].map(stat => (
               <div key={stat.label} className="bg-muted/60 rounded-lg p-2 text-center">
                 <p className={cn("text-base font-bold", stat.color)}>{stat.value}</p>
@@ -530,12 +530,12 @@ function FixedScheduleCard({
               {schedule.invoice && (
                 <span className={cn(
                   "text-xs px-2 py-0.5 rounded-full border",
-                  schedule.invoice.status === "paid"      ? "bg-green-50 text-green-600 border-green-200" :
-                  schedule.invoice.status === "deposited" ? "bg-blue-50 text-blue-600 border-blue-200" :
-                  "bg-amber-50 text-amber-600 border-amber-200"
+                  schedule.invoice.status === "paid" ? "bg-green-50 text-green-600 border-green-200" :
+                    schedule.invoice.status === "deposited" ? "bg-blue-50 text-blue-600 border-blue-200" :
+                      "bg-amber-50 text-amber-600 border-amber-200"
                 )}>
                   {schedule.invoice.status === "paid" ? "Đã thanh toán" :
-                   schedule.invoice.status === "deposited" ? "Đã cọc" : "Chưa thanh toán"}
+                    schedule.invoice.status === "deposited" ? "Đã cọc" : "Chưa thanh toán"}
                 </span>
               )}
               {adjustmentLeft > 0 && (
@@ -642,10 +642,10 @@ function FixedScheduleDetailDialog({
                       : "bg-muted text-muted-foreground hover:bg-muted/80"
                   )}
                 >
-                  {f === "all"       ? `Tất cả (${schedule.occurrences.length})` :
-                   f === "scheduled" ? `Sắp tới (${schedule.occurrences.filter(o => o.status === "scheduled").length})` :
-                   f === "completed" ? `Xong (${schedule.occurrences.filter(o => o.status === "completed").length})` :
-                   `Bỏ qua (${schedule.occurrences.filter(o => o.status === "skipped").length})`}
+                  {f === "all" ? `Tất cả (${schedule.occurrences.length})` :
+                    f === "scheduled" ? `Sắp tới (${schedule.occurrences.filter(o => o.status === "scheduled").length})` :
+                      f === "completed" ? `Xong (${schedule.occurrences.filter(o => o.status === "completed").length})` :
+                        `Bỏ qua (${schedule.occurrences.filter(o => o.status === "skipped").length})`}
                 </button>
               ))}
             </div>
@@ -942,11 +942,11 @@ function ProfileSettingsForm() {
 /* ─── Order History ─────────────────────────────────────────── */
 const paymentLabels: Record<string, string> = { cod: "COD", momo: "MoMo", vnpay: "VNPay", bank: "Chuyển khoản" }
 const orderStatusConfig: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
-  pending:    { label: "Chờ xử lý",  color: "bg-amber-100 text-amber-800 border-amber-200",    icon: <Clock className="h-3.5 w-3.5" /> },
-  processing: { label: "Đang xử lý", color: "bg-blue-100 text-blue-800 border-blue-200",       icon: <Package className="h-3.5 w-3.5" /> },
-  shipping:   { label: "Đang giao",  color: "bg-purple-100 text-purple-800 border-purple-200", icon: <Truck className="h-3.5 w-3.5" /> },
-  delivered:  { label: "Đã giao",    color: "bg-green-100 text-green-800 border-green-200",    icon: <CheckCircle2 className="h-3.5 w-3.5" /> },
-  cancelled:  { label: "Đã hủy",     color: "bg-red-100 text-red-800 border-red-200",          icon: <AlertCircle className="h-3.5 w-3.5" /> },
+  pending: { label: "Chờ xử lý", color: "bg-amber-100 text-amber-800 border-amber-200", icon: <Clock className="h-3.5 w-3.5" /> },
+  processing: { label: "Đang xử lý", color: "bg-blue-100 text-blue-800 border-blue-200", icon: <Package className="h-3.5 w-3.5" /> },
+  shipping: { label: "Đang giao", color: "bg-purple-100 text-purple-800 border-purple-200", icon: <Truck className="h-3.5 w-3.5" /> },
+  delivered: { label: "Đã giao", color: "bg-green-100 text-green-800 border-green-200", icon: <CheckCircle2 className="h-3.5 w-3.5" /> },
+  cancelled: { label: "Đã hủy", color: "bg-red-100 text-red-800 border-red-200", icon: <AlertCircle className="h-3.5 w-3.5" /> },
 }
 
 function OrderStatusBadge({ status }: { status: string }) {
@@ -968,11 +968,11 @@ function OrderHistoryView() {
   const deliveryLabels: Record<string, string> = { delivery: "Giao hàng tận nơi", pickup: "Nhận tại cửa hàng" }
 
   const orderStatusSteps = [
-    { key: "pending",    label: "Chờ xử lý" },
-    { key: "confirmed",  label: "Đã xác nhận" },
+    { key: "pending", label: "Chờ xử lý" },
+    { key: "confirmed", label: "Đã xác nhận" },
     { key: "processing", label: "Đang xử lý" },
-    { key: "shipping",   label: "Đang giao" },
-    { key: "delivered",  label: "Đã giao" },
+    { key: "shipping", label: "Đang giao" },
+    { key: "delivered", label: "Đã giao" },
   ]
 
   return (
@@ -1210,7 +1210,7 @@ export default function MyBookingsPage() {
 
   // ✅ Chỉ lấy booking LẺ (không thuộc gói cố định)
   const regularBookings = allBookings.filter(b => !b.fixedScheduleId)
-  const upcoming  = regularBookings.filter(b => ["confirmed", "pending", "playing", "deposited"].includes(b.status))
+  const upcoming = regularBookings.filter(b => ["confirmed", "pending", "playing", "deposited"].includes(b.status))
   const completed = regularBookings.filter(b => b.status === "completed")
   const cancelled = regularBookings.filter(b => b.status === "cancelled")
 
@@ -1274,10 +1274,10 @@ export default function MyBookingsPage() {
                           <TabsContent value="upcoming" className="mt-4 flex flex-col gap-4">
                             {upcoming.length === 0
                               ? <Card><CardContent className="p-8 text-center text-muted-foreground">
-                                  <Calendar className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
-                                  <p className="font-semibold text-foreground">Chưa có lịch sắp tới</p>
-                                  <p className="text-sm mt-1">Hãy <a href="/courts" className="text-primary underline">đặt sân</a> để bắt đầu!</p>
-                                </CardContent></Card>
+                                <Calendar className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
+                                <p className="font-semibold text-foreground">Chưa có lịch sắp tới</p>
+                                <p className="text-sm mt-1">Hãy <a href="/courts" className="text-primary underline">đặt sân</a> để bắt đầu!</p>
+                              </CardContent></Card>
                               : upcoming.map(b => <BookingCard key={b.id} booking={b} onCancel={handleCancel} />)
                             }
                           </TabsContent>
@@ -1285,9 +1285,9 @@ export default function MyBookingsPage() {
                           <TabsContent value="completed" className="mt-4 flex flex-col gap-4">
                             {completed.length === 0
                               ? <Card><CardContent className="p-8 text-center text-muted-foreground">
-                                  <CheckCircle2 className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
-                                  <p className="font-semibold text-foreground">Chưa có lịch hoàn thành</p>
-                                </CardContent></Card>
+                                <CheckCircle2 className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
+                                <p className="font-semibold text-foreground">Chưa có lịch hoàn thành</p>
+                              </CardContent></Card>
                               : completed.map(b => <BookingCard key={b.id} booking={b} />)
                             }
                           </TabsContent>
@@ -1295,9 +1295,9 @@ export default function MyBookingsPage() {
                           <TabsContent value="cancelled" className="mt-4 flex flex-col gap-4">
                             {cancelled.length === 0
                               ? <Card><CardContent className="p-8 text-center text-muted-foreground">
-                                  <AlertCircle className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
-                                  <p className="font-semibold text-foreground">Chưa có lịch đã huỷ</p>
-                                </CardContent></Card>
+                                <AlertCircle className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
+                                <p className="font-semibold text-foreground">Chưa có lịch đã huỷ</p>
+                              </CardContent></Card>
                               : cancelled.map(b => <BookingCard key={b.id} booking={b} />)
                             }
                           </TabsContent>

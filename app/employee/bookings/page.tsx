@@ -189,6 +189,22 @@ const statusFlow: Record<string, string> = {
   playing: "completed",
 }
 
+const MISSED_CHECKIN_STATUS = "missed_checkin"
+const statusTabValues = ["all", "hold", "pending", "confirmed", MISSED_CHECKIN_STATUS, "playing", "completed", "cancelled"]
+const activeTabAfterReloadKey = "employeeBookings.activeTabAfterReload"
+
+function consumeActiveTabAfterReload() {
+  if (typeof window === "undefined") return null
+
+  const savedTab = window.sessionStorage.getItem(activeTabAfterReloadKey)
+  if (savedTab && statusTabValues.includes(savedTab)) {
+    window.sessionStorage.removeItem(activeTabAfterReloadKey)
+    return savedTab
+  }
+
+  return null
+}
+
 const statusActionLabel: Record<string, string> = {
   hold: "Xác nhận thanh toán",
   pending: "Xác nhận",
@@ -201,6 +217,15 @@ const timelineSteps = ["pending", "confirmed", "playing", "completed"]
 function getTimelineStep(status: string) {
   const idx = timelineSteps.indexOf(status)
   return idx >= 0 ? idx : 0
+}
+
+function isMissedCheckinBooking(booking: BookingHistoryEntry, timing: BookingTimingState | null) {
+  return booking.status === "confirmed" && !!timing?.isEnded
+}
+
+function getBookingDisplayStatus(booking: BookingHistoryEntry, now: Date) {
+  const timing = getBookingTimingState(booking, now)
+  return isMissedCheckinBooking(booking, timing) ? MISSED_CHECKIN_STATUS : booking.status
 }
 
 /* ─── Booking Detail Sheet ─── */
@@ -216,6 +241,7 @@ function BookingDetailSheet({
 }) {
   const step = getTimelineStep(booking.status)
   const timing = getBookingTimingState(booking, now)
+  const displayStatus = isMissedCheckinBooking(booking, timing) ? MISSED_CHECKIN_STATUS : booking.status
   const showEarlyCheckinWarning =
     booking.status === "confirmed" &&
     timing &&
@@ -236,7 +262,7 @@ function BookingDetailSheet({
             <p className="text-xs text-muted-foreground">Mã booking</p>
             <p className="font-mono text-lg font-bold text-primary">{booking.bookingCode}</p>
           </div>
-          <BookingStatusBadge status={booking.status} />
+          <BookingStatusBadge status={displayStatus} />
         </div>
 
         {/* Timeline */}
@@ -383,7 +409,7 @@ function BookingDetailSheet({
             </AlertDialog>
           </>
         )}
-        {statusFlow[booking.status] && booking.status !== "hold" && (
+        {statusFlow[booking.status] && booking.status !== "hold" && displayStatus !== MISSED_CHECKIN_STATUS && (
           <Button className="w-full" onClick={() => onStatusChange(booking, statusFlow[booking.status])}>
             {booking.status === "pending" && <><CheckCircle2 className="h-4 w-4 mr-2" /> Xác nhận booking</>}
             {booking.status === "confirmed" && <><Play className="h-4 w-4 mr-2" /> Check-in</>}
@@ -1410,6 +1436,11 @@ export default function EmployeeBookings() {
   }, [])
 
   useEffect(() => {
+    const savedTab = consumeActiveTabAfterReload()
+    if (savedTab) setActiveTab(savedTab)
+  }, [])
+
+  useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000)
     return () => window.clearInterval(timer)
   }, [])
@@ -1481,6 +1512,27 @@ export default function EmployeeBookings() {
       if (!res.success) {
         throw new Error(res.error || "Loi cap nhat trang thai")
       }
+
+      setBookings((current) =>
+        current.map((booking) =>
+          booking.id === id
+            ? res.booking
+              ? apiToBooking(res.booking)
+              : { ...booking, status: newStatus }
+            : booking,
+        ),
+      )
+
+      if (newStatus === "confirmed") {
+        setActiveTab("confirmed")
+        setExpandedRow(null)
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem(activeTabAfterReloadKey, "confirmed")
+          window.location.reload()
+        }
+        return
+      }
+
       await refreshData()
     } catch { alert("Lỗi cập nhật trạng thái") }
   }, [refreshData])
@@ -1580,17 +1632,18 @@ export default function EmployeeBookings() {
     { value: "all", label: "Tất cả", count: bookings.length },
     { value: "hold", label: "Giữ chỗ", count: bookings.filter(b => b.status === "hold").length },
     { value: "pending", label: "Chờ xác nhận", count: bookings.filter(b => b.status === "pending").length },
-    { value: "confirmed", label: "Đã xác nhận", count: bookings.filter(b => b.status === "confirmed").length },
+    { value: "confirmed", label: "Đã xác nhận", count: bookings.filter(b => getBookingDisplayStatus(b, now) === "confirmed").length },
+    { value: MISSED_CHECKIN_STATUS, label: "Chưa check-in", count: bookings.filter(b => getBookingDisplayStatus(b, now) === MISSED_CHECKIN_STATUS).length },
     { value: "playing", label: "Đang chơi", count: bookings.filter(b => b.status === "playing").length },
     { value: "completed", label: "Hoàn thành", count: bookings.filter(b => b.status === "completed").length },
     { value: "cancelled", label: "Đã huỷ", count: bookings.filter(b => b.status === "cancelled").length },
-  ], [bookings])
+  ], [bookings, now])
 
   const filtered = useMemo(() => {
     let result = [...bookings]
 
     if (activeTab !== "all") {
-      result = result.filter(b => b.status === activeTab)
+      result = result.filter(b => getBookingDisplayStatus(b, now) === activeTab)
     }
 
     if (search) {
@@ -1620,7 +1673,7 @@ export default function EmployeeBookings() {
     })
 
     return result
-  }, [bookings, activeTab, search, dateFilter, sortField, sortDir])
+  }, [bookings, activeTab, search, dateFilter, sortField, sortDir, now])
 
   const toggleSort = (field: typeof sortField) => {
     if (sortField === field) setSortDir(d => d === "asc" ? "desc" : "asc")
@@ -1815,10 +1868,13 @@ export default function EmployeeBookings() {
                   <TableBody>
                     {filtered.map((booking, idx) => {
                       const timing = getBookingTimingState(booking, now)
+                      const isMissedCheckin = isMissedCheckinBooking(booking, timing)
+                      const displayStatus = isMissedCheckin ? MISSED_CHECKIN_STATUS : booking.status
                       const isCheckinBlocked =
                         booking.status === "confirmed" &&
                         !!timing &&
-                        !timing.canCheckin
+                        !timing.canCheckin &&
+                        !timing.isEnded
 
                       return (
                       <Fragment key={booking.id}>
@@ -1857,7 +1913,12 @@ export default function EmployeeBookings() {
                           <TableCell><PaymentBadge method={booking.paymentMethod} /></TableCell>
                           <TableCell>
                             <div className="space-y-1">
-                              <BookingStatusBadge status={booking.status} />
+                              <BookingStatusBadge status={displayStatus} />
+                              {isMissedCheckin && timing && (
+                                <p className="text-[11px] font-semibold text-red-600">
+                                  Đã qua giờ chơi, khách chưa check-in
+                                </p>
+                              )}
                               {booking.status === "confirmed" && isCheckinBlocked && timing && (
                                 <p className="text-[11px] font-medium text-amber-600">
                                   Check-in sau {timing.minutesUntilCheckin} phút
@@ -1876,7 +1937,7 @@ export default function EmployeeBookings() {
                           <TableCell>
                             <div className="flex items-center gap-0.5" onClick={e => e.stopPropagation()}>
                               {/* Quick status action */}
-                              {statusFlow[booking.status] && (
+                              {statusFlow[booking.status] && !isMissedCheckin && (
                                 <TooltipProvider>
                                   <Tooltip>
                                     <TooltipTrigger asChild>
