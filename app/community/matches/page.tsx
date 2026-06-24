@@ -37,7 +37,14 @@ function isEligibleMatchBooking(booking: ApiBooking) {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
   bookingDate.setHours(0, 0, 0, 0)
-  return bookingDate >= today
+  if (bookingDate > today) return true
+  if (bookingDate < today) return false
+
+  const [hourRaw, minuteRaw] = (booking.timeEnd || booking.timeStart).split(':')
+  const endMinutes = Number(hourRaw || 0) * 60 + Number(minuteRaw || 0)
+  const now = new Date()
+  const nowMinutes = now.getHours() * 60 + now.getMinutes()
+  return endMinutes > nowMinutes
 }
 
 export default function MatchesPage() {
@@ -144,7 +151,17 @@ export default function MatchesPage() {
               ? Array.from({ length: 4 }).map((_, index) => (
                   <div key={index} className="h-72 animate-pulse rounded-3xl bg-muted" />
                 ))
-              : matches.map((match) => <MatchCard key={match.id} match={match} />)}
+              : matches.map((match) => (
+                  <MatchCard
+                    key={match.id}
+                    match={match}
+                    onJoined={(updated) =>
+                      setMatches((current) =>
+                        current.map((item) => (item.id === updated.id ? updated : item)),
+                      )
+                    }
+                  />
+                ))}
           </div>
           {!loading && matches.length === 0 ? (
             <div className="mt-3 rounded-3xl border border-dashed border-border bg-card p-12 text-center">

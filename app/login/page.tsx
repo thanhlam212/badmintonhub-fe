@@ -89,7 +89,7 @@ function LoginContent() {
   }
 
   const handlePasswordInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setPassword(e.target.value.replace(/[^\x00-\x7F]/g, ""))
+    setPassword(e.target.value.replace(/[^\u0020-\u007E]/g, ""))
   }
 
   return (

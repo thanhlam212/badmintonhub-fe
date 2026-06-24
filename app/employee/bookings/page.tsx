@@ -47,6 +47,31 @@ interface CourtBookingEntry {
 interface BranchItem { id: number; name: string; address?: string }
 interface CourtItem { id: number; name: string; branch: string; branchId: number; type: string; price: number; indoor?: boolean }
 
+interface BookingTimingState {
+  startAt: Date
+  endAt: Date
+  checkinOpensAt: Date
+  canCheckin: boolean
+  minutesUntilCheckin: number
+  remainingMs: number
+  isEnded: boolean
+}
+
+interface CheckinWarningState {
+  bookingId: string
+  bookingCode: string
+  court: string
+  availableAt: string
+  minutesUntilCheckin: number
+}
+
+interface CompletionNotice {
+  bookingId: string
+  bookingCode: string
+  court: string
+  endTime: string
+}
+
 /* ─── Helpers ─── */
 
 function apiToBooking(b: ApiBooking): BookingHistoryEntry {
@@ -98,6 +123,63 @@ function formatDate(dateStr: string) {
   } catch { return dateStr }
 }
 
+const CHECKIN_EARLY_MINUTES = 15
+
+function parseTimeRange(timeRange: string) {
+  const [start = "", end = ""] = timeRange.split(" - ").map((part) => part.trim())
+  return { start, end }
+}
+
+function buildBookingDateTime(dateValue: string, timeValue: string) {
+  if (!dateValue || !timeValue) return null
+  const date = new Date(`${dateValue}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return null
+
+  const [hour = "0", minute = "0"] = timeValue.split(":")
+  date.setHours(Number(hour) || 0, Number(minute) || 0, 0, 0)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function getBookingTimingState(booking: BookingHistoryEntry, now: Date): BookingTimingState | null {
+  const { start, end } = parseTimeRange(booking.time)
+  const startAt = buildBookingDateTime(booking.date, start)
+  const endAt = buildBookingDateTime(booking.date, end)
+  if (!startAt || !endAt) return null
+
+  if (endAt <= startAt) {
+    endAt.setDate(endAt.getDate() + 1)
+  }
+
+  const checkinOpensAt = new Date(startAt.getTime() - CHECKIN_EARLY_MINUTES * 60_000)
+  const remainingMs = endAt.getTime() - now.getTime()
+  const minutesUntilCheckin = Math.max(0, Math.ceil((checkinOpensAt.getTime() - now.getTime()) / 60_000))
+
+  return {
+    startAt,
+    endAt,
+    checkinOpensAt,
+    canCheckin: now >= checkinOpensAt && now < endAt,
+    minutesUntilCheckin,
+    remainingMs,
+    isEnded: remainingMs <= 0,
+  }
+}
+
+function formatCountdown(ms: number) {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000))
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
+}
+
+function formatTimeOnly(date: Date) {
+  return date.toLocaleTimeString("vi-VN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}
+
 /* ─── Status flow ─── */
 
 const statusFlow: Record<string, string> = {
@@ -105,6 +187,22 @@ const statusFlow: Record<string, string> = {
   pending: "confirmed",
   confirmed: "playing",
   playing: "completed",
+}
+
+const MISSED_CHECKIN_STATUS = "missed_checkin"
+const statusTabValues = ["all", "hold", "pending", "confirmed", MISSED_CHECKIN_STATUS, "playing", "completed", "cancelled"]
+const activeTabAfterReloadKey = "employeeBookings.activeTabAfterReload"
+
+function consumeActiveTabAfterReload() {
+  if (typeof window === "undefined") return null
+
+  const savedTab = window.sessionStorage.getItem(activeTabAfterReloadKey)
+  if (savedTab && statusTabValues.includes(savedTab)) {
+    window.sessionStorage.removeItem(activeTabAfterReloadKey)
+    return savedTab
+  }
+
+  return null
 }
 
 const statusActionLabel: Record<string, string> = {
@@ -121,16 +219,35 @@ function getTimelineStep(status: string) {
   return idx >= 0 ? idx : 0
 }
 
+function isMissedCheckinBooking(booking: BookingHistoryEntry, timing: BookingTimingState | null) {
+  return booking.status === "confirmed" && !!timing?.isEnded
+}
+
+function getBookingDisplayStatus(booking: BookingHistoryEntry, now: Date) {
+  const timing = getBookingTimingState(booking, now)
+  return isMissedCheckinBooking(booking, timing) ? MISSED_CHECKIN_STATUS : booking.status
+}
+
 /* ─── Booking Detail Sheet ─── */
 
 function BookingDetailSheet({
   booking,
+  now,
   onStatusChange,
 }: {
   booking: BookingHistoryEntry
-  onStatusChange: (id: string, status: string) => void
+  now: Date
+  onStatusChange: (booking: BookingHistoryEntry, status: string) => void
 }) {
   const step = getTimelineStep(booking.status)
+  const timing = getBookingTimingState(booking, now)
+  const displayStatus = isMissedCheckinBooking(booking, timing) ? MISSED_CHECKIN_STATUS : booking.status
+  const showEarlyCheckinWarning =
+    booking.status === "confirmed" &&
+    timing &&
+    !timing.canCheckin &&
+    !timing.isEnded &&
+    timing.minutesUntilCheckin > 0
 
   return (
     <SheetContent className="sm:max-w-[480px] overflow-y-auto">
@@ -145,7 +262,7 @@ function BookingDetailSheet({
             <p className="text-xs text-muted-foreground">Mã booking</p>
             <p className="font-mono text-lg font-bold text-primary">{booking.bookingCode}</p>
           </div>
-          <BookingStatusBadge status={booking.status} />
+          <BookingStatusBadge status={displayStatus} />
         </div>
 
         {/* Timeline */}
@@ -203,6 +320,47 @@ function BookingDetailSheet({
           </div>
         </div>
 
+        {showEarlyCheckinWarning && timing && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-600" />
+              <div>
+                <h4 className="text-sm font-semibold text-amber-900">Chưa đến giờ check-in</h4>
+                <p className="mt-1 text-sm text-amber-800">
+                  Nhân viên chỉ được check-in sớm tối đa {CHECKIN_EARLY_MINUTES} phút.
+                </p>
+                <p className="mt-1 text-xs text-amber-700">
+                  Có thể check-in từ {formatTimeOnly(timing.checkinOpensAt)}. Còn {timing.minutesUntilCheckin} phút.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {booking.status === "playing" && timing && (
+          <div className={cn(
+            "rounded-lg border p-4",
+            timing.isEnded ? "border-red-200 bg-red-50" : "border-green-200 bg-green-50"
+          )}>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h4 className="text-sm font-semibold">
+                  {timing.isEnded ? "Sân đã hết giờ" : "Đếm ngược thời gian chơi"}
+                </h4>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {timing.isEnded ? "Hệ thống đang chuyển booking sang hoàn thành." : `Kết thúc lúc ${formatTimeOnly(timing.endAt)}.`}
+                </p>
+              </div>
+              <div className={cn(
+                "rounded-lg px-3 py-2 text-sm font-bold tabular-nums",
+                timing.isEnded ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"
+              )}>
+                {formatCountdown(timing.remainingMs)}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Customer */}
         <div className="rounded-lg border p-4 space-y-2">
           <h4 className="text-sm font-semibold">Khách hàng</h4>
@@ -231,7 +389,7 @@ function BookingDetailSheet({
         {/* Actions */}
         {booking.status === "hold" && (
           <>
-            <Button className="w-full bg-green-600 hover:bg-green-700 text-white" onClick={() => onStatusChange(booking.id, "confirmed")}>
+            <Button className="w-full bg-green-600 hover:bg-green-700 text-white" onClick={() => onStatusChange(booking, "confirmed")}>
               <CheckCircle2 className="h-4 w-4 mr-2" /> Xác nhận thanh toán
             </Button>
             <AlertDialog>
@@ -245,14 +403,14 @@ function BookingDetailSheet({
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Quay lại</AlertDialogCancel>
-                  <AlertDialogAction onClick={() => onStatusChange(booking.id, "cancelled")} className="bg-red-600 hover:bg-red-700">Huỷ</AlertDialogAction>
+                  <AlertDialogAction onClick={() => onStatusChange(booking, "cancelled")} className="bg-red-600 hover:bg-red-700">Huỷ</AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
           </>
         )}
-        {statusFlow[booking.status] && booking.status !== "hold" && (
-          <Button className="w-full" onClick={() => onStatusChange(booking.id, statusFlow[booking.status])}>
+        {statusFlow[booking.status] && booking.status !== "hold" && displayStatus !== MISSED_CHECKIN_STATUS && (
+          <Button className="w-full" onClick={() => onStatusChange(booking, statusFlow[booking.status])}>
             {booking.status === "pending" && <><CheckCircle2 className="h-4 w-4 mr-2" /> Xác nhận booking</>}
             {booking.status === "confirmed" && <><Play className="h-4 w-4 mr-2" /> Check-in</>}
             {booking.status === "playing" && <><CheckCircle2 className="h-4 w-4 mr-2" /> Hoàn thành</>}
@@ -271,7 +429,7 @@ function BookingDetailSheet({
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>Quay lại</AlertDialogCancel>
-                <AlertDialogAction onClick={() => onStatusChange(booking.id, "cancelled")} className="bg-red-600 hover:bg-red-700">Huỷ booking</AlertDialogAction>
+                <AlertDialogAction onClick={() => onStatusChange(booking, "cancelled")} className="bg-red-600 hover:bg-red-700">Huỷ booking</AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
@@ -1266,6 +1424,26 @@ export default function EmployeeBookings() {
   // Dialog state
   const [formOpen, setFormOpen] = useState(false)
   const [editBooking, setEditBooking] = useState<BookingHistoryEntry | null>(null)
+  const [now, setNow] = useState(() => new Date())
+  const [checkinWarning, setCheckinWarning] = useState<CheckinWarningState | null>(null)
+  const [completionNotices, setCompletionNotices] = useState<CompletionNotice[]>([])
+  const autoCompletedRef = useRef<Record<string, boolean>>({})
+
+  const enqueueCompletionNotice = useCallback((notice: CompletionNotice) => {
+    setCompletionNotices((current) =>
+      current.some((item) => item.bookingId === notice.bookingId) ? current : [...current, notice],
+    )
+  }, [])
+
+  useEffect(() => {
+    const savedTab = consumeActiveTabAfterReload()
+    if (savedTab) setActiveTab(savedTab)
+  }, [])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   // Load data from API
   useEffect(() => {
@@ -1330,10 +1508,76 @@ export default function EmployeeBookings() {
   // Status change
   const handleStatusChange = useCallback(async (id: string, newStatus: string) => {
     try {
-      await bookingApi.updateStatus(id, newStatus)
+      const res = await bookingApi.updateStatus(id, newStatus)
+      if (!res.success) {
+        throw new Error(res.error || "Loi cap nhat trang thai")
+      }
+
+      setBookings((current) =>
+        current.map((booking) =>
+          booking.id === id
+            ? res.booking
+              ? apiToBooking(res.booking)
+              : { ...booking, status: newStatus }
+            : booking,
+        ),
+      )
+
+      if (newStatus === "confirmed") {
+        setActiveTab("confirmed")
+        setExpandedRow(null)
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem(activeTabAfterReloadKey, "confirmed")
+          window.location.reload()
+        }
+        return
+      }
+
       await refreshData()
     } catch { alert("Lỗi cập nhật trạng thái") }
   }, [refreshData])
+
+  const handleBookingAction = useCallback(async (booking: BookingHistoryEntry, newStatus: string) => {
+    if (newStatus === "playing") {
+      const timing = getBookingTimingState(booking, new Date())
+      if (timing && !timing.canCheckin) {
+        setCheckinWarning({
+          bookingId: booking.id,
+          bookingCode: booking.bookingCode,
+          court: booking.court,
+          availableAt: formatTimeOnly(timing.checkinOpensAt),
+          minutesUntilCheckin: timing.minutesUntilCheckin,
+        })
+        return
+      }
+    }
+
+    await handleStatusChange(booking.id, newStatus)
+  }, [handleStatusChange])
+
+  useEffect(() => {
+    const playingBookings = bookings.filter((booking) => booking.status === "playing")
+    playingBookings.forEach((booking) => {
+      const timing = getBookingTimingState(booking, now)
+      if (!timing || !timing.isEnded || autoCompletedRef.current[booking.id]) return
+
+      autoCompletedRef.current[booking.id] = true
+      enqueueCompletionNotice({
+        bookingId: booking.id,
+        bookingCode: booking.bookingCode,
+        court: booking.court,
+        endTime: formatTimeOnly(timing.endAt),
+      })
+
+      void (async () => {
+        try {
+          await bookingApi.updateStatus(booking.id, "completed")
+        } finally {
+          await refreshData()
+        }
+      })()
+    })
+  }, [bookings, now, enqueueCompletionNotice, refreshData])
 
   // Save booking (create or edit)
   const handleSaveBooking = useCallback(async (booking: BookingHistoryEntry, isEdit: boolean) => {
@@ -1388,17 +1632,18 @@ export default function EmployeeBookings() {
     { value: "all", label: "Tất cả", count: bookings.length },
     { value: "hold", label: "Giữ chỗ", count: bookings.filter(b => b.status === "hold").length },
     { value: "pending", label: "Chờ xác nhận", count: bookings.filter(b => b.status === "pending").length },
-    { value: "confirmed", label: "Đã xác nhận", count: bookings.filter(b => b.status === "confirmed").length },
+    { value: "confirmed", label: "Đã xác nhận", count: bookings.filter(b => getBookingDisplayStatus(b, now) === "confirmed").length },
+    { value: MISSED_CHECKIN_STATUS, label: "Chưa check-in", count: bookings.filter(b => getBookingDisplayStatus(b, now) === MISSED_CHECKIN_STATUS).length },
     { value: "playing", label: "Đang chơi", count: bookings.filter(b => b.status === "playing").length },
     { value: "completed", label: "Hoàn thành", count: bookings.filter(b => b.status === "completed").length },
     { value: "cancelled", label: "Đã huỷ", count: bookings.filter(b => b.status === "cancelled").length },
-  ], [bookings])
+  ], [bookings, now])
 
   const filtered = useMemo(() => {
     let result = [...bookings]
 
     if (activeTab !== "all") {
-      result = result.filter(b => b.status === activeTab)
+      result = result.filter(b => getBookingDisplayStatus(b, now) === activeTab)
     }
 
     if (search) {
@@ -1418,15 +1663,17 @@ export default function EmployeeBookings() {
     }
 
     result.sort((a, b) => {
-      let cmp = 0
-      if (sortField === "amount") cmp = a.amount - b.amount
-      else if (sortField === "date") cmp = a.date.localeCompare(b.date)
-      else cmp = (a.createdAt || "").localeCompare(b.createdAt || "")
+      const cmp =
+        sortField === "amount"
+          ? a.amount - b.amount
+          : sortField === "date"
+            ? a.date.localeCompare(b.date)
+            : (a.createdAt || "").localeCompare(b.createdAt || "")
       return sortDir === "asc" ? cmp : -cmp
     })
 
     return result
-  }, [bookings, activeTab, search, dateFilter, sortField, sortDir])
+  }, [bookings, activeTab, search, dateFilter, sortField, sortDir, now])
 
   const toggleSort = (field: typeof sortField) => {
     if (sortField === field) setSortDir(d => d === "asc" ? "desc" : "asc")
@@ -1619,7 +1866,17 @@ export default function EmployeeBookings() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filtered.map((booking, idx) => (
+                    {filtered.map((booking, idx) => {
+                      const timing = getBookingTimingState(booking, now)
+                      const isMissedCheckin = isMissedCheckinBooking(booking, timing)
+                      const displayStatus = isMissedCheckin ? MISSED_CHECKIN_STATUS : booking.status
+                      const isCheckinBlocked =
+                        booking.status === "confirmed" &&
+                        !!timing &&
+                        !timing.canCheckin &&
+                        !timing.isEnded
+
+                      return (
                       <Fragment key={booking.id}>
                         <TableRow
                           className={cn(
@@ -1654,27 +1911,56 @@ export default function EmployeeBookings() {
                           <TableCell className="text-sm">{booking.time}</TableCell>
                           <TableCell className="text-sm font-medium">{formatVND(booking.amount)}</TableCell>
                           <TableCell><PaymentBadge method={booking.paymentMethod} /></TableCell>
-                          <TableCell><BookingStatusBadge status={booking.status} /></TableCell>
+                          <TableCell>
+                            <div className="space-y-1">
+                              <BookingStatusBadge status={displayStatus} />
+                              {isMissedCheckin && timing && (
+                                <p className="text-[11px] font-semibold text-red-600">
+                                  Đã qua giờ chơi, khách chưa check-in
+                                </p>
+                              )}
+                              {booking.status === "confirmed" && isCheckinBlocked && timing && (
+                                <p className="text-[11px] font-medium text-amber-600">
+                                  Check-in sau {timing.minutesUntilCheckin} phút
+                                </p>
+                              )}
+                              {booking.status === "playing" && timing && (
+                                <p className={cn(
+                                  "text-[11px] font-semibold tabular-nums",
+                                  timing.isEnded ? "text-red-600" : "text-green-700"
+                                )}>
+                                  {timing.isEnded ? "Da het gio" : `Con ${formatCountdown(timing.remainingMs)}`}
+                                </p>
+                              )}
+                            </div>
+                          </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-0.5" onClick={e => e.stopPropagation()}>
                               {/* Quick status action */}
-                              {statusFlow[booking.status] && (
+                              {statusFlow[booking.status] && !isMissedCheckin && (
                                 <TooltipProvider>
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <Button
                                         variant="ghost"
                                         size="icon"
-                                        className="h-7 w-7 text-green-600 hover:bg-green-50"
-                                        onClick={() => handleStatusChange(booking.id, statusFlow[booking.status])}
+                                        className={cn(
+                                          "h-7 w-7 hover:bg-green-50",
+                                          isCheckinBlocked ? "text-amber-600" : "text-green-600"
+                                        )}
+                                        onClick={() => handleBookingAction(booking, statusFlow[booking.status])}
                                       >
                                         {booking.status === "hold" && <CheckCircle2 className="h-3.5 w-3.5" />}
                                         {booking.status === "pending" && <CheckCircle2 className="h-3.5 w-3.5" />}
-                                        {booking.status === "confirmed" && <Play className="h-3.5 w-3.5" />}
+                                        {booking.status === "confirmed" && (isCheckinBlocked ? <Lock className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />)}
                                         {booking.status === "playing" && <CheckCircle2 className="h-3.5 w-3.5" />}
                                       </Button>
                                     </TooltipTrigger>
-                                    <TooltipContent>{statusActionLabel[booking.status]}</TooltipContent>
+                                    <TooltipContent>
+                                      {booking.status === "confirmed" && isCheckinBlocked && timing
+                                        ? `Chi duoc check-in som ${CHECKIN_EARLY_MINUTES} phut`
+                                        : statusActionLabel[booking.status]}
+                                    </TooltipContent>
                                   </Tooltip>
                                 </TooltipProvider>
                               )}
@@ -1685,7 +1971,7 @@ export default function EmployeeBookings() {
                                     <Eye className="h-3.5 w-3.5" />
                                   </Button>
                                 </SheetTrigger>
-                                <BookingDetailSheet booking={booking} onStatusChange={handleStatusChange} />
+                                <BookingDetailSheet booking={booking} now={now} onStatusChange={handleBookingAction} />
                               </Sheet>
                               {/* Edit */}
                               <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleOpenEdit(booking)}>
@@ -1724,7 +2010,7 @@ export default function EmployeeBookings() {
                           </TableRow>
                         )}
                       </Fragment>
-                    ))}
+                    )})}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -1740,6 +2026,68 @@ export default function EmployeeBookings() {
           )}
         </>
       )}
+
+      <Dialog open={!!checkinWarning} onOpenChange={(open) => !open && setCheckinWarning(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-xl">Chưa đến giờ check-in</DialogTitle>
+          </DialogHeader>
+          {checkinWarning && (
+            <div className="space-y-3 text-sm">
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-600" />
+                  <div>
+                    <p className="font-medium text-amber-900">{checkinWarning.bookingCode}</p>
+                    <p className="mt-1 text-amber-800">{checkinWarning.court}</p>
+                    <p className="mt-2 text-amber-700">
+                      Chỉ được check-in sớm tối đa {CHECKIN_EARLY_MINUTES} phút.
+                    </p>
+                    <p className="mt-1 text-amber-700">
+                      Có thể check-in từ {checkinWarning.availableAt}. Còn {checkinWarning.minutesUntilCheckin} phút.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button onClick={() => setCheckinWarning(null)}>Đã hiểu</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={completionNotices.length > 0} onOpenChange={(open) => {
+        if (!open) {
+          setCompletionNotices((current) => current.slice(1))
+        }
+      }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-xl">Booking hoàn thành</DialogTitle>
+          </DialogHeader>
+          {completionNotices[0] && (
+            <div className="space-y-3 text-sm">
+              <div className="rounded-lg border border-green-200 bg-green-50 p-4">
+                <div className="flex items-start gap-3">
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 text-green-600" />
+                  <div>
+                    <p className="font-medium text-green-900">{completionNotices[0].bookingCode}</p>
+                    <p className="mt-1 text-green-800">{completionNotices[0].court}</p>
+                    <p className="mt-2 text-green-700">
+                      Sân đã hết giờ lúc {completionNotices[0].endTime} và booking đã được chuyển sang hoàn thành.
+                    </p>
+                    <p className="mt-1 text-green-700">Nhân viên đến dọn sân.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button onClick={() => setCompletionNotices((current) => current.slice(1))}>Đóng</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Booking Form Dialog */}
       <BookingFormDialog

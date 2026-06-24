@@ -1043,10 +1043,12 @@ export default function AdminBookings() {
     }
 
     result.sort((a, b) => {
-      let cmp = 0
-      if (sortField === "amount") cmp = a.amount - b.amount
-      else if (sortField === "date") cmp = a.date.localeCompare(b.date)
-      else cmp = (a.createdAt || "").localeCompare(b.createdAt || "")
+      const cmp =
+        sortField === "amount"
+          ? a.amount - b.amount
+          : sortField === "date"
+            ? a.date.localeCompare(b.date)
+            : (a.createdAt || "").localeCompare(b.createdAt || "")
       return sortDir === "asc" ? cmp : -cmp
     })
 

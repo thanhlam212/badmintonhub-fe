@@ -26,6 +26,7 @@ type AppNotification = {
 }
 
 const CHECKIN_GRACE_MINUTES = 15
+const CLEANUP_REMINDER_WINDOW_MINUTES = 180
 const DISMISSED_NOTIFICATIONS_KEY = "badmintonhub_dismissed_notifications"
 
 const categoryMeta: Record<NotificationCategory, { label: string; dotClassName: string }> = {
@@ -89,8 +90,6 @@ function minutesSince(now: Date, date: Date) {
 
 function buildCheckinNotifications(bookings: ApiBooking[], now = new Date()): AppNotification[] {
   return bookings.flatMap<AppNotification>((booking): AppNotification[] => {
-    if (booking.status !== "confirmed") return []
-
     const startAt = makeBookingDateTime(booking.bookingDate, booking.timeStart)
     const endAt = makeBookingDateTime(booking.bookingDate, booking.timeEnd)
     if (!startAt || !endAt) return []
@@ -102,37 +101,97 @@ function buildCheckinNotifications(bookings: ApiBooking[], now = new Date()): Ap
     const dateText = formatNotificationDate(startAt)
     const lateAt = new Date(startAt.getTime() + CHECKIN_GRACE_MINUTES * 60000)
 
-    if (now >= endAt) {
-      return [{
-        id: `checkin-missed-${booking.id}`,
-        title: "Lỗi sân chưa được check-in",
-        message: `${courtText} đã hết khung giờ nhưng chưa được check-in. Booking ${bookingRef}${customerText ? ` - ${customerText}` : ""}.`,
-        time: `Kết thúc ${booking.timeEnd} ${dateText}`,
-        category: "checkin" as const,
-        severity: "critical" as const,
-        createdAt: endAt.getTime(),
-        dismissible: false,
-      }]
+    if (booking.status === "confirmed") {
+      if (now >= endAt) {
+        return [{
+          id: `checkin-missed-${booking.id}`,
+          title: "Lỗi sân chưa được check-in",
+          message: `${courtText} đã hết khung giờ nhưng chưa được check-in. Booking ${bookingRef}${customerText ? ` - ${customerText}` : ""}.`,
+          time: `Kết thúc ${booking.timeEnd} ${dateText}`,
+          category: "checkin" as const,
+          severity: "critical" as const,
+          createdAt: endAt.getTime(),
+          dismissible: false,
+        }]
+      }
+
+      if (now >= lateAt) {
+        return [{
+          id: `checkin-late-${booking.id}`,
+          title: "Sân chưa check-in",
+          message: `${courtText} đã trễ check-in ${minutesSince(now, startAt)} phút. Booking ${bookingRef}${customerText ? ` - ${customerText}` : ""}.`,
+          time: `Bắt đầu ${booking.timeStart} ${dateText}`,
+          category: "checkin" as const,
+          severity: "warning" as const,
+          createdAt: lateAt.getTime(),
+          dismissible: true,
+        }]
+      }
+
+      return []
     }
 
-    if (now >= lateAt) {
-      return [{
-        id: `checkin-late-${booking.id}`,
-        title: "Sân chưa check-in",
-        message: `${courtText} đã trễ check-in ${minutesSince(now, startAt)} phút. Booking ${bookingRef}${customerText ? ` - ${customerText}` : ""}.`,
-        time: `Bắt đầu ${booking.timeStart} ${dateText}`,
-        category: "checkin" as const,
-        severity: "warning" as const,
-        createdAt: lateAt.getTime(),
-        dismissible: true,
-      }]
-    }
+    if (!["playing", "completed"].includes(booking.status)) return []
 
-    return []
+    const minutesAfterEnd = minutesSince(now, endAt)
+    if (now < endAt || minutesAfterEnd > CLEANUP_REMINDER_WINDOW_MINUTES) return []
+
+    return [{
+      id: `cleanup-${booking.id}`,
+      title: "Sân đã hết giờ",
+      message: `${courtText} đã hết giờ. Nhân viên đến dọn sân. Booking ${bookingRef}${customerText ? ` - ${customerText}` : ""}.`,
+      time: `Kết thúc ${booking.timeEnd} ${dateText}`,
+      category: "booking" as const,
+      severity: booking.status === "playing" ? "critical" as const : "warning" as const,
+      createdAt: endAt.getTime(),
+      dismissible: true,
+    }]
   }).sort((a, b) => {
     const severityOrder: Record<NotificationSeverity, number> = { critical: 0, warning: 1, info: 2 }
     return severityOrder[a.severity] - severityOrder[b.severity] || b.createdAt - a.createdAt
   })
+}
+
+function getCancellerRoleLabel(role?: string | null) {
+  switch (role) {
+    case "admin":
+      return "Admin"
+    case "employee":
+      return "Nhân viên"
+    case "user":
+      return "Khách hàng"
+    default:
+      return "Hệ thống"
+  }
+}
+
+function buildCancellationNotifications(bookings: ApiBooking[], now = new Date()): AppNotification[] {
+  const recentWindowMs = 7 * 24 * 60 * 60 * 1000
+
+  return bookings.flatMap<AppNotification>((booking) => {
+    if (booking.status !== "cancelled" || !booking.cancelledAt) return []
+
+    const cancelledAt = new Date(booking.cancelledAt)
+    if (Number.isNaN(cancelledAt.getTime())) return []
+    if (now.getTime() - cancelledAt.getTime() > recentWindowMs) return []
+
+    const bookingRef = booking.bookingCode || booking.id.slice(0, 8)
+    const courtText = [booking.courtName || "Sân", booking.branchName].filter(Boolean).join(" - ")
+    const customerText = [booking.customerName || "Khách", booking.customerPhone].filter(Boolean).join(" | ")
+    const reasonText = booking.cancellationReason?.trim() || "Không có lý do cụ thể."
+    const cancelledBy = [getCancellerRoleLabel(booking.cancelledByRole), booking.cancelledByName].filter(Boolean).join(" - ")
+
+    return [{
+      id: `booking-cancelled-${booking.id}-${booking.cancelledAt}`,
+      title: "Booking vừa bị hủy",
+      message: `${courtText} đã bị hủy${cancelledBy ? ` bởi ${cancelledBy}` : ""}. Booking ${bookingRef}${customerText ? ` - ${customerText}` : ""}. Lý do: ${reasonText}`,
+      time: `Hủy lúc ${cancelledAt.toLocaleString("vi-VN")}`,
+      category: "booking" as const,
+      severity: "warning" as const,
+      createdAt: cancelledAt.getTime(),
+      dismissible: true,
+    }]
+  }).sort((a, b) => b.createdAt - a.createdAt)
 }
 
 // Default notifications (will be replaced by real API later)
@@ -148,6 +207,7 @@ export function BookingStatusBadge({ status }: { status: string }) {
     pending: { label: "Chờ xác nhận", className: "bg-amber-100 text-amber-800 border-amber-200", icon: <Clock className="h-3 w-3" /> },
     deposited: { label: "Đã đặt cọc", className: "bg-orange-100 text-orange-800 border-orange-200", icon: <CheckCircle2 className="h-3 w-3" /> },
     confirmed: { label: "Đã xác nhận", className: "bg-blue-100 text-blue-800 border-blue-200", icon: <CheckCircle2 className="h-3 w-3" /> },
+    missed_checkin: { label: "Chưa check-in", className: "bg-red-100 text-red-800 border-red-200", icon: <AlertTriangle className="h-3 w-3" /> },
     playing: { label: "Đang chơi", className: "bg-green-100 text-green-800 border-green-200", icon: <Play className="h-3 w-3" /> },
     completed: { label: "Hoàn thành", className: "bg-gray-100 text-gray-600 border-gray-200", icon: <CheckCircle2 className="h-3 w-3" /> },
     cancelled: { label: "Đã huỷ", className: "bg-red-100 text-red-800 border-red-200", icon: <XCircle className="h-3 w-3" /> },
@@ -240,8 +300,14 @@ export function NotificationBell() {
 
     setIsLoading(true)
     try {
-      const res = await bookingApi.getAll({ status: "confirmed" })
-      const generated = buildCheckinNotifications(res.bookings || [])
+      const res = await bookingApi.getAll()
+      const generated = [
+        ...buildCheckinNotifications(res.bookings || []),
+        ...buildCancellationNotifications(res.bookings || []),
+      ].sort((a, b) => {
+        const severityOrder: Record<NotificationSeverity, number> = { critical: 0, warning: 1, info: 2 }
+        return severityOrder[a.severity] - severityOrder[b.severity] || b.createdAt - a.createdAt
+      })
       setNotifs(generated.filter((item) => item.severity === "critical" || !dismissedSet.has(item.id)))
     } catch (error) {
       console.error("Failed to load booking notifications", error)
@@ -265,7 +331,12 @@ export function NotificationBell() {
   useEffect(() => {
     loadNotifications()
     const timer = window.setInterval(loadNotifications, 60000)
-    return () => window.clearInterval(timer)
+    const refresh = () => loadNotifications()
+    window.addEventListener("bh-notifications-refresh", refresh)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener("bh-notifications-refresh", refresh)
+    }
   }, [loadNotifications])
 
   const persistDismissedIds = (nextIds: string[]) => {
@@ -353,7 +424,7 @@ export function NotificationBell() {
             <div className="p-6 text-center">
               <CheckCircle2 className="mx-auto h-8 w-8 text-emerald-500" />
               <p className="mt-2 text-sm font-medium">Chưa có thông báo mới</p>
-              <p className="mt-1 text-xs text-muted-foreground">Các booking quá giờ check-in sẽ tự hiện ở đây.</p>
+              <p className="mt-1 text-xs text-muted-foreground">Nhắc check-in trễ và sân hết giờ sẽ tự hiện ở đây.</p>
             </div>
           ) : (
             groupedNotifs.map((group) => {

@@ -56,32 +56,42 @@ const navGroups = [
   },
 ]
 
-function AdminSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+function AdminSidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: { collapsed: boolean; onToggle: () => void; mobileOpen: boolean; onMobileClose: () => void }) {
   const pathname = usePathname()
   const router = useRouter()
   const { user, logout } = useAuth()
 
   return (
-    <aside className={cn(
-      "fixed inset-y-0 left-0 z-40 bg-[#0F172A] text-slate-300 flex flex-col transition-all duration-300",
-      collapsed ? "w-16" : "w-64"
-    )}>
+    <>
+      {/* Mobile Backdrop */}
+      {mobileOpen && (
+        <div 
+          className="fixed inset-0 z-40 bg-black/50 lg:hidden" 
+          onClick={onMobileClose}
+        />
+      )}
+
+      <aside className={cn(
+        "fixed inset-y-0 left-0 z-50 bg-gradient-to-b from-[#17365F] via-[#17365F] to-[#102744] text-[#B7C5D8] flex flex-col shadow-2xl shadow-slate-950/20 transition-all duration-300",
+        collapsed ? "lg:w-16" : "lg:w-64",
+        mobileOpen ? "translate-x-0 w-64" : "-translate-x-full lg:translate-x-0"
+      )}>
       {/* Logo */}
-      <div className="flex items-center gap-2 px-4 h-16 border-b border-slate-800">
+      <div className="flex items-center gap-2 px-4 h-16 border-b border-white/10">
         <Image src="/logo.png" alt="BadmintonHub" width={48} height={48} className="rounded-lg shrink-0" />
         {!collapsed && <span className="font-serif text-lg font-extrabold text-white">BadmintonHub</span>}
       </div>
 
       {/* User chip */}
       {!collapsed && user && (
-        <div className="px-4 py-3 border-b border-slate-800">
+        <div className="px-4 py-3 border-b border-white/10">
           <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold text-white">
+            <div className="h-8 w-8 rounded-full bg-white/10 ring-1 ring-white/15 flex items-center justify-center text-xs font-bold text-white">
               {user.fullName.charAt(0).toUpperCase()}
             </div>
             <div>
               <p className="text-sm font-medium text-white">{user.fullName}</p>
-              <p className="text-xs text-slate-400">{user.email}</p>
+              <p className="text-xs text-[#8FA5C1]">{user.email}</p>
             </div>
           </div>
         </div>
@@ -91,17 +101,18 @@ function AdminSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: (
       <nav className="flex-1 overflow-y-auto px-2 py-4">
         {navGroups.map(group => (
           <div key={group.label} className="mb-4">
-            {!collapsed && <p className="px-3 mb-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">{group.label}</p>}
+            {!collapsed && <p className="px-3 mb-2 text-xs font-semibold text-[#7F95B3] uppercase tracking-wider">{group.label}</p>}
             <div className="flex flex-col gap-0.5">
               {group.items.map(item => {
                 const isActive = pathname === item.href || (item.href !== '/admin' && pathname.startsWith(item.href))
                 return (
                   <Link key={item.href} href={item.href}
+                    onClick={onMobileClose}
                     className={cn(
-                      "flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors",
+                      "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200",
                       isActive
-                        ? "bg-slate-700 text-white font-semibold border-l-2 border-primary"
-                        : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                        ? "bg-[#2563EB] text-white font-semibold shadow-md shadow-blue-950/25 ring-1 ring-white/10"
+                        : "text-[#B7C5D8] hover:bg-white/10 hover:text-white"
                     )}
                   >
                     {item.icon}
@@ -118,18 +129,19 @@ function AdminSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: (
       <div className="px-2 pb-4 flex flex-col gap-1">
         <button
           onClick={() => { logout(); router.push("/") }}
-          className="flex items-center gap-3 px-3 py-2.5 rounded-md text-sm text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors w-full"
+          className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-rose-200 hover:bg-rose-500/10 hover:text-white transition-colors w-full"
         >
           {collapsed ? <LogOut className="h-5 w-5" /> : <><LogOut className="h-5 w-5" /> <span>Đăng xuất</span></>}
         </button>
         <button
           onClick={onToggle}
-          className="flex items-center gap-3 px-3 py-2.5 rounded-md text-sm text-slate-400 hover:bg-slate-800 hover:text-white transition-colors w-full"
+          className="hidden lg:flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-[#B7C5D8] hover:bg-white/10 hover:text-white transition-colors w-full"
         >
           {collapsed ? <ChevronRight className="h-5 w-5" /> : <><ChevronLeft className="h-5 w-5" /> <span>Thu gọn</span></>}
         </button>
       </div>
     </aside>
+    </>
   )
 }
 
@@ -154,8 +166,8 @@ function AdminTopbar({ collapsed, onMobileMenu }: { collapsed: boolean; onMobile
 
   return (
     <header className={cn(
-      "fixed top-0 right-0 z-30 h-16 bg-card border-b flex items-center justify-between px-4 transition-all duration-300",
-      collapsed ? "left-16" : "left-64"
+      "fixed top-0 right-0 left-0 z-30 h-16 bg-card border-b flex items-center justify-between px-4 transition-all duration-300",
+      collapsed ? "lg:left-16" : "lg:left-64"
     )}>
       <div className="flex items-center gap-3">
         <button className="lg:hidden" onClick={onMobileMenu}>
@@ -169,7 +181,7 @@ function AdminTopbar({ collapsed, onMobileMenu }: { collapsed: boolean; onMobile
       </div>
       <div className="flex items-center gap-2">
         <NotificationBell />
-        <div className="h-8 w-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-bold">
+        <div className="h-8 w-8 rounded-full bg-[#2563EB]/10 text-[#2563EB] flex items-center justify-center text-xs font-bold">
           {user?.fullName?.charAt(0)?.toUpperCase() || "A"}
         </div>
       </div>
@@ -179,16 +191,22 @@ function AdminTopbar({ collapsed, onMobileMenu }: { collapsed: boolean; onMobile
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false)
+  const [mobileOpen, setMobileOpen] = useState(false)
 
   return (
     <RouteGuard requiredRole="admin">
       <InventoryProvider>  {/* ← bọc toàn bộ bên trong */}
         <div className="min-h-screen bg-background">
-          <AdminSidebar collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
-          <AdminTopbar collapsed={collapsed} onMobileMenu={() => { }} />
+          <AdminSidebar 
+            collapsed={collapsed} 
+            onToggle={() => setCollapsed(!collapsed)} 
+            mobileOpen={mobileOpen}
+            onMobileClose={() => setMobileOpen(false)}
+          />
+          <AdminTopbar collapsed={collapsed} onMobileMenu={() => setMobileOpen(true)} />
           <main className={cn(
             "pt-16 min-h-screen transition-all duration-300",
-            collapsed ? "ml-16" : "ml-64"
+            collapsed ? "ml-0 lg:ml-16" : "ml-0 lg:ml-64"
           )}>
             <div className="p-6">
               {children}  {/* ← chỉ render 1 lần duy nhất */}

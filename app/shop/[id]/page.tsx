@@ -16,6 +16,8 @@ import { formatVND } from "@/lib/utils"
 import { productApi, type ApiProduct } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { useCart } from "@/lib/cart-context"
+import { Racket3DViewer } from "@/components/racket-3d-viewer"
+import { ShuttlecockLoader } from "@/components/shuttlecock-loader"
 import {
   Star, Heart, ShoppingCart, Minus, Plus, Truck, Shield, RotateCcw,
   ArrowLeft, Share2, Package, ChevronRight, CheckCircle2, Info,
@@ -65,8 +67,8 @@ function RelatedProductCard({ product, index = 0 }: { product: ApiProduct; index
           )}
           <span className="text-5xl text-muted-foreground/10 font-serif font-bold absolute group-hover:scale-125 transition-transform duration-500">{product.brand[0]}</span>
           <div className="absolute top-2 left-2 flex flex-col gap-1">
-            {product.badges.map(b => (
-              <Badge key={b} className={cn(
+            {product.badges.map((b, badgeIndex) => (
+              <Badge key={`${product.id}-${b}-${badgeIndex}`} className={cn(
                 "text-[10px] rounded-full",
                 b === "Bán chạy" ? "bg-primary text-primary-foreground" :
                   b === "Mới" ? "bg-secondary text-secondary-foreground" :
@@ -97,17 +99,43 @@ function RelatedProductCard({ product, index = 0 }: { product: ApiProduct; index
 }
 
 /* ─── Image Gallery ─── */
-function ImageGallery({ images, name, brand, badges }: {
+function ImageGallery({ images, name, brand, badges, category, maxTensionLimit = 28 }: {
   images: string[]
   name: string
   brand: string
   badges: string[]
+  category: string
+  maxTensionLimit?: number
 }) {
   const [activeIdx, setActiveIdx] = useState(0)
   const [imgError, setImgError] = useState<Set<number>>(new Set())
+  const [show3D, setShow3D] = useState(false)
 
   const goPrev = () => setActiveIdx(i => (i === 0 ? images.length - 1 : i - 1))
   const goNext = () => setActiveIdx(i => (i === images.length - 1 ? 0 : i + 1))
+
+  const isRacket = category === "Vợt cầu lông" || category.toLowerCase().includes("vợt")
+
+  if (show3D && isRacket) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold text-sm text-muted-foreground">Mô phỏng & Đan lưới 3D</h3>
+          <Button 
+            size="sm" 
+            variant="outline"
+            onClick={() => setShow3D(false)}
+            className="h-8 gap-1.5 font-semibold text-xs border-2 hover:bg-slate-100"
+          >
+            📷 Quay lại xem ảnh
+          </Button>
+        </div>
+        <div className="w-full aspect-[4/5] rounded-2xl overflow-hidden shadow-lg border">
+          <Racket3DViewer productName={name} brandName={brand} maxTensionLimit={maxTensionLimit} />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-3">
@@ -130,8 +158,8 @@ function ImageGallery({ images, name, brand, badges }: {
 
         {/* Badges */}
         <div className="absolute top-4 left-4 flex flex-col gap-1.5 z-10">
-          {badges.map(b => (
-            <Badge key={b} className={cn(
+          {badges.map((b, badgeIndex) => (
+            <Badge key={`${b}-${badgeIndex}`} className={cn(
               "text-xs px-2.5 py-1",
               b === "Bán chạy" ? "bg-primary text-primary-foreground" :
                 b === "Mới" ? "bg-secondary text-secondary-foreground" :
@@ -139,6 +167,22 @@ function ImageGallery({ images, name, brand, badges }: {
             )}>{b}</Badge>
           ))}
         </div>
+
+        {/* 3D Interactive Trigger overlay for rackets */}
+        {isRacket && (
+          <div className="absolute bottom-4 left-4 z-10">
+            <Button
+              onClick={() => setShow3D(true)}
+              className="bg-slate-900/90 text-white border border-slate-700 hover:bg-slate-800 backdrop-blur-sm shadow-lg shadow-black/20 gap-2 font-bold px-4 py-2.5 text-xs rounded-xl hover:scale-105 active:scale-95 transition-all duration-200"
+            >
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#FF6B35] opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-[#FF6B35]" />
+              </span>
+              🏸 Xem 3D tương tác &amp; Đan lưới
+            </Button>
+          </div>
+        )}
 
         {/* Nav arrows */}
         {images.length > 1 && (
@@ -312,32 +356,10 @@ export default function ProductDetailPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex flex-col bg-background">
+      <div className="min-h-screen flex flex-col bg-[#F7F8FA]">
         <Navbar />
-        <main className="flex-1">
-          <div className="mx-auto max-w-7xl px-4 py-6 space-y-6">
-            <div className="h-4 w-56 bg-muted rounded animate-pulse" />
-            <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-              <div className="space-y-3">
-                <div className="aspect-square rounded-2xl bg-muted animate-pulse" />
-                <div className="flex gap-2">
-                  {[1,2,3].map(i => <div key={i} className="h-20 w-20 rounded-xl bg-muted animate-pulse" style={{ animationDelay: `${i * 80}ms` }} />)}
-                </div>
-              </div>
-              <div className="space-y-4">
-                <div className="h-4 w-32 bg-muted rounded animate-pulse" />
-                <div className="h-8 w-3/4 bg-muted rounded animate-pulse" style={{ animationDelay: "80ms" }} />
-                <div className="h-4 w-1/2 bg-muted rounded animate-pulse" style={{ animationDelay: "160ms" }} />
-                <div className="h-20 bg-muted rounded-xl animate-pulse" style={{ animationDelay: "240ms" }} />
-                <div className="h-4 bg-muted rounded animate-pulse" style={{ animationDelay: "320ms" }} />
-                <div className="h-12 bg-muted rounded-xl animate-pulse" style={{ animationDelay: "400ms" }} />
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="h-12 bg-muted rounded-xl animate-pulse" style={{ animationDelay: "480ms" }} />
-                  <div className="h-12 bg-muted rounded-xl animate-pulse" style={{ animationDelay: "560ms" }} />
-                </div>
-              </div>
-            </div>
-          </div>
+        <main className="flex-1 flex items-center justify-center py-12">
+          <ShuttlecockLoader size={80} textColor="text-slate-500 font-bold" />
         </main>
         <Footer />
       </div>
@@ -370,6 +392,9 @@ export default function ProductDetailPage() {
     : 0
 
   const specs = product.specs as Record<string, string> | undefined
+  const maxTensionStr = specs?.maxTension || specs?.["Sức căng tối đa"] || "";
+  const maxTensionMatch = typeof maxTensionStr === "string" ? maxTensionStr.match(/\d+/g) : null;
+  const maxTensionLimit = maxTensionMatch ? parseInt(maxTensionMatch[maxTensionMatch.length - 1]) : 28;
   const features = product.features as string[] | undefined
   const description = product.description as string | undefined
   const images = product.image ? [product.image] : []
@@ -408,6 +433,8 @@ export default function ProductDetailPage() {
                 name={product.name}
                 brand={product.brand}
                 badges={product.badges}
+                category={product.category}
+                maxTensionLimit={maxTensionLimit}
               />
             </div>
 

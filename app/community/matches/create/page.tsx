@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils'
 
 const levels: CommunityLevel[] = ['Mới chơi', 'Trung bình', 'Khá', 'Nâng cao']
 const eligibleStatuses = new Set(['pending', 'deposited', 'confirmed', 'playing'])
+const MAX_MATCH_PLAYERS = 8
 
 function isEligibleMatchBooking(booking: ApiBooking) {
   if (!eligibleStatuses.has(booking.status)) return false
@@ -18,7 +19,14 @@ function isEligibleMatchBooking(booking: ApiBooking) {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
   bookingDate.setHours(0, 0, 0, 0)
-  return bookingDate >= today
+  if (bookingDate > today) return true
+  if (bookingDate < today) return false
+
+  const [hourRaw, minuteRaw] = (booking.timeEnd || booking.timeStart).split(':')
+  const endMinutes = Number(hourRaw || 0) * 60 + Number(minuteRaw || 0)
+  const now = new Date()
+  const nowMinutes = now.getHours() * 60 + now.getMinutes()
+  return endMinutes > nowMinutes
 }
 
 function formatBookingLabel(booking: ApiBooking) {
@@ -33,8 +41,9 @@ export default function CreateMatchPage() {
   const [selectedBookingId, setSelectedBookingId] = useState('')
   const [title, setTitle] = useState('')
   const [level, setLevel] = useState<CommunityLevel>('Trung bình')
+  const [currentPlayers, setCurrentPlayers] = useState(1)
   const [neededPlayers, setNeededPlayers] = useState(4)
-  const [pricePerPerson, setPricePerPerson] = useState(0)
+  const [pricePerPerson] = useState(0)
   const [note, setNote] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
@@ -70,6 +79,23 @@ export default function CreateMatchPage() {
     () => bookings.find((booking) => booking.id === selectedBookingId) || null,
     [bookings, selectedBookingId],
   )
+  const totalPlayers = Math.min(MAX_MATCH_PLAYERS, Math.max(2, neededPlayers))
+  const activePlayers = Math.min(totalPlayers, Math.max(1, currentPlayers))
+  const splitPrice = selectedBooking ? Math.round(selectedBooking.amount / totalPlayers) : pricePerPerson
+
+  function handleCurrentPlayersChange(value: string) {
+    const parsed = Number(value)
+    if (!Number.isFinite(parsed)) return
+    setCurrentPlayers(Math.min(totalPlayers, Math.max(1, Math.trunc(parsed))))
+  }
+
+  function handleNeededPlayersChange(value: string) {
+    const parsed = Number(value)
+    if (!Number.isFinite(parsed)) return
+    const nextNeeded = Math.min(MAX_MATCH_PLAYERS, Math.max(2, Math.trunc(parsed)))
+    setNeededPlayers(nextNeeded)
+    setCurrentPlayers((current) => Math.min(current, nextNeeded))
+  }
 
   async function handleSubmit() {
     if (!selectedBookingId) {
@@ -78,6 +104,10 @@ export default function CreateMatchPage() {
     }
     if (!title.trim()) {
       setMessage({ type: 'error', text: 'Vui lòng nhập tiêu đề kèo' })
+      return
+    }
+    if (activePlayers > totalPlayers) {
+      setMessage({ type: 'error', text: 'Số người hiện tại không được lớn hơn số người cần đủ' })
       return
     }
 
@@ -89,8 +119,9 @@ export default function CreateMatchPage() {
         booking_id: selectedBookingId,
         title: title.trim(),
         level,
-        needed_players: neededPlayers,
-        price_per_person: pricePerPerson,
+        current_players: activePlayers,
+        needed_players: totalPlayers,
+        price_per_person: splitPrice,
         note: note.trim() || undefined,
       })
 
@@ -186,15 +217,31 @@ export default function CreateMatchPage() {
           </div>
 
           <div>
+            <label className="block text-sm font-semibold">Số người hiện tại</label>
+            <input
+              type="number"
+              min={1}
+              max={totalPlayers}
+              value={activePlayers}
+              onChange={(event) => handleCurrentPlayersChange(event.target.value)}
+              className="mt-2 w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">Gồm bạn và những người đã có sẵn trong nhóm.</p>
+          </div>
+
+          <div>
             <label className="block text-sm font-semibold">Số người cần đủ</label>
             <input
               type="number"
-              min={2}
-              max={20}
-              value={neededPlayers}
-              onChange={(event) => setNeededPlayers(Number(event.target.value || 2))}
+              min={Math.max(2, activePlayers)}
+              max={MAX_MATCH_PLAYERS}
+              value={totalPlayers}
+              onChange={(event) => handleNeededPlayersChange(event.target.value)}
               className="mt-2 w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
             />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Tối đa {MAX_MATCH_PLAYERS} người. Kèo tự khóa khi đủ số này.
+            </p>
           </div>
 
           <div>
@@ -202,10 +249,13 @@ export default function CreateMatchPage() {
             <input
               type="number"
               min={0}
-              value={pricePerPerson}
-              onChange={(event) => setPricePerPerson(Number(event.target.value || 0))}
-              className="mt-2 w-full rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground"
+              value={splitPrice}
+              readOnly
+              className="mt-2 w-full rounded-2xl border border-border bg-secondary/70 px-4 py-3 text-sm outline-none"
             />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Tổng tiền sân chia đều cho {totalPlayers} người khi kèo đủ.
+            </p>
           </div>
 
           <div className="sm:col-span-2">

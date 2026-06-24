@@ -131,7 +131,7 @@ const SLIP_KEY = "bh_admin_slips"
 function loadSlips(): AdminWarehouseSlip[] { if(typeof window==="undefined")return[]; try{const r=localStorage.getItem(SLIP_KEY);return r?JSON.parse(r):[]}catch{return[]} }
 function saveSlips(s: AdminWarehouseSlip[]) { if(typeof window==="undefined")return; try{localStorage.setItem(SLIP_KEY,JSON.stringify(s))}catch{} }
 
-let whMap: Record<string, number> = {}
+const whMap: Record<string, number> = {}
 async function ensureWhMap() { if(Object.keys(whMap).length>0)return; try{const r=await inventoryApi.getWarehouses();if(r.success&&r.data)for(const w of r.data)whMap[w.name]=w.id}catch{} }
 
 export function InventoryProvider({ children }: { children: ReactNode }) {
@@ -175,19 +175,14 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
   const updateTransferStatus = useCallback(async(id:string,status:TransferRequest["status"])=>{await transferApi.updateStatus(id,status);await fetchTfr()}, [fetchTfr])
 
   const exportTransferItems = useCallback(async({transferId,qtys,date,note,operator}:{transferId:string;qtys:Record<string,number>;date:string;note:string;operator:string})=>{
-    const tf=transferRequests.find(t=>t.id===transferId);if(!tf)return
-    await ensureWhMap();const fid=whMap[tf.fromWarehouse]||tf.fromWarehouseId;if(!fid)return
-    for(const item of tf.items){const eq=qtys[item.sku]||0;if(eq<=0)continue;await inventoryApi.exportStock({warehouse_id:fid,sku:item.sku,quantity:eq,note:`XK DC ${transferId} | ${note} | ${operator}`})}
-    if(tf.status==="pending"){await transferApi.updateStatus(transferId,"approved")}
+    const tf=transferRequests.find(t=>t.id===transferId)
+    if(!tf||tf.status==="pending"){await transferApi.updateStatus(transferId,"approved")}
     await transferApi.updateStatus(transferId,"in-transit");await Promise.all([fetchInv(),fetchTxn(),fetchTfr()])
   }, [transferRequests,fetchInv,fetchTxn,fetchTfr])
 
   const receiveTransferItems = useCallback(async(transferId:string,operator:string)=>{
-    const tf=transferRequests.find(t=>t.id===transferId);if(!tf)return
-    await ensureWhMap();const tid=whMap[tf.toWarehouse]||tf.toWarehouseId;if(!tid)return
-    for(const item of tf.items){await inventoryApi.importStock({warehouse_id:tid,sku:item.sku,quantity:item.qty,note:`NK DC ${transferId} | ${operator}`})}
     await transferApi.updateStatus(transferId,"completed");await Promise.all([fetchInv(),fetchTxn(),fetchTfr()])
-  }, [transferRequests,fetchInv,fetchTxn,fetchTfr])
+  }, [fetchInv,fetchTxn,fetchTfr])
 
   const createAdminSlip = useCallback((slip: Omit<AdminWarehouseSlip,"id">)=>{
     const pfx=slip.type==="import"?"PNK":"PXK";const num=String(Math.floor(Math.random()*999)+1).padStart(3,"0")

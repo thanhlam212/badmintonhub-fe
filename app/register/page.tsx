@@ -166,7 +166,7 @@ export default function RegisterPage() {
   }
   const handlePw = (field: "password" | "confirmPassword") =>
     (e: React.ChangeEvent<HTMLInputElement>) =>
-      upd(field, e.target.value.replace(/[^\x00-\x7F]/g, ""))
+      upd(field, e.target.value.replace(/[^\u0020-\u007E]/g, ""))
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

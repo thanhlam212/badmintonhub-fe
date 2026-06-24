@@ -57,7 +57,7 @@ function CommunityFooter() {
           <FooterCol
             title="BadmintonHub"
             links={[
-              ['Đặt sân', '/'],
+              ['Đặt sân', '/courts'],
               ['Cửa hàng', '/'],
               ['Hotline 1900 1234', '/'],
             ]}
@@ -67,7 +67,7 @@ function CommunityFooter() {
       <div className="border-t border-border/40">
         <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-2 px-4 py-5 text-xs text-muted-foreground sm:flex-row sm:px-6">
           <span>© 2026 BadmintonHub Community · Văn hoá cầu lông Hà Nội</span>
-          <Link href="/" className="hover:text-foreground">
+          <Link href="/courts" className="hover:text-foreground">
             Quay lại hệ thống đặt sân →
           </Link>
         </div>

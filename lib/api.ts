@@ -136,6 +136,7 @@ export interface ApiUser {
 }
 
 export interface ApiBooking {
+<<<<<<< HEAD
   id: string;
   courtId: number;
   courtName: string;
@@ -162,6 +163,39 @@ export interface ApiBooking {
   servicePaidAt?: string | null;
   invoice_id?: string | null;
   invoice_status?: string | null;
+=======
+  id: string
+  courtId: number
+  courtName: string
+  branchName: string
+  userId: string | null
+  customerName: string
+  customerPhone: string
+  customerEmail?: string | null
+  bookingDate: string
+  timeStart: string
+  timeEnd: string
+  slots: number
+  amount: number
+  status: string
+  paymentMethod: string | null
+  note: string | null
+  cancellationReason?: string | null
+  cancelledAt?: string | null
+  cancelledByName?: string | null
+  cancelledByRole?: string | null
+  createdAt: string
+  pricePerHour: number
+  fixedScheduleId: string | null
+  bookingCode?: string
+  placedBy?: string | null
+  placedByRole?: string | null
+  serviceLines?: any[] | null
+  servicePaidHash?: string | null
+  servicePaidAt?: string | null
+  invoice_id?: string | null
+  invoice_status?: string | null
+>>>>>>> 3324be58fa0217cdeebf0c78e3df813cb7720999
 }
 
 export interface ApiOrder {
@@ -249,7 +283,17 @@ function extractProductMeta(description?: string | null) {
 }
 
 function transformProduct(raw: any): ApiProduct {
+<<<<<<< HEAD
   const meta = extractProductMeta(raw.description);
+=======
+  const meta = extractProductMeta(raw.description)
+  const badges = Array.from(new Set<string>(
+    (raw.badges || [])
+      .map((b: any) => typeof b === 'string' ? b : b.badge)
+      .filter((badge: unknown): badge is string => typeof badge === 'string' && badge.length > 0),
+  ))
+
+>>>>>>> 3324be58fa0217cdeebf0c78e3df813cb7720999
   return {
     id: raw.id,
     sku: raw.sku,
@@ -269,8 +313,12 @@ function transformProduct(raw: any): ApiProduct {
     features: raw.features || [],
     inStock: raw.in_stock ?? raw.inStock ?? true,
     gender: raw.gender,
+<<<<<<< HEAD
     badges:
       raw.badges?.map((b: any) => (typeof b === "string" ? b : b.badge)) || [],
+=======
+    badges,
+>>>>>>> 3324be58fa0217cdeebf0c78e3df813cb7720999
     supplierName: raw.supplier_name ?? meta.supplierName ?? null,
   };
 }
@@ -299,6 +347,7 @@ function transformBooking(raw: any): ApiBooking {
   // BE's mapBooking() trả về snake_case — handle cả hai dạng
   return {
     id: raw.id,
+<<<<<<< HEAD
     courtId: raw.courtId ?? raw.court_id ?? 0,
     courtName: raw.courtName || raw.court_name || raw.court?.name || "",
     branchName:
@@ -322,6 +371,29 @@ function transformBooking(raw: any): ApiBooking {
     pricePerHour: parseFloat(
       String(raw.pricePerHour ?? raw.price_per_hour ?? 0),
     ),
+=======
+    courtId:     raw.courtId     ?? raw.court_id     ?? 0,
+    courtName:   raw.courtName   || raw.court_name   || raw.court?.name  || '',
+    branchName:  raw.branchName  || raw.branch_name  || raw.court?.branch?.name || raw.branch?.name || '',
+    userId:      raw.userId      ?? raw.user_id      ?? null,
+    customerName:  raw.customerName  || raw.customer_name  || '',
+    customerPhone: raw.customerPhone || raw.customer_phone || '',
+    customerEmail: raw.customerEmail || raw.customer_email || null,
+    bookingDate:   raw.bookingDate   || raw.booking_date   || '',
+    timeStart:     raw.timeStart     || raw.time_start     || '',
+    timeEnd:       raw.timeEnd       || raw.time_end       || '',
+    slots:   raw.people ?? raw.slots ?? 1,
+    amount:  parseFloat(String(raw.amount ?? 0)),
+    status:  raw.status || '',
+    paymentMethod: raw.paymentMethod || raw.payment_method || null,
+    note:    raw.note || null,
+    cancellationReason: raw.cancellationReason || raw.cancellation_reason || null,
+    cancelledAt: raw.cancelledAt || raw.cancelled_at || null,
+    cancelledByName: raw.cancelledByName || raw.cancelled_by_name || null,
+    cancelledByRole: raw.cancelledByRole || raw.cancelled_by_role || null,
+    createdAt: raw.createdAt || raw.created_at || '',
+    pricePerHour: parseFloat(String(raw.pricePerHour ?? raw.price_per_hour ?? 0)),
+>>>>>>> 3324be58fa0217cdeebf0c78e3df813cb7720999
     fixedScheduleId: raw.fixedScheduleId || raw.fixed_schedule_id || null,
     bookingCode: raw.bookingCode || raw.booking_code || undefined,
     // BE dùng booked_by_* thay vì placed_by_*
@@ -601,7 +673,19 @@ export const courtApi = {
     if (res.success && res.data) return res.data;
     return [];
   },
+<<<<<<< HEAD
 };
+=======
+
+  createReview: async (courtId: number, data: { rating: number; content?: string }) => {
+    const res = await apiFetch<any>(`/courts/${courtId}/reviews`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+    return { success: res.success, review: res.data, message: res.message }
+  },
+}
+>>>>>>> 3324be58fa0217cdeebf0c78e3df813cb7720999
 
 // ═══════════════════════════════════════════════════════════════
 // PRODUCTS API
@@ -852,6 +936,7 @@ export const bookingApi = {
 
   // PATCH /api/bookings/:id/confirm
   confirm: async (id: string) => {
+<<<<<<< HEAD
     const res = await apiFetch<any>(`/bookings/${id}/confirm`, {
       method: "PATCH",
     });
@@ -864,11 +949,31 @@ export const bookingApi = {
       method: "PATCH",
     });
     return { success: res.success, error: res.message };
+=======
+    const res = await apiFetch<any>(`/bookings/${id}/confirm`, { method: 'PATCH' })
+    if (res.success && res.data) {
+      return { success: true, booking: transformBooking(res.data) }
+    }
+    return { success: false, error: res.message }
+  },
+
+  // PATCH /api/bookings/:id/cancel
+  cancel: async (id: string, payload?: { reason?: string }) => {
+    const res = await apiFetch<any>(`/bookings/${id}/cancel`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload || {}),
+    })
+    if (res.success && res.data) {
+      return { success: true, booking: transformBooking(res.data) }
+    }
+    return { success: false, error: res.message }
+>>>>>>> 3324be58fa0217cdeebf0c78e3df813cb7720999
   },
 
   // PATCH /api/bookings/:id/status — Admin đổi trạng thái
-  updateStatus: async (id: string, status: string) => {
+  updateStatus: async (id: string, status: string, payload?: { reason?: string }) => {
     // Map từ action → endpoint đúng
+<<<<<<< HEAD
     if (status === "confirmed") {
       const res = await apiFetch<any>(`/bookings/${id}/confirm`, {
         method: "PATCH",
@@ -880,6 +985,24 @@ export const bookingApi = {
         method: "PATCH",
       });
       return { success: res.success, error: res.message };
+=======
+    if (status === 'confirmed') {
+      const res = await apiFetch<any>(`/bookings/${id}/confirm`, { method: 'PATCH' })
+      if (res.success && res.data) {
+        return { success: true, booking: transformBooking(res.data) }
+      }
+      return { success: false, error: res.message }
+    }
+    if (status === 'cancelled') {
+      const res = await apiFetch<any>(`/bookings/${id}/cancel`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload || {}),
+      })
+      if (res.success && res.data) {
+        return { success: true, booking: transformBooking(res.data) }
+      }
+      return { success: false, error: res.message }
+>>>>>>> 3324be58fa0217cdeebf0c78e3df813cb7720999
     }
     // playing, completed → dùng /status
     const res = await apiFetch<any>(`/bookings/${id}/status`, {
@@ -1304,6 +1427,7 @@ export const salesOrderApi = {
 
   // POST /sales-orders — BE DTO dùng snake_case
   create: async (dto: {
+<<<<<<< HEAD
     branch_id?: number;
     customer_name?: string;
     customer_phone?: string;
@@ -1318,6 +1442,13 @@ export const salesOrderApi = {
       price: number;
       quantity: number;
     }[];
+=======
+    branch_id?: number; customer_name?: string; customer_phone?: string
+    note?: string; order_type?: string; fulfillment_mode?: string
+    fulfill_warehouse_id?: number; payment_method?: string
+    total?: number; discount?: number; final_total?: number
+    items: { product_id?: number; product_name: string; price: number; quantity: number }[]
+>>>>>>> 3324be58fa0217cdeebf0c78e3df813cb7720999
   }) => {
     const res = await apiFetch("/sales-orders", {
       method: "POST",
@@ -1329,12 +1460,24 @@ export const salesOrderApi = {
         order_type: dto.order_type,
         fulfillment_mode: dto.fulfillment_mode,
         fulfill_warehouse_id: dto.fulfill_warehouse_id,
+<<<<<<< HEAD
         payment_method: dto.payment_method,
         items: dto.items.map((i) => ({
           product_id: i.product_id ?? null,
           product_name: i.product_name || "",
           price: i.price,
           qty: i.quantity,
+=======
+        payment_method:       dto.payment_method,
+        total:                dto.total,
+        discount:             dto.discount,
+        final_total:          dto.final_total,
+        items: dto.items.map(i => ({
+          product_id:   i.product_id ?? null,
+          product_name: i.product_name || '',
+          price:        i.price,
+          qty:          i.quantity,
+>>>>>>> 3324be58fa0217cdeebf0c78e3df813cb7720999
         })),
       }),
     });

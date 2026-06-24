@@ -274,8 +274,8 @@ function OrderDetailDialog({ order, onApprove, onStartDelivery, onDeliver, onCan
                   </tr>
                 </thead>
                 <tbody>
-                  {order.items.map(item => (
-                    <tr key={item.productId} className="border-t">
+                  {order.items.map((item, idx) => (
+                    <tr key={`${item.productId}-${idx}`} className="border-t">
                       <td className="py-2 px-3">{item.name}</td>
                       <td className="py-2 px-3 text-center">{item.qty}</td>
                       <td className="py-2 px-3 text-right">{formatVND(item.price)}</td>
@@ -627,12 +627,28 @@ export default function HubOrdersPage() {
     const apiId = order?.rawId || orderId
     try {
       if (updates.status) {
-        await orderApi.updateStatus(apiId, updates.status)
+        // Backend state machine: pending→confirmed→processing
+        // Nếu đang pending và muốn chuyển sang processing, phải qua confirmed trước
+        if (order?.status === "pending" && updates.status === "processing") {
+          const confirmRes = await orderApi.updateStatus(apiId, "confirmed")
+          if (!confirmRes.success) {
+            console.error("Lỗi xác nhận đơn:", confirmRes.error)
+            return
+          }
+        }
+        const res = await orderApi.updateStatus(apiId, updates.status)
+        if (!res.success) {
+          console.error("Lỗi cập nhật trạng thái:", res.error)
+          return
+        }
         if (updates.status === "processing" || updates.status === "cancelled") {
           refreshInventory().catch(() => {})
         }
       }
-    } catch {}
+    } catch (err) {
+      console.error("Lỗi cập nhật đơn hàng:", err)
+      return
+    }
     const updated = orders.map(o =>
       o.id === orderId ? { ...o, ...updates } : o
     )
@@ -845,9 +861,15 @@ export default function HubOrdersPage() {
           <TabsTrigger value="pending" className="gap-1">
             Chờ duyệt {stats.pending > 0 && <Badge className="bg-amber-500 text-white h-5 min-w-5 text-[10px]">{stats.pending}</Badge>}
           </TabsTrigger>
-          <TabsTrigger value="processing">Đang xử lý</TabsTrigger>
-          <TabsTrigger value="shipping">Đang giao</TabsTrigger>
-          <TabsTrigger value="completed">Hoàn thành</TabsTrigger>
+          <TabsTrigger value="processing" className="gap-1">
+            Đang xử lý {stats.processing > 0 && <Badge className="bg-blue-500 text-white h-5 min-w-5 text-[10px]">{stats.processing}</Badge>}
+          </TabsTrigger>
+          <TabsTrigger value="shipping" className="gap-1">
+            Đang giao {stats.shipping > 0 && <Badge className="bg-purple-500 text-white h-5 min-w-5 text-[10px]">{stats.shipping}</Badge>}
+          </TabsTrigger>
+          <TabsTrigger value="completed" className="gap-1">
+            Hoàn thành {completedOrders.length > 0 && <Badge className="bg-green-500 text-white h-5 min-w-5 text-[10px]">{completedOrders.length}</Badge>}
+          </TabsTrigger>
         </TabsList>
 
         {[

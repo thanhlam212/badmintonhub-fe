@@ -9,13 +9,15 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
-import { formatVND } from '@/lib/utils';
+import { formatVND, formatBookingReference } from '@/lib/utils';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 // Regular single booking (stored by /booking/page.tsx)
 interface RegularBookingData {
   id: string;
+  bookingCode?: string;
+  createdAt?: string;
   courtName: string;
   courtType: string;
   branch: string;
@@ -85,7 +87,7 @@ function RegularSuccess({ data }: { data: RegularBookingData }) {
             <div className="flex items-center gap-2 text-sm">
               <Receipt className="h-4 w-4 text-gray-400" />
               <span className="text-gray-500">Mã đặt sân:</span>
-              <span className="font-mono font-bold text-green-600">{data.id.slice(0, 8).toUpperCase()}</span>
+              <span className="font-mono font-bold text-green-600">{data.bookingCode || formatBookingReference(data.id, data.createdAt)}</span>
             </div>
           </div>
         </div>
@@ -133,14 +135,14 @@ function RegularSuccess({ data }: { data: RegularBookingData }) {
           {/* Actual QR code */}
           <div className="flex justify-center mb-4">
             <img
-              src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(data.id)}&color=0a2416&bgcolor=ffffff`}
-              alt={`QR Check-in ${data.id}`}
+              src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(data.bookingCode || formatBookingReference(data.id, data.createdAt))}&color=0a2416&bgcolor=ffffff`}
+              alt={`QR Check-in ${data.bookingCode || formatBookingReference(data.id, data.createdAt)}`}
               width={180}
               height={180}
               className="border-4 border-white rounded-xl bg-white"
             />
           </div>
-          <p className="text-green-300/60 text-xs font-mono">{data.id}</p>
+          <p className="text-green-300/60 text-xs font-mono">{data.bookingCode || formatBookingReference(data.id, data.createdAt)}</p>
           <p className="text-green-200/70 text-xs mt-3">
             📧 QR code cũng được gửi kèm email xác nhận của bạn
           </p>
@@ -318,7 +320,6 @@ function BookingSuccessContent() {
     if (savedRegular) {
       try {
         setRegularData(JSON.parse(savedRegular));
-        localStorage.removeItem('completedBooking');
         setLoading(false);
         return;
       } catch {
@@ -331,7 +332,6 @@ function BookingSuccessContent() {
     if (savedFixed) {
       try {
         setFixedData(JSON.parse(savedFixed));
-        localStorage.removeItem('completedFixedBooking');
       } catch {
         localStorage.removeItem('completedFixedBooking');
       }

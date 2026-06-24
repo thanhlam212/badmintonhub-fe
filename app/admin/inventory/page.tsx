@@ -13,7 +13,8 @@ import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogClose } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
 import { StockLevelIndicator } from "@/components/shared"
-import { formatVND } from "@/lib/utils"
+import { formatVND, formatTransferReference } from "@/lib/utils"
+import { printTransferSlip, printWarehouseSlip } from "@/lib/print-utils"
 import { purchaseOrderApi } from "@/lib/api"
 import { useInventory, type TransferRequest } from "@/lib/inventory-context"
 import { cn } from "@/lib/utils"
@@ -21,7 +22,7 @@ import {
   Search, Package, AlertTriangle, XOctagon, DollarSign, Plus,
   Trash2, Eye, CheckCircle2, ArrowDownToLine, ArrowUpFromLine,
   FileText, Repeat, ArrowRight, Clock, Inbox, UserCheck, Truck, Users,
-  Send, RefreshCw, FileSpreadsheet
+  Send, RefreshCw, FileSpreadsheet, Printer
 } from "lucide-react"
 import { exportInventoryCheckSheet } from "@/lib/export-inventory-check"
 import {
@@ -34,6 +35,11 @@ const INV_PAGE_SIZE = 20
 interface GrnRow { sku: string; qty: number; cost: number }
 interface ExportRow { sku: string; qty: number; reason: string }
 interface SlipItemRow { sku: string; qty: number; unitCost: number }
+
+function buildWarehouseSlipCode(prefix: "PNK" | "PXK", seed?: string) {
+  const source = String(seed || Date.now()).replace(/[^a-zA-Z0-9]/g, "").toUpperCase()
+  return `${prefix}-${new Date().getFullYear()}-${source.slice(-6)}`
+}
 
 export default function AdminInventory() {
   const ctx = useInventory()
@@ -136,11 +142,64 @@ export default function AdminInventory() {
 
   // ─── Handlers ────────────────────────────────────────────────────────────────
 
-  const handleGrnConfirm = () => {
+  const getInventoryCost = (sku: string, warehouse?: string) => {
+    return inventory.find(i => i.sku === sku && (!warehouse || i.warehouse === warehouse))?.unitCost
+      || inventory.find(i => i.sku === sku)?.unitCost
+      || 0
+  }
+
+  const printAdminWarehouseSlip = (slip: {
+    id?: string
+    type: "import" | "export"
+    date: string
+    warehouse: string
+    supplier?: string
+    poId?: string
+    note: string
+    assignedTo?: string
+    processedBy?: string
+    items: { sku: string; name: string; qty: number; unitCost?: number }[]
+  }) => {
+    printWarehouseSlip({
+      id: slip.id || buildWarehouseSlipCode(slip.type === "import" ? "PNK" : "PXK"),
+      type: slip.type,
+      date: slip.date,
+      warehouse: slip.warehouse,
+      supplier: slip.supplier,
+      poId: slip.poId,
+      note: slip.note,
+      createdBy: "Admin",
+      assignedTo: slip.assignedTo || slip.warehouse,
+      processedBy: slip.processedBy || "Admin",
+      items: slip.items.map(item => ({
+        sku: item.sku,
+        name: item.name,
+        qty: item.qty,
+        unitCost: item.unitCost ?? getInventoryCost(item.sku, slip.warehouse),
+      })),
+    })
+  }
+
+  const printAdminTransferSlip = (transfer: TransferRequest) => {
+    printTransferSlip({
+      code: transfer.reference || formatTransferReference(transfer.id, transfer.date),
+      date: transfer.date,
+      fromWarehouse: transfer.fromWarehouse,
+      toWarehouse: transfer.toWarehouse,
+      reason: transfer.reason,
+      note: transfer.note,
+      status: transfer.status,
+      createdBy: transfer.createdBy,
+      pickupMethod: transfer.pickupMethod,
+      items: transfer.items.map(item => ({ sku: item.sku, name: item.name, qty: item.qty })),
+    })
+  }
+
+  const handleGrnConfirm = async () => {
     const validRows = grnRows.filter(r => r.sku && r.qty > 0)
     if (validRows.length === 0 || !grnWarehouse) return
 
-    ctx.importItems({
+    await ctx.importItems({
       items: validRows.map(r => ({
         sku: r.sku,
         name: inventory.find(it => it.sku === r.sku)?.name || r.sku,
@@ -153,17 +212,33 @@ export default function AdminInventory() {
       operator: "Admin",
     })
 
+    printAdminWarehouseSlip({
+      id: buildWarehouseSlipCode("PNK", grnPo || grnDate),
+      type: "import",
+      date: grnDate,
+      warehouse: grnWarehouse,
+      supplier: suppliers.find(s => s.id.toString() === grnSupplier)?.name,
+      poId: grnPo || undefined,
+      note: grnNote,
+      items: validRows.map(r => ({
+        sku: r.sku,
+        name: inventory.find(it => it.sku === r.sku)?.name || r.sku,
+        qty: r.qty,
+        unitCost: r.cost,
+      })),
+    })
+
     setGrnSuccess(true)
     setGrnRows([{ sku: "", qty: 1, cost: 0 }])
     setGrnNote("")
     setTimeout(() => setGrnSuccess(false), 3000)
   }
 
-  const handleExportConfirm = () => {
+  const handleExportConfirm = async () => {
     const validRows = exportRows.filter(r => r.sku && r.qty > 0)
     if (validRows.length === 0) return
 
-    const success = ctx.exportItems({
+    const success = await ctx.exportItems({
       items: validRows.map(r => ({
         sku: r.sku,
         name: inventory.find(it => it.sku === r.sku)?.name || r.sku,
@@ -178,6 +253,20 @@ export default function AdminInventory() {
 
     if (!success) return
 
+    printAdminWarehouseSlip({
+      id: buildWarehouseSlipCode("PXK", exportDate),
+      type: "export",
+      date: exportDate,
+      warehouse: exportWarehouse,
+      note: exportNote,
+      items: validRows.map(r => ({
+        sku: r.sku,
+        name: inventory.find(it => it.sku === r.sku)?.name || r.sku,
+        qty: r.qty,
+        unitCost: getInventoryCost(r.sku, exportWarehouse),
+      })),
+    })
+
     setExportSuccess(true)
     setExportRows([{ sku: "", qty: 1, reason: "" }])
     setExportNote("")
@@ -188,7 +277,7 @@ export default function AdminInventory() {
     const validItems = slipItems.filter(i => i.sku && i.qty > 0)
     if (validItems.length === 0 || !slipWarehouse) return
 
-    ctx.createAdminSlip({
+    const slipId = ctx.createAdminSlip({
       type: slipType,
       source: "admin",
       poId: slipPo || undefined,
@@ -205,6 +294,23 @@ export default function AdminInventory() {
       status: "pending",
       createdBy: "Admin",
       assignedTo: "Nhân viên kho",
+    })
+
+    printAdminWarehouseSlip({
+      id: slipId,
+      type: slipType,
+      date: new Date().toISOString().split("T")[0],
+      warehouse: slipWarehouse,
+      supplier: slipType === "import" ? suppliers.find(s => s.id.toString() === slipSupplier)?.name : undefined,
+      poId: slipPo || undefined,
+      note: slipNote,
+      assignedTo: "Nhan vien kho",
+      items: validItems.map(item => ({
+        sku: item.sku,
+        name: inventory.find(i => i.sku === item.sku)?.name || item.sku,
+        qty: item.qty,
+        unitCost: item.unitCost,
+      })),
     })
 
     setSlipSuccess(true)
@@ -907,6 +1013,11 @@ export default function AdminInventory() {
                           {slip.supplier && <span>NCC: {slip.supplier}</span>}
                           {slip.poId && <span>PO: {slip.poId}</span>}
                         </div>
+                        <div className="mt-2">
+                          <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => printAdminWarehouseSlip(slip)}>
+                            <Printer className="h-3.5 w-3.5 mr-1" /> In
+                          </Button>
+                        </div>
                         {slip.status === "processed" && slip.processedAt && (
                           <p className="text-[10px] text-emerald-600 mt-1">
                             Xử lý lúc {new Date(slip.processedAt).toLocaleString("vi-VN")} bởi {slip.processedBy}
@@ -1026,6 +1137,9 @@ export default function AdminInventory() {
                           {t.completedAt && <p className="text-xs text-emerald-600 mt-1">Hoàn tất: {new Date(t.completedAt).toLocaleString("vi-VN")}</p>}
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
+                          <Button variant="outline" size="sm" onClick={() => printAdminTransferSlip(t)}>
+                            <Printer className="h-4 w-4 mr-1" /> In
+                          </Button>
                           <Button variant="outline" size="sm" onClick={() => { setSelectedTransfer(t); setTransferDetailOpen(true) }}>
                             <Eye className="h-4 w-4 mr-1" /> Chi tiết
                           </Button>
@@ -1102,6 +1216,9 @@ export default function AdminInventory() {
                   </div>
                   <DialogFooter>
                     <DialogClose asChild><Button variant="outline">Đóng</Button></DialogClose>
+                    <Button variant="outline" size="sm" onClick={() => printAdminTransferSlip(selectedTransfer)}>
+                      <Printer className="h-4 w-4 mr-1" /> In phieu
+                    </Button>
                     {selectedTransfer.status === "pending" && (
                       <Button variant="destructive" size="sm" onClick={() => handleAdminTransferAction(selectedTransfer.id, "rejected")}>
                         Từ chối yêu cầu

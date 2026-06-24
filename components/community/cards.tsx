@@ -18,6 +18,7 @@ import {
 import {
   communityApi,
   type CommunityMatch,
+  type CommunityMatchParticipant,
   type CommunityPlayer,
   type CommunityPost,
   type CommunityPostKind,
@@ -226,23 +227,78 @@ export function MatchCard({
   const router = useRouter()
   const { user } = useAuth()
   const [joined, setJoined] = useState(!!match.joined)
+  const [requested, setRequested] = useState(!!match.requested)
   const [filled, setFilled] = useState(match.filled)
+  const [requestsOpen, setRequestsOpen] = useState(false)
+  const [participants, setParticipants] = useState<CommunityMatchParticipant[]>([])
+  const [loadingRequests, setLoadingRequests] = useState(false)
   const slots = Array.from({ length: match.needed })
+  const isHostByUsername = !!user?.username && match.host.username === user.username
+  const blocked = match.expired || match.status === 'expired' || match.status === 'full' || isHostByUsername
+  const joinDisabled = joined || requested || blocked
+  const statusLabel = match.expired || match.status === 'expired' ? 'Quá hạn' : match.statusLabel || 'Đang tìm người'
 
   async function handleJoin() {
     if (!requireLogin(user?.role, router)) return
+    if (joinDisabled) return
     const res = await communityApi.joinMatch(match.id)
     if (!res.success || !res.match) return
-    setJoined(true)
+    setJoined(!!res.match.joined)
+    setRequested(!!res.match.requested || !!res.requested)
     setFilled(res.match.filled)
     onJoined?.(res.match)
+  }
+
+  async function loadRequests() {
+    if (!match.isHost) return
+    setRequestsOpen((current) => !current)
+    if (participants.length) return
+    setLoadingRequests(true)
+    try {
+      const res = await communityApi.getMatchParticipants(match.id)
+      if (res.success) setParticipants(res.participants)
+    } finally {
+      setLoadingRequests(false)
+    }
+  }
+
+  async function handleApprove(userId: string) {
+    const res = await communityApi.approveMatchParticipant(match.id, userId)
+    if (!res.success || !res.match) return
+    setParticipants((current) =>
+      current.map((participant) =>
+        participant.userId === userId ? { ...participant, status: 'joined' } : participant,
+      ),
+    )
+    setFilled(res.match.filled)
+    onJoined?.(res.match)
+  }
+
+  async function handleReject(userId: string) {
+    const res = await communityApi.rejectMatchParticipant(match.id, userId)
+    if (!res.success) return
+    setParticipants((current) =>
+      current.map((participant) =>
+        participant.userId === userId ? { ...participant, status: 'rejected' } : participant,
+      ),
+    )
   }
 
   return (
     <article className="flex flex-col rounded-3xl border border-border bg-card p-5 transition-shadow hover:shadow-[0_8px_30px_-12px_rgba(0,0,0,0.18)]">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <span className="inline-flex items-center gap-1 rounded-full bg-accent px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-accent-foreground">
+          <span
+            className={cn(
+              'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[0px] font-bold uppercase tracking-wide',
+              match.expired || match.status === 'expired'
+                ? 'bg-red-100 text-red-700'
+                : match.status === 'full'
+                  ? 'bg-amber-100 text-amber-700'
+                  : 'bg-accent text-accent-foreground',
+            )}
+          >
+            <span className="text-[11px]">{statusLabel}</span>
             Đang tìm người
           </span>
           <h3 className="mt-2 font-heading text-xl font-semibold leading-tight text-balance">
@@ -282,22 +338,98 @@ export function MatchCard({
         </div>
       </div>
 
+      {match.isHost ? (
+        <div className="mt-4 rounded-2xl border border-border bg-secondary/40 p-3">
+          <button
+            type="button"
+            onClick={loadRequests}
+            className="flex w-full items-center justify-between text-left text-sm font-semibold"
+          >
+            <span>Yêu cầu tham gia</span>
+            <span className="rounded-full bg-background px-2 py-0.5 text-xs text-muted-foreground">
+              {match.pendingParticipants || 0} chờ duyệt
+            </span>
+          </button>
+          {requestsOpen ? (
+            <div className="mt-3 space-y-2">
+              {loadingRequests ? (
+                <p className="text-xs text-muted-foreground">Đang tải yêu cầu...</p>
+              ) : participants.filter((item) => item.status === 'requested').length === 0 ? (
+                <p className="text-xs text-muted-foreground">Chưa có yêu cầu mới.</p>
+              ) : (
+                participants
+                  .filter((item) => item.status === 'requested')
+                  .map((participant) => (
+                    <div key={participant.userId} className="flex items-center justify-between gap-3 rounded-xl bg-background p-2">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <CommunityAvatar src={participant.player.avatar} name={participant.player.name} size={28} className="size-7" />
+                        <span className="truncate text-sm font-medium">{participant.player.name}</span>
+                      </div>
+                      <div className="flex shrink-0 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleReject(participant.userId)}
+                          className="rounded-full border border-border px-2.5 py-1 text-xs font-semibold hover:bg-secondary"
+                        >
+                          Từ chối
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleApprove(participant.userId)}
+                          className="rounded-full bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground"
+                        >
+                          Duyệt
+                        </button>
+                      </div>
+                    </div>
+                  ))
+              )}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="mt-5 flex items-center justify-between border-t border-border pt-4">
         <div className="flex items-center gap-2">
           <CommunityAvatar src={match.host.avatar} name={match.host.name} size={32} className="size-8" />
           <div className="leading-tight">
             <p className="text-xs font-semibold">{match.host.name}</p>
             <p className="text-[11px] text-muted-foreground">{match.price}</p>
+            {match.isHost && match.pendingParticipants ? (
+              <p className="text-[11px] font-semibold text-primary">{match.pendingParticipants} yêu cầu chờ duyệt</p>
+            ) : null}
           </div>
         </div>
-        <button
-          type="button"
-          onClick={handleJoin}
-          disabled={joined}
-          className="rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-transform hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-70"
-        >
+        <div className="flex flex-col items-end gap-2">
+          {match.roomId ? (
+            <Link
+              href={`/community/chat?room=${match.roomId}`}
+              className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs font-semibold hover:bg-secondary"
+            >
+              <MessageCircle className="size-3.5" />
+              Vào chat
+            </Link>
+          ) : null}
+          <button
+            type="button"
+            onClick={handleJoin}
+            disabled={joinDisabled}
+            className="rounded-full bg-primary px-4 py-2 text-[0px] font-semibold text-primary-foreground transition-transform hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            <span className="text-sm">
+              {joined
+                ? 'Đã tham gia'
+                : requested
+                  ? 'Đã gửi yêu cầu'
+                  : match.expired || match.status === 'expired'
+                    ? 'Quá hạn'
+                    : match.status === 'full'
+                      ? 'Đã đủ'
+                      : 'Xin tham gia'}
+            </span>
           {joined ? 'Đã tham gia' : 'Xin tham gia'}
-        </button>
+          </button>
+        </div>
       </div>
     </article>
   )

@@ -22,9 +22,10 @@ import {
   Copy, CalendarDays, CreditCard, Users, FileText,
   RefreshCw, SkipForward, XCircle, ChevronRight, Loader2,
 } from "lucide-react"
+import QRCode from "react-qr-code"
 import { useState, useEffect } from "react"
 import { formatVND, formatBookingReference } from "@/lib/utils"
-import { bookingApi, orderApi, fixedScheduleApi, type ApiBooking, type ApiOrder } from "@/lib/api"
+import { bookingApi, courtApi, orderApi, fixedScheduleApi, type ApiBooking, type ApiOrder } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
 
@@ -87,10 +88,10 @@ function BookingDetailDialog({ booking }: { booking: ApiBooking }) {
   }
 
   const statusSteps = [
-    { key: "pending",   label: "Chờ xác nhận" },
+    { key: "pending", label: "Chờ xác nhận" },
     { key: "deposited", label: "Đã đặt cọc" },
     { key: "confirmed", label: "Đã xác nhận" },
-    { key: "playing",   label: "Đang chơi" },
+    { key: "playing", label: "Đang chơi" },
     { key: "completed", label: "Hoàn thành" },
   ]
   const currentStep = statusSteps.findIndex(s => s.key === booking.status)
@@ -190,8 +191,8 @@ function BookingDetailDialog({ booking }: { booking: ApiBooking }) {
           <div>
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">QR Check-in</p>
             <div className="flex items-center gap-4 rounded-lg bg-muted p-3">
-              <div className="h-20 w-20 bg-card rounded border-2 border-dashed border-border flex items-center justify-center shrink-0">
-                <QrCode className="h-10 w-10 text-muted-foreground" />
+              <div className="bg-white p-1.5 rounded shrink-0 border border-border shadow-sm">
+                <QRCode value={booking.bookingCode || booking.id.toString()} size={64} />
               </div>
               <div className="text-sm">
                 <p className="font-semibold">Xuất trình khi đến sân</p>
@@ -211,15 +212,46 @@ function BookingDetailDialog({ booking }: { booking: ApiBooking }) {
 
 // ─── Booking Card ─────────────────────────────────────────────
 function BookingCard({ booking, onCancel }: { booking: ApiBooking; onCancel?: (id: string) => void }) {
+  const [reviewOpen, setReviewOpen] = useState(false)
   const [rating, setRating] = useState(0)
   const [hoverRating, setHoverRating] = useState(0)
   const [reviewContent, setReviewContent] = useState("")
+  const [reviewMessage, setReviewMessage] = useState("")
+  const [reviewSubmitting, setReviewSubmitting] = useState(false)
 
   const dateObj = new Date(booking.bookingDate)
   const dayNum = dateObj.getDate()
   const month = `Th${dateObj.getMonth() + 1}`
   const dayNames = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"]
   const dayName = dayNames[dateObj.getDay()]
+
+  const handleReviewSubmit = async () => {
+    if (rating === 0 || reviewSubmitting) return
+
+    setReviewSubmitting(true)
+    setReviewMessage("")
+
+    const result = await courtApi.createReview(booking.courtId, {
+      rating,
+      content: reviewContent.trim() || undefined,
+    })
+
+    setReviewSubmitting(false)
+
+    if (!result.success) {
+      setReviewMessage(result.message || "Không thể gửi đánh giá lúc này")
+      return
+    }
+
+    setReviewMessage("Đã gửi đánh giá. Cảm ơn bạn đã chia sẻ trải nghiệm!")
+    window.setTimeout(() => {
+      setReviewOpen(false)
+      setRating(0)
+      setHoverRating(0)
+      setReviewContent("")
+      setReviewMessage("")
+    }, 900)
+  }
 
   return (
     <Card className="hover:-translate-y-0.5 transition-all duration-200 hover:shadow-md">
@@ -278,7 +310,16 @@ function BookingCard({ booking, onCancel }: { booking: ApiBooking; onCancel?: (i
               )}
 
               {booking.status === "completed" && (
-                <Dialog>
+                <Dialog
+                  open={reviewOpen}
+                  onOpenChange={(open) => {
+                    setReviewOpen(open)
+                    if (!open) {
+                      setHoverRating(0)
+                      setReviewMessage("")
+                    }
+                  }}
+                >
                   <DialogTrigger asChild>
                     <Button size="sm" className="text-xs h-7 bg-primary text-primary-foreground hover:bg-primary/90">Đánh giá</Button>
                   </DialogTrigger>
@@ -299,8 +340,17 @@ function BookingCard({ booking, onCancel }: { booking: ApiBooking; onCancel?: (i
                         {rating === 0 ? "Chọn số sao" : `Bạn đánh giá ${rating} sao`}
                       </p>
                       <Textarea placeholder="Chia sẻ trải nghiệm của bạn về sân..." value={reviewContent} onChange={e => setReviewContent(e.target.value)} rows={3} />
-                      <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90 font-semibold" disabled={rating === 0}>
-                        Gửi đánh giá
+                      {reviewMessage && (
+                        <p className={cn("text-center text-sm", reviewMessage.startsWith("Đã gửi") ? "text-green-600" : "text-red-600")}>
+                          {reviewMessage}
+                        </p>
+                      )}
+                      <Button
+                        className="w-full bg-primary text-primary-foreground hover:bg-primary/90 font-semibold"
+                        disabled={rating === 0 || reviewSubmitting}
+                        onClick={handleReviewSubmit}
+                      >
+                        {reviewSubmitting ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Đang gửi...</> : "Gửi đánh giá"}
                       </Button>
                     </div>
                   </DialogContent>
@@ -367,19 +417,19 @@ interface FixedScheduleDetail extends FixedScheduleSummary {
 }
 
 const FIXED_STATUS_CONFIG: Record<string, { label: string; color: string }> = {
-  pending:   { label: "Chờ thanh toán", color: "bg-amber-100 text-amber-800 border-amber-200" },
-  deposited: { label: "Đã cọc",         color: "bg-blue-100 text-blue-800 border-blue-200" },
-  confirmed: { label: "Đã xác nhận",    color: "bg-green-100 text-green-800 border-green-200" },
-  completed: { label: "Hoàn thành",     color: "bg-gray-100 text-gray-600 border-gray-200" },
-  cancelled: { label: "Đã hủy",         color: "bg-red-100 text-red-600 border-red-200" },
+  pending: { label: "Chờ thanh toán", color: "bg-amber-100 text-amber-800 border-amber-200" },
+  deposited: { label: "Đã cọc", color: "bg-blue-100 text-blue-800 border-blue-200" },
+  confirmed: { label: "Đã xác nhận", color: "bg-green-100 text-green-800 border-green-200" },
+  completed: { label: "Hoàn thành", color: "bg-gray-100 text-gray-600 border-gray-200" },
+  cancelled: { label: "Đã hủy", color: "bg-red-100 text-red-600 border-red-200" },
 }
 
 const OCC_STATUS_CONFIG: Record<string, { label: string; icon: React.ReactNode; rowClass: string; badgeClass: string }> = {
-  scheduled:  { label: "Sắp tới",    icon: <Clock className="h-3 w-3" />,        rowClass: "bg-white",         badgeClass: "bg-green-50 text-green-700 border-green-100" },
-  completed:  { label: "Hoàn thành", icon: <CheckCircle2 className="h-3 w-3" />, rowClass: "bg-muted/30",      badgeClass: "bg-blue-50 text-blue-600 border-blue-100" },
-  skipped:    { label: "Bỏ qua",     icon: <SkipForward className="h-3 w-3" />,  rowClass: "bg-muted/30",      badgeClass: "bg-gray-100 text-gray-500 border-gray-200" },
-  rescheduled:{ label: "Đổi lịch",   icon: <RefreshCw className="h-3 w-3" />,    rowClass: "bg-blue-50/30",    badgeClass: "bg-blue-50 text-blue-600 border-blue-100" },
-  cancelled:  { label: "Đã hủy",     icon: <XCircle className="h-3 w-3" />,      rowClass: "bg-red-50/20",     badgeClass: "bg-red-50 text-red-500 border-red-100" },
+  scheduled: { label: "Sắp tới", icon: <Clock className="h-3 w-3" />, rowClass: "bg-white", badgeClass: "bg-green-50 text-green-700 border-green-100" },
+  completed: { label: "Hoàn thành", icon: <CheckCircle2 className="h-3 w-3" />, rowClass: "bg-muted/30", badgeClass: "bg-blue-50 text-blue-600 border-blue-100" },
+  skipped: { label: "Bỏ qua", icon: <SkipForward className="h-3 w-3" />, rowClass: "bg-muted/30", badgeClass: "bg-gray-100 text-gray-500 border-gray-200" },
+  rescheduled: { label: "Đổi lịch", icon: <RefreshCw className="h-3 w-3" />, rowClass: "bg-blue-50/30", badgeClass: "bg-blue-50 text-blue-600 border-blue-100" },
+  cancelled: { label: "Đã hủy", icon: <XCircle className="h-3 w-3" />, rowClass: "bg-red-50/20", badgeClass: "bg-red-50 text-red-500 border-red-100" },
 }
 
 // ─── Fixed Schedule Card ──────────────────────────────────────
@@ -441,10 +491,10 @@ function FixedScheduleCard({
           {/* Row 3: Stats */}
           <div className="grid grid-cols-4 gap-2">
             {[
-              { label: "Tổng",    value: schedule.occurrenceSummary.total,     color: "text-foreground" },
+              { label: "Tổng", value: schedule.occurrenceSummary.total, color: "text-foreground" },
               { label: "Còn lại", value: schedule.occurrenceSummary.scheduled, color: "text-green-600" },
-              { label: "Xong",    value: schedule.occurrenceSummary.completed, color: "text-blue-600" },
-              { label: "Bỏ",      value: schedule.occurrenceSummary.skipped,   color: "text-muted-foreground" },
+              { label: "Xong", value: schedule.occurrenceSummary.completed, color: "text-blue-600" },
+              { label: "Bỏ", value: schedule.occurrenceSummary.skipped, color: "text-muted-foreground" },
             ].map(stat => (
               <div key={stat.label} className="bg-muted/60 rounded-lg p-2 text-center">
                 <p className={cn("text-base font-bold", stat.color)}>{stat.value}</p>
@@ -480,12 +530,12 @@ function FixedScheduleCard({
               {schedule.invoice && (
                 <span className={cn(
                   "text-xs px-2 py-0.5 rounded-full border",
-                  schedule.invoice.status === "paid"      ? "bg-green-50 text-green-600 border-green-200" :
-                  schedule.invoice.status === "deposited" ? "bg-blue-50 text-blue-600 border-blue-200" :
-                  "bg-amber-50 text-amber-600 border-amber-200"
+                  schedule.invoice.status === "paid" ? "bg-green-50 text-green-600 border-green-200" :
+                    schedule.invoice.status === "deposited" ? "bg-blue-50 text-blue-600 border-blue-200" :
+                      "bg-amber-50 text-amber-600 border-amber-200"
                 )}>
                   {schedule.invoice.status === "paid" ? "Đã thanh toán" :
-                   schedule.invoice.status === "deposited" ? "Đã cọc" : "Chưa thanh toán"}
+                    schedule.invoice.status === "deposited" ? "Đã cọc" : "Chưa thanh toán"}
                 </span>
               )}
               {adjustmentLeft > 0 && (
@@ -592,10 +642,10 @@ function FixedScheduleDetailDialog({
                       : "bg-muted text-muted-foreground hover:bg-muted/80"
                   )}
                 >
-                  {f === "all"       ? `Tất cả (${schedule.occurrences.length})` :
-                   f === "scheduled" ? `Sắp tới (${schedule.occurrences.filter(o => o.status === "scheduled").length})` :
-                   f === "completed" ? `Xong (${schedule.occurrences.filter(o => o.status === "completed").length})` :
-                   `Bỏ qua (${schedule.occurrences.filter(o => o.status === "skipped").length})`}
+                  {f === "all" ? `Tất cả (${schedule.occurrences.length})` :
+                    f === "scheduled" ? `Sắp tới (${schedule.occurrences.filter(o => o.status === "scheduled").length})` :
+                      f === "completed" ? `Xong (${schedule.occurrences.filter(o => o.status === "completed").length})` :
+                        `Bỏ qua (${schedule.occurrences.filter(o => o.status === "skipped").length})`}
                 </button>
               ))}
             </div>
@@ -894,11 +944,11 @@ function ProfileSettingsForm() {
 /* ─── Order History ─────────────────────────────────────────── */
 const paymentLabels: Record<string, string> = { cod: "COD", momo: "MoMo", vnpay: "VNPay", bank: "Chuyển khoản" }
 const orderStatusConfig: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
-  pending:    { label: "Chờ xử lý",  color: "bg-amber-100 text-amber-800 border-amber-200",    icon: <Clock className="h-3.5 w-3.5" /> },
-  processing: { label: "Đang xử lý", color: "bg-blue-100 text-blue-800 border-blue-200",       icon: <Package className="h-3.5 w-3.5" /> },
-  shipping:   { label: "Đang giao",  color: "bg-purple-100 text-purple-800 border-purple-200", icon: <Truck className="h-3.5 w-3.5" /> },
-  delivered:  { label: "Đã giao",    color: "bg-green-100 text-green-800 border-green-200",    icon: <CheckCircle2 className="h-3.5 w-3.5" /> },
-  cancelled:  { label: "Đã hủy",     color: "bg-red-100 text-red-800 border-red-200",          icon: <AlertCircle className="h-3.5 w-3.5" /> },
+  pending: { label: "Chờ xử lý", color: "bg-amber-100 text-amber-800 border-amber-200", icon: <Clock className="h-3.5 w-3.5" /> },
+  processing: { label: "Đang xử lý", color: "bg-blue-100 text-blue-800 border-blue-200", icon: <Package className="h-3.5 w-3.5" /> },
+  shipping: { label: "Đang giao", color: "bg-purple-100 text-purple-800 border-purple-200", icon: <Truck className="h-3.5 w-3.5" /> },
+  delivered: { label: "Đã giao", color: "bg-green-100 text-green-800 border-green-200", icon: <CheckCircle2 className="h-3.5 w-3.5" /> },
+  cancelled: { label: "Đã hủy", color: "bg-red-100 text-red-800 border-red-200", icon: <AlertCircle className="h-3.5 w-3.5" /> },
 }
 
 function OrderStatusBadge({ status }: { status: string }) {
@@ -920,11 +970,11 @@ function OrderHistoryView() {
   const deliveryLabels: Record<string, string> = { delivery: "Giao hàng tận nơi", pickup: "Nhận tại cửa hàng" }
 
   const orderStatusSteps = [
-    { key: "pending",    label: "Chờ xử lý" },
-    { key: "confirmed",  label: "Đã xác nhận" },
+    { key: "pending", label: "Chờ xử lý" },
+    { key: "confirmed", label: "Đã xác nhận" },
     { key: "processing", label: "Đang xử lý" },
-    { key: "shipping",   label: "Đang giao" },
-    { key: "delivered",  label: "Đã giao" },
+    { key: "shipping", label: "Đang giao" },
+    { key: "delivered", label: "Đã giao" },
   ]
 
   return (
@@ -1134,10 +1184,24 @@ export default function MyBookingsPage() {
   const [allBookings, setAllBookings] = useState<ApiBooking[]>([])
 
   useEffect(() => {
-    if (user && user.role !== "guest") {
-      bookingApi.getMyBookings().then(setAllBookings)
+    if (!user || user.role === "guest" || activePage !== "bookings") return
+
+    let cancelled = false
+
+    const loadBookings = async () => {
+      const bookings = await bookingApi.getMyBookings()
+      if (!cancelled) setAllBookings(bookings)
     }
-  }, [user])
+
+    loadBookings()
+
+    const intervalId = window.setInterval(loadBookings, 60_000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+  }, [activePage, user])
 
   const handleCancel = async (bookingId: string) => {
     const result = await bookingApi.cancel(bookingId)
@@ -1148,7 +1212,7 @@ export default function MyBookingsPage() {
 
   // ✅ Chỉ lấy booking LẺ (không thuộc gói cố định)
   const regularBookings = allBookings.filter(b => !b.fixedScheduleId)
-  const upcoming  = regularBookings.filter(b => ["confirmed", "pending", "playing", "deposited"].includes(b.status))
+  const upcoming = regularBookings.filter(b => ["confirmed", "pending", "playing", "deposited"].includes(b.status))
   const completed = regularBookings.filter(b => b.status === "completed")
   const cancelled = regularBookings.filter(b => b.status === "cancelled")
 
@@ -1212,10 +1276,10 @@ export default function MyBookingsPage() {
                           <TabsContent value="upcoming" className="mt-4 flex flex-col gap-4">
                             {upcoming.length === 0
                               ? <Card><CardContent className="p-8 text-center text-muted-foreground">
-                                  <Calendar className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
-                                  <p className="font-semibold text-foreground">Chưa có lịch sắp tới</p>
-                                  <p className="text-sm mt-1">Hãy <a href="/courts" className="text-primary underline">đặt sân</a> để bắt đầu!</p>
-                                </CardContent></Card>
+                                <Calendar className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
+                                <p className="font-semibold text-foreground">Chưa có lịch sắp tới</p>
+                                <p className="text-sm mt-1">Hãy <a href="/courts" className="text-primary underline">đặt sân</a> để bắt đầu!</p>
+                              </CardContent></Card>
                               : upcoming.map(b => <BookingCard key={b.id} booking={b} onCancel={handleCancel} />)
                             }
                           </TabsContent>
@@ -1223,9 +1287,9 @@ export default function MyBookingsPage() {
                           <TabsContent value="completed" className="mt-4 flex flex-col gap-4">
                             {completed.length === 0
                               ? <Card><CardContent className="p-8 text-center text-muted-foreground">
-                                  <CheckCircle2 className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
-                                  <p className="font-semibold text-foreground">Chưa có lịch hoàn thành</p>
-                                </CardContent></Card>
+                                <CheckCircle2 className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
+                                <p className="font-semibold text-foreground">Chưa có lịch hoàn thành</p>
+                              </CardContent></Card>
                               : completed.map(b => <BookingCard key={b.id} booking={b} />)
                             }
                           </TabsContent>
@@ -1233,9 +1297,9 @@ export default function MyBookingsPage() {
                           <TabsContent value="cancelled" className="mt-4 flex flex-col gap-4">
                             {cancelled.length === 0
                               ? <Card><CardContent className="p-8 text-center text-muted-foreground">
-                                  <AlertCircle className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
-                                  <p className="font-semibold text-foreground">Chưa có lịch đã huỷ</p>
-                                </CardContent></Card>
+                                <AlertCircle className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
+                                <p className="font-semibold text-foreground">Chưa có lịch đã huỷ</p>
+                              </CardContent></Card>
                               : cancelled.map(b => <BookingCard key={b.id} booking={b} />)
                             }
                           </TabsContent>

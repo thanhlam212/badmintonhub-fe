@@ -16,12 +16,26 @@ import { Eye, Printer, Search } from "lucide-react"
 
 export type AuditDocCategory = "invoice" | "export" | "import" | "transfer" | "purchase" | "other"
 type AuditDocSource = "sales-order" | "online-order" | "inventory-transaction" | "transfer-request" | "purchase-order" | "export-slip" | "admin-slip"
+type AuditDocKind =
+  | "invoice-sale"
+  | "invoice-online"
+  | "export-sale"
+  | "export-transfer"
+  | "export-admin"
+  | "export-other"
+  | "import-transfer"
+  | "import-po"
+  | "import-admin"
+  | "import-other"
+  | "transfer-request"
+  | "purchase-order"
 
 interface AuditDocument {
   id: string
   code: string
   category: AuditDocCategory
   source: AuditDocSource
+  kind: AuditDocKind
   date: string
   subject: string
   summary: string
@@ -46,6 +60,21 @@ const auditCategoryMeta: Record<AuditDocCategory, { label: string; cls: string }
   other: { label: "Khác", cls: "bg-slate-100 text-slate-800 border-slate-200" },
 }
 
+const auditKindLabel: Record<AuditDocKind, string> = {
+  "invoice-sale": "Hoa don ban",
+  "invoice-online": "Hoa don online",
+  "export-sale": "Xuat ban",
+  "export-transfer": "Xuat dieu chuyen",
+  "export-admin": "Xuat admin",
+  "export-other": "Xuat khac",
+  "import-transfer": "Nhap dieu chuyen",
+  "import-po": "Nhap PO",
+  "import-admin": "Nhap admin",
+  "import-other": "Nhap khac",
+  "transfer-request": "Phieu dieu chuyen",
+  "purchase-order": "PO",
+}
+
 function normalizeText(value?: string) {
   return String(value || "")
     .toLowerCase()
@@ -68,6 +97,17 @@ function buildWarehouseDocCode(prefix: "PNK" | "PXK", rawId?: string) {
   if (new RegExp(`^${prefix}-`, "i").test(raw)) return raw.toUpperCase()
   const normalized = raw.replace(/[^a-zA-Z0-9]/g, "").toUpperCase()
   return `${prefix}-${normalized.slice(0, 8)}`
+}
+
+function buildTransferWarehouseDocCode(prefix: "PNK" | "PXK", transferCode: string) {
+  const normalized = String(transferCode || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase()
+  return `${prefix}-DC-${normalized.slice(-8)}`
+}
+
+function getWarehouseFromTransfer(raw: any, category: AuditDocCategory) {
+  if (category === "export") return String(raw?.from_warehouse_name || raw?.fromWarehouse || raw?.fromWarehouseName || raw?.from_warehouse || "Kho")
+  if (category === "import") return String(raw?.to_warehouse_name || raw?.toWarehouse || raw?.toWarehouseName || raw?.to_warehouse || "Kho")
+  return String(raw?.warehouse_name || raw?.warehouse || "Kho")
 }
 
 function getDocumentLines(doc: AuditDocument): DocumentLine[] {
@@ -176,12 +216,14 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
         id: doc.code,
         type: doc.category,
         date: doc.date,
-        warehouse: String(raw?.warehouse_name || raw?.warehouse || doc.subject || "Kho"),
+        warehouse: doc.source === "transfer-request"
+          ? getWarehouseFromTransfer(raw, doc.category)
+          : String(raw?.warehouse_name || raw?.warehouse || doc.subject || "Kho"),
         supplier: raw?.supplier_name || raw?.supplier,
-        poId: raw?.po_code || raw?.order_code || raw?.poId,
+        poId: raw?.po_code || raw?.order_code || raw?.poId || (doc.kind === "export-sale" ? doc.summary : undefined),
         note: String(raw?.note || doc.summary || ""),
         createdBy: String(raw?.created_by_name || raw?.createdBy || raw?.operator || ""),
-        assignedTo: String(raw?.assigned_to || raw?.assignedTo || ""),
+        assignedTo: String(raw?.assigned_to || raw?.assignedTo || raw?.customer_name || raw?.customerName || raw?.to_warehouse_name || raw?.toWarehouse || ""),
         processedBy: raw?.processed_by || raw?.processedBy,
         items: lines.map((line) => ({
           sku: line.sku || "",
@@ -258,14 +300,29 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
           pushDoc({
             id: `sales-${String(order?.id || code)}`,
             code,
-            category: "invoice",
-            source: "sales-order",
-            date: formatLocalDate(order?.created_at),
+	            category: "invoice",
+	            source: "sales-order",
+	            kind: "invoice-sale",
+	            date: formatLocalDate(order?.created_at),
             subject: String(order?.customer_name || "Khách"),
             summary: String(order?.status || ""),
-            raw: order,
-          })
-        }
+	            raw: order,
+	          })
+	          if (order?.status === "approved" || order?.status === "exported") {
+	            const exportCode = buildWarehouseDocCode("PXK", String(order?.id || code))
+	            pushDoc({
+	              id: `sales-export-${String(order?.id || exportCode)}`,
+	              code: exportCode,
+	              category: "export",
+	              source: "sales-order",
+	              kind: "export-sale",
+	              date: formatLocalDate(order?.approved_at || order?.created_at),
+	              subject: String(order?.customer_name || "Khach"),
+	              summary: `Don ban ${code}`,
+	              raw: order,
+	            })
+	          }
+	        }
       } catch {}
 
       try {
@@ -276,9 +333,10 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
           pushDoc({
             id: `online-${String(order?.id || code)}`,
             code,
-            category: "invoice",
-            source: "online-order",
-            date: formatLocalDate(order?.createdAt || order?.created_at),
+	            category: "invoice",
+	            source: "online-order",
+	            kind: "invoice-online",
+	            date: formatLocalDate(order?.createdAt || order?.created_at),
             subject: String(order?.customerName || order?.customer_name || "Khách"),
             summary: String(order?.status || ""),
             raw: order,
@@ -296,9 +354,10 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
           pushDoc({
             id: `inventory-${String(tx?.id || "")}`,
             code: buildWarehouseDocCode(prefix, String(tx?.id || "")),
-            category,
-            source: "inventory-transaction",
-            date: formatLocalDate(tx?.date),
+	            category,
+	            source: "inventory-transaction",
+	            kind: category === "import" ? "import-other" : "export-other",
+	            date: formatLocalDate(tx?.date),
             subject: String(tx?.warehouse_name || tx?.warehouse || "Kho"),
             summary: `${String(tx?.product_name || tx?.name || "Sản phẩm")} x${Number(tx?.qty || tx?.quantity || 0)}`,
             raw: tx,
@@ -324,14 +383,42 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
           pushDoc({
             id: `transfer-${String(transfer?.id || transferCode)}`,
             code: transferCode,
-            category: "transfer",
-            source: "transfer-request",
-            date,
+	            category: "transfer",
+	            source: "transfer-request",
+	            kind: "transfer-request",
+	            date,
             subject: `${String(transfer?.from_warehouse_name || transfer?.fromWarehouse || "Kho nguồn")} → ${String(transfer?.to_warehouse_name || transfer?.toWarehouse || "Kho đích")}`,
-            summary: String(transfer?.reason || transfer?.note || ""),
-            raw: transfer,
-          })
-        }
+	            summary: String(transfer?.reason || transfer?.note || ""),
+	            raw: transfer,
+	          })
+	          const transferStatus = String(transfer?.status || "").replace(/_/g, "-")
+	          if (transferStatus === "in-transit" || transferStatus === "completed") {
+	            pushDoc({
+	              id: `transfer-export-${String(transfer?.id || transferCode)}`,
+	              code: buildTransferWarehouseDocCode("PXK", transferCode),
+	              category: "export",
+	              source: "transfer-request",
+	              kind: "export-transfer",
+	              date,
+	              subject: String(transfer?.from_warehouse_name || transfer?.fromWarehouse || "Kho nguon"),
+	              summary: `Xuat dieu chuyen ${transferCode}`,
+	              raw: transfer,
+	            })
+	          }
+	          if (transferStatus === "completed") {
+	            pushDoc({
+	              id: `transfer-import-${String(transfer?.id || transferCode)}`,
+	              code: buildTransferWarehouseDocCode("PNK", transferCode),
+	              category: "import",
+	              source: "transfer-request",
+	              kind: "import-transfer",
+	              date: formatLocalDate(transfer?.completed_at || transfer?.completedAt || transfer?.created_at || transfer?.date),
+	              subject: String(transfer?.to_warehouse_name || transfer?.toWarehouse || "Kho dich"),
+	              summary: `Nhap dieu chuyen ${transferCode}`,
+	              raw: transfer,
+	            })
+	          }
+	        }
       } catch {}
 
       try {
@@ -342,14 +429,28 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
           pushDoc({
             id: `po-${String(po?.id || code)}`,
             code,
-            category: "purchase",
-            source: "purchase-order",
-            date: formatLocalDate(po?.created_at || po?.createdDate),
+	            category: "purchase",
+	            source: "purchase-order",
+	            kind: "purchase-order",
+	            date: formatLocalDate(po?.created_at || po?.createdDate),
             subject: String(po?.supplier_name || po?.supplier || "Nhà cung cấp"),
             summary: String(po?.status || ""),
-            raw: po,
-          })
-        }
+	            raw: po,
+	          })
+	          if (String(po?.status || "") === "received") {
+	            pushDoc({
+	              id: `po-import-${String(po?.id || code)}`,
+	              code: buildWarehouseDocCode("PNK", String(po?.id || code)),
+	              category: "import",
+	              source: "purchase-order",
+	              kind: "import-po",
+	              date: formatLocalDate(po?.received_at || po?.updated_at || po?.created_at || po?.createdDate),
+	              subject: String(po?.warehouse_name || po?.warehouse || "Kho"),
+	              summary: `Nhap PO ${code}`,
+	              raw: po,
+	            })
+	          }
+	        }
       } catch {}
 
       try {
@@ -360,9 +461,10 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
           pushDoc({
             id: `export-slip-${code}`,
             code,
-            category: "export",
-            source: "export-slip",
-            date: String(slip?.date || ""),
+	            category: "export",
+	            source: "export-slip",
+	            kind: "export-sale",
+	            date: String(slip?.date || ""),
             subject: String(slip?.customer || "Khách"),
             summary: `ĐH ${String(slip?.orderCode || slip?.orderId || "—")}`,
             raw: slip,
@@ -378,9 +480,10 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
           pushDoc({
             id: `admin-slip-${String(adminSlip?.id || "")}`,
             code: String(adminSlip?.id || ""),
-            category,
-            source: "admin-slip",
-            date: String(adminSlip?.date || ""),
+	            category,
+	            source: "admin-slip",
+	            kind: category === "import" ? "import-admin" : "export-admin",
+	            date: String(adminSlip?.date || ""),
             subject: String(adminSlip?.warehouse || "Kho"),
             summary: String(adminSlip?.note || ""),
             raw: adminSlip,
@@ -414,7 +517,7 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
     return docs.filter((doc) => {
       if (categoryFilter !== "all" && doc.category !== categoryFilter) return false
       if (!q) return true
-      const haystack = normalizeText(`${doc.code} ${doc.subject} ${doc.summary}`)
+      const haystack = normalizeText(`${doc.code} ${auditKindLabel[doc.kind]} ${doc.subject} ${doc.summary}`)
       return haystack.includes(q)
     })
   }, [docs, categoryFilter, query])
@@ -473,11 +576,12 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
             <div className="py-12 text-center text-muted-foreground">Không tìm thấy chứng từ phù hợp.</div>
           ) : (
             <div className="overflow-x-auto">
-              <Table className="min-w-[860px]">
+              <Table className="min-w-[980px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="text-xs w-[200px]">Mã phiếu</TableHead>
                     <TableHead className="text-xs w-[120px]">Danh mục</TableHead>
+                    <TableHead className="text-xs w-[150px]">Nghiep vu</TableHead>
                     <TableHead className="text-xs w-[130px]">Ngày</TableHead>
                     <TableHead className="text-xs">Đối tượng</TableHead>
                     <TableHead className="text-xs">Mô tả</TableHead>
@@ -493,6 +597,7 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
                           {auditCategoryMeta[doc.category].label}
                         </Badge>
                       </TableCell>
+                      <TableCell className="text-xs font-medium whitespace-nowrap">{auditKindLabel[doc.kind]}</TableCell>
                       <TableCell className="text-sm whitespace-nowrap">{doc.date || "—"}</TableCell>
                       <TableCell className="text-sm">{doc.subject || "—"}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">{doc.summary || "—"}</TableCell>
@@ -525,9 +630,14 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
 
               <div className="mt-5 space-y-4">
                 <div className="flex items-center justify-between gap-2">
-                  <Badge variant="outline" className={`text-[11px] ${auditCategoryMeta[selectedDoc.category].cls}`}>
-                    {auditCategoryMeta[selectedDoc.category].label}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className={`text-[11px] ${auditCategoryMeta[selectedDoc.category].cls}`}>
+                      {auditCategoryMeta[selectedDoc.category].label}
+                    </Badge>
+                    <Badge variant="secondary" className="text-[11px]">
+                      {auditKindLabel[selectedDoc.kind]}
+                    </Badge>
+                  </div>
                   <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => handlePrint(selectedDoc)}>
                     <Printer className="h-3.5 w-3.5" /> In phiếu
                   </Button>
@@ -538,6 +648,10 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
                     <div className="flex justify-between gap-2">
                       <span className="text-muted-foreground">Mã chứng từ</span>
                       <span className="font-mono text-xs text-primary">{selectedDoc.code}</span>
+                    </div>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Nghiep vu</span>
+                      <span className="text-right">{auditKindLabel[selectedDoc.kind]}</span>
                     </div>
                     <div className="flex justify-between gap-2">
                       <span className="text-muted-foreground">Ngày</span>

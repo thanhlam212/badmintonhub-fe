@@ -174,7 +174,7 @@ function UserFormDialog({ open, onOpenChange, editUser, warehouses, onSaved }: U
                   <Input
                     type={showPassword ? "text" : "password"}
                     value={password}
-                    onChange={e => setPassword(e.target.value.replace(/[^\x00-\x7F]/g, ""))}
+                    onChange={e => setPassword(e.target.value.replace(/[^\u0020-\u007E]/g, ""))}
                     placeholder="Ít nhất 6 ký tự không dấu"
                   />
                   <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setShowPassword(!showPassword)}>
@@ -318,7 +318,7 @@ function ResetPasswordDialog({ open, onOpenChange, user, onSaved }: { open: bool
             <Input
               type={showPassword ? "text" : "password"}
               value={newPassword}
-              onChange={e => setNewPassword(e.target.value.replace(/[^\x00-\x7F]/g, ""))}
+              onChange={e => setNewPassword(e.target.value.replace(/[^\u0020-\u007E]/g, ""))}
               placeholder="Ít nhất 6 ký tự không dấu"
             />
             <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setShowPassword(!showPassword)}>

@@ -658,6 +658,104 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
           <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_380px]">
             {/* Left Column */}
             <div className="flex flex-col gap-6">
+              {/* Availability Calendar */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="font-serif text-lg">Lịch trống</CardTitle>
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setWeekOffset(Math.max(0, weekOffset - 1))}>
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <span className="text-sm font-medium">{weekDays[0].label} - {weekDays[6].label}</span>
+                      <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setWeekOffset(weekOffset + 1)}>
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-4 mt-2">
+                    <span className="flex items-center gap-1 text-xs"><span className="h-3 w-3 rounded bg-court-available" /> Trống</span>
+                    <span className="flex items-center gap-1 text-xs"><span className="h-3 w-3 rounded bg-court-booked" /> Đã đặt</span>
+                    <span className="flex items-center gap-1 text-xs"><span className="h-3 w-3 rounded bg-court-hold" /> Giữ chỗ</span>
+                    <span className="flex items-center gap-1 text-xs"><span className="h-3 w-3 rounded bg-primary" /> Đã chọn</span>
+                    {selectedDay && (
+                      <span className="text-xs text-primary font-medium flex items-center gap-1">
+                        Đang chọn ngày <strong>{selectedDay}</strong> - bấm ngày khác để đổi ngày
+                      </span>
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto">
+                    <div className="min-w-[600px]">
+                      {/* Day headers */}
+                      <div className="grid grid-cols-[60px_repeat(7,1fr)] gap-1 mb-1">
+                        <div />
+                        {weekDays.map(d => (
+                          <div
+                            key={d.label}
+                            className={cn(
+                              "text-center text-xs font-medium py-1 rounded-md transition-colors",
+                              selectedDay && selectedDay !== d.label
+                                ? "text-muted-foreground/40"
+                                : selectedDay === d.label
+                                  ? "text-primary font-bold bg-primary/5"
+                                  : "text-muted-foreground"
+                            )}
+                          >
+                            <div>{d.dayName}</div>
+                            <div className={cn("font-semibold", selectedDay === d.label ? "text-primary" : "text-foreground")}>{d.label}</div>
+                          </div>
+                        ))}
+                      </div>
+                      {/* Time grid */}
+                      {timeSlots.map(time => (
+                        <div key={time} className="grid grid-cols-[60px_repeat(7,1fr)] gap-1 mb-1">
+                          <div className="text-xs text-muted-foreground flex items-center justify-end pr-2">{time}</div>
+                          {weekDays.map(d => {
+                            const status = availability[d.label]?.[time] || 'available'
+                            const slotKey = `${d.label}-${time}`
+                            const isSelected = selectedSlots.includes(slotKey)
+                            const isPastSlot = nowTick > 0 && isSlotPast(d.date, time)
+                            const isDisabled = status !== 'available' || isPastSlot
+                            const isOtherDay = selectedDay !== null && selectedDay !== d.label
+
+                            return (
+                              <button
+                                key={slotKey}
+                                disabled={isDisabled}
+                                onClick={() => toggleSlot(d.label, time)}
+                                title={isOtherDay && !isDisabled ? "Bấm để chọn ngày khác (sẽ xóa slot hiện tại)" : undefined}
+                                className={cn(
+                                  "h-8 rounded text-xs font-medium transition-all duration-150",
+                                  isSelected
+                                    ? "bg-primary text-primary-foreground scale-[0.95] shadow-sm shadow-primary/40 ring-2 ring-primary/30"
+                                    : isPastSlot
+                                      ? "bg-muted text-muted-foreground cursor-not-allowed opacity-40"
+                                    : isOtherDay
+                                      ? status === 'available'
+                                        ? "bg-court-available opacity-30 hover:opacity-70 cursor-pointer"
+                                        : status === 'booked'
+                                          ? "bg-court-booked opacity-20 cursor-not-allowed"
+                                          : "bg-court-hold opacity-20 cursor-not-allowed"
+                                      : status === 'available'
+                                        ? "bg-court-available hover:bg-green-200 hover:scale-[0.97] text-green-700 cursor-pointer active:scale-95"
+                                        : status === 'booked'
+                                          ? "bg-court-booked text-red-400 cursor-not-allowed opacity-60"
+                                          : "bg-court-hold text-amber-400 cursor-not-allowed opacity-70"
+                                )}
+                              >
+                                {isSelected && <Check className="h-3 w-3 mx-auto" />}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
               {/* Overview */}
               <Card>
                 <CardContent className="p-6">
@@ -829,104 +927,6 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
                         <span>{a}</span>
                       </div>
                     ))}
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Availability Calendar */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="font-serif text-lg">Lịch trống</CardTitle>
-                    <div className="flex items-center gap-2">
-                      <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setWeekOffset(Math.max(0, weekOffset - 1))}>
-                        <ChevronLeft className="h-4 w-4" />
-                      </Button>
-                      <span className="text-sm font-medium">{weekDays[0].label} - {weekDays[6].label}</span>
-                      <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setWeekOffset(weekOffset + 1)}>
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-4 mt-2">
-                    <span className="flex items-center gap-1 text-xs"><span className="h-3 w-3 rounded bg-court-available" /> Trống</span>
-                    <span className="flex items-center gap-1 text-xs"><span className="h-3 w-3 rounded bg-court-booked" /> Đã đặt</span>
-                    <span className="flex items-center gap-1 text-xs"><span className="h-3 w-3 rounded bg-court-hold" /> Giữ chỗ</span>
-                    <span className="flex items-center gap-1 text-xs"><span className="h-3 w-3 rounded bg-primary" /> Đã chọn</span>
-                    {selectedDay && (
-                      <span className="text-xs text-primary font-medium flex items-center gap-1">
-                        📅 Đang chọn ngày <strong>{selectedDay}</strong> — bấm ngày khác để đổi ngày
-                      </span>
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="overflow-x-auto">
-                    <div className="min-w-[600px]">
-                      {/* Day headers */}
-                      <div className="grid grid-cols-[60px_repeat(7,1fr)] gap-1 mb-1">
-                        <div />
-                        {weekDays.map(d => (
-                          <div
-                            key={d.label}
-                            className={cn(
-                              "text-center text-xs font-medium py-1 rounded-md transition-colors",
-                              selectedDay && selectedDay !== d.label
-                                ? "text-muted-foreground/40"
-                                : selectedDay === d.label
-                                  ? "text-primary font-bold bg-primary/5"
-                                  : "text-muted-foreground"
-                            )}
-                          >
-                            <div>{d.dayName}</div>
-                            <div className={cn("font-semibold", selectedDay === d.label ? "text-primary" : "text-foreground")}>{d.label}</div>
-                          </div>
-                        ))}
-                      </div>
-                      {/* Time grid */}
-                      {timeSlots.map(time => (
-                        <div key={time} className="grid grid-cols-[60px_repeat(7,1fr)] gap-1 mb-1">
-                          <div className="text-xs text-muted-foreground flex items-center justify-end pr-2">{time}</div>
-                          {weekDays.map(d => {
-                            const status = availability[d.label]?.[time] || 'available'
-                            const slotKey = `${d.label}-${time}`
-                            const isSelected = selectedSlots.includes(slotKey)
-                            const isPastSlot = nowTick > 0 && isSlotPast(d.date, time)
-                            const isDisabled = status !== 'available' || isPastSlot
-                            const isOtherDay = selectedDay !== null && selectedDay !== d.label
-
-                            return (
-                              <button
-                                key={slotKey}
-                                disabled={isDisabled}
-                                onClick={() => toggleSlot(d.label, time)}
-                                title={isOtherDay && !isDisabled ? "Bấm để chọn ngày khác (sẽ xóa slot hiện tại)" : undefined}
-                                className={cn(
-                                  "h-8 rounded text-xs font-medium transition-all duration-150",
-                                  isSelected
-                                    ? "bg-primary text-primary-foreground scale-[0.95] shadow-sm shadow-primary/40 ring-2 ring-primary/30"
-                                    : isPastSlot
-                                      ? "bg-muted text-muted-foreground cursor-not-allowed opacity-40"
-                                    : isOtherDay
-                                      ? status === 'available'
-                                        ? "bg-court-available opacity-30 hover:opacity-70 cursor-pointer"
-                                        : status === 'booked'
-                                          ? "bg-court-booked opacity-20 cursor-not-allowed"
-                                          : "bg-court-hold opacity-20 cursor-not-allowed"
-                                      : status === 'available'
-                                        ? "bg-court-available hover:bg-green-200 hover:scale-[0.97] text-green-700 cursor-pointer active:scale-95"
-                                        : status === 'booked'
-                                          ? "bg-court-booked text-red-400 cursor-not-allowed opacity-60"
-                                          : "bg-court-hold text-amber-400 cursor-not-allowed opacity-70"
-                                )}
-                              >
-                                {isSelected && <Check className="h-3 w-3 mx-auto" />}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      ))}
-                    </div>
                   </div>
                 </CardContent>
               </Card>

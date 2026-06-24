@@ -1,98 +1,135 @@
 "use client"
 
-import { useState, useEffect, useMemo, useCallback } from "react"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Label } from "@/components/ui/label"
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
-import { formatDateLabel, formatVND, generateTimeSlots, getWeekDays } from "@/lib/utils"
-import { branchApi, courtApi, bookingApi, type ApiCourt } from "@/lib/api"
-import { cn } from "@/lib/utils"
-import { useAuth } from "@/lib/auth-context"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
-  Eye, MapPin, Star,
-  CheckCircle2, XCircle, Building2, DollarSign,
-  ChevronLeft, ChevronRight, Check, Clock,
-  CalendarDays, Users, Lock, AlertTriangle,
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { useAuth } from "@/lib/auth-context"
+import { bookingApi, branchApi, courtApi, type ApiCourt } from "@/lib/api"
+import { cn, formatDateLabel, formatVND, generateTimeSlots, getWeekDays, isSlotPast } from "@/lib/utils"
+import {
+  AlertTriangle,
+  Building2,
+  CalendarDays,
+  Check,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  DollarSign,
+  Lock,
+  MapPin,
+  Star,
+  Users,
+  XCircle,
 } from "lucide-react"
 
-/* ─── Types ─── */
 type Court = ApiCourt
 
-/* ─── Court type badge ─── */
+type CourtSlotBooking = {
+  bookingId: string
+  bookingCode?: string
+  courtId: number
+  dateLabel: string
+  time: string
+  status: "booked" | "hold"
+  bookedBy?: string
+  phone?: string
+  customerEmail?: string | null
+}
+
+type CancelTarget = CourtSlotBooking & {
+  dayName: string
+}
+
 function CourtTypeBadge({ type }: { type: string }) {
   const map: Record<string, { label: string; cls: string }> = {
     premium: { label: "Premium", cls: "bg-amber-100 text-amber-700 border-amber-200" },
     vip: { label: "VIP", cls: "bg-purple-100 text-purple-700 border-purple-200" },
     standard: { label: "Standard", cls: "bg-blue-100 text-blue-700 border-blue-200" },
   }
-  const v = map[type] || map.standard
-  return <Badge variant="outline" className={cn("text-[10px]", v.cls)}>{v.label}</Badge>
+  const value = map[type] || map.standard
+  return (
+    <Badge variant="outline" className={cn("text-[10px]", value.cls)}>
+      {value.label}
+    </Badge>
+  )
 }
-
-/* ════════════════════════════════════════════════════════════ */
 
 export default function EmployeeCourtsPage() {
   const { user } = useAuth()
   const [courtsData, setCourtsData] = useState<Court[]>([])
-  const [branchesList, setBranchesList] = useState<{id: number; name: string}[]>([])
+  const [branchesList, setBranchesList] = useState<{ id: number; name: string }[]>([])
   const [typeFilter, setTypeFilter] = useState("all")
   const [selectedCourtId, setSelectedCourtId] = useState<number | null>(null)
   const [weekOffset, setWeekOffset] = useState(0)
-  const [employeeAction, setEmployeeAction] = useState<"booked" | "hold" | "remove">("booked")
+  const [employeeAction, setEmployeeAction] = useState<"booked" | "hold">("booked")
   const [bookingsVersion, setBookingsVersion] = useState(0)
-  const [allBookings, setAllBookings] = useState<{courtId: number; dateLabel: string; time: string; status: string; bookedBy?: string; phone?: string}[]>([])
+  const [allBookings, setAllBookings] = useState<CourtSlotBooking[]>([])
+  const [cancelTarget, setCancelTarget] = useState<CancelTarget | null>(null)
+  const [cancelReason, setCancelReason] = useState("")
+  const [cancelLoading, setCancelLoading] = useState(false)
 
-  // Load courts and branches from API
   useEffect(() => {
-    courtApi.getAll().then(res => {
-      if (Array.isArray(res)) {
-        setCourtsData(res)
-      }
+    courtApi.getAll().then((res) => {
+      if (Array.isArray(res)) setCourtsData(res)
     }).catch(() => setCourtsData([]))
+
     branchApi.getAll().then((res: any) => {
-      if (Array.isArray(res)) setBranchesList(res.map((b: any) => ({ id: b.id, name: b.name })))
+      if (Array.isArray(res)) {
+        setBranchesList(res.map((branch: any) => ({ id: branch.id, name: branch.name })))
+      }
     }).catch(() => {})
   }, [])
 
-  // Load bookings from API
   useEffect(() => {
     let cancelled = false
 
     const fetchBookings = () => {
       bookingApi.getAll({ limit: 1000 }).then((res: any) => {
         if (cancelled) return
-        const bookings = res.bookings || []
-        const slots: typeof allBookings = []
-        for (const b of bookings) {
-          // Skip cancelled bookings
-          if (b.status === "cancelled") continue
-          if (!b.courtId || !b.timeStart) continue
 
-          let dateLabel = ""
-          if (b.bookingDate) {
-            const d = new Date(b.bookingDate)
-            dateLabel = formatDateLabel(d)
-          }
+        const slots: CourtSlotBooking[] = []
+        for (const booking of res.bookings || []) {
+          if (booking.status === "cancelled" || !booking.courtId || !booking.timeStart) continue
+
+          const dateLabel = booking.bookingDate ? formatDateLabel(new Date(booking.bookingDate)) : ""
           if (!dateLabel) continue
 
-          // Expand time range into hourly slots (e.g., 06:00-08:00 → [06:00, 07:00])
-          const startHour = parseInt(b.timeStart.split(":")[0])
-          const endHour = b.timeEnd ? parseInt(b.timeEnd.split(":")[0]) : startHour + 1
-          for (let h = startHour; h < endHour; h++) {
+          const startHour = parseInt(booking.timeStart.split(":")[0] || "0", 10)
+          const endHour = booking.timeEnd ? parseInt(booking.timeEnd.split(":")[0] || "0", 10) : startHour + 1
+          const slotStatus: "booked" | "hold" =
+            booking.status === "hold" || booking.status === "pending" || booking.status === "deposited"
+              ? "hold"
+              : "booked"
+
+          for (let hour = startHour; hour < endHour; hour += 1) {
             slots.push({
-              courtId: b.courtId,
+              bookingId: booking.id,
+              bookingCode: booking.bookingCode,
+              courtId: booking.courtId,
               dateLabel,
-              time: `${String(h).padStart(2, "0")}:00`,
-              status: b.status === "hold" ? "hold" : "booked",
-              bookedBy: b.customerName || "",
-              phone: b.customerPhone || "",
+              time: `${String(hour).padStart(2, "0")}:00`,
+              status: slotStatus,
+              bookedBy: booking.customerName || "",
+              phone: booking.customerPhone || "",
+              customerEmail: booking.customerEmail || null,
             })
           }
         }
+
         setAllBookings(slots)
       }).catch(() => {})
     }
@@ -106,521 +143,516 @@ export default function EmployeeCourtsPage() {
     }
   }, [bookingsVersion])
 
-  /* Helper: convert warehouse name → branch name */
   const warehouseToBranchName = useCallback((warehouse?: string): string | null => {
     if (!warehouse) return null
     const area = warehouse.replace("Kho ", "")
-    const branch = branchesList.find(b => b.name.includes(area))
+    const branch = branchesList.find((item) => item.name.includes(area))
     return branch ? branch.name : null
   }, [branchesList])
 
-  /* ─── Determine employee's branch ─── */
-  const employeeBranch = useMemo(() => warehouseToBranchName(user?.warehouse), [user?.warehouse, warehouseToBranchName])
+  const employeeBranch = useMemo(
+    () => warehouseToBranchName(user?.warehouse),
+    [user?.warehouse, warehouseToBranchName],
+  )
 
-  /* ─── Filter courts to employee's branch only ─── */
   const branchCourts = useMemo(() => {
     if (!employeeBranch) return []
-    return courtsData.filter(c => c.branch === employeeBranch)
+    return courtsData.filter((court) => court.branch === employeeBranch)
   }, [courtsData, employeeBranch])
 
   const filteredCourts = useMemo(() => {
-    return branchCourts.filter(c => {
-      if (typeFilter !== "all" && c.type !== typeFilter) return false
-      return true
-    })
+    return branchCourts.filter((court) => typeFilter === "all" || court.type === typeFilter)
   }, [branchCourts, typeFilter])
 
-  /* Auto-select first court when filter changes */
   useEffect(() => {
-    if (filteredCourts.length > 0) {
-      if (!selectedCourtId || !filteredCourts.find(c => c.id === selectedCourtId)) {
-        setSelectedCourtId(filteredCourts[0].id)
-      }
-    } else {
+    if (filteredCourts.length === 0) {
       setSelectedCourtId(null)
+      return
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filteredCourts])
 
-  const selectedCourt = courtsData.find(c => c.id === selectedCourtId) || null
+    if (!selectedCourtId || !filteredCourts.find((court) => court.id === selectedCourtId)) {
+      setSelectedCourtId(filteredCourts[0].id)
+    }
+  }, [filteredCourts, selectedCourtId])
 
-  /* ─── Calendar data ─── */
+  const selectedCourt = courtsData.find((court) => court.id === selectedCourtId) || null
   const timeSlots = useMemo(() => generateTimeSlots(), [])
 
   const startDate = useMemo(() => {
-    const d = new Date()
-    d.setDate(d.getDate() + weekOffset * 7)
-    return d
+    const value = new Date()
+    value.setDate(value.getDate() + weekOffset * 7)
+    return value
   }, [weekOffset])
 
   const weekDays = useMemo(() => getWeekDays(startDate), [startDate])
-  const weekKey = weekDays.map(d => d.label).join(",")
-
-  const dayLabels = useMemo(() => weekDays.map(d => d.label), [weekKey])
+  const weekKey = weekDays.map((day) => day.label).join(",")
+  const dayLabels = useMemo(() => weekDays.map((day) => day.label), [weekKey])
 
   const courtAvailability = useMemo(() => {
     if (!selectedCourt) return {} as Record<string, Record<string, "available" | "booked" | "hold">>
+
     const result: Record<string, Record<string, "available" | "booked" | "hold">> = {}
-    for (const dl of dayLabels) {
-      result[dl] = {}
-      const dayBookings = allBookings.filter(b => b.courtId === selectedCourt.id && b.dateLabel === dl)
-      for (const b of dayBookings) {
-        result[dl][b.time] = (b.status === "hold" ? "hold" : "booked") as "available" | "booked" | "hold"
+    for (const dateLabel of dayLabels) {
+      result[dateLabel] = {}
+      const dayBookings = allBookings.filter(
+        (booking) => booking.courtId === selectedCourt.id && booking.dateLabel === dateLabel,
+      )
+      for (const booking of dayBookings) {
+        result[dateLabel][booking.time] = booking.status
       }
     }
     return result
-  }, [selectedCourt, dayLabels, allBookings])
+  }, [allBookings, dayLabels, selectedCourt])
 
-  /* Employee click handler: toggle slot status */
   const handleSlotClick = useCallback(async (courtId: number, dateLabel: string, time: string, currentStatus: string) => {
-    if (employeeAction === "remove") {
-      // Find matching booking and cancel it
-      const matching = allBookings.find(b => b.courtId === courtId && b.dateLabel === dateLabel && b.time === time)
-      if (matching) {
-        setAllBookings(prev => prev.filter(b => !(b.courtId === courtId && b.dateLabel === dateLabel && b.time === time)))
-      }
-    } else {
-      if (currentStatus !== "available") {
-        // Slot already booked → toggle off (remove local)
-        setAllBookings(prev => prev.filter(b => !(b.courtId === courtId && b.dateLabel === dateLabel && b.time === time)))
-      } else {
-        // Add new booking via API — only update local state if API succeeds
-        try {
-          const parts = dateLabel.split("/")
-          const day = parts[0]?.padStart(2, "0")
-          const month = parts[1]?.padStart(2, "0")
-          const bookingDate = parts.length >= 2 ? `${new Date().getFullYear()}-${month}-${day}` : new Date().toISOString().split("T")[0]
-          const res = await bookingApi.create({
-            court_id: courtId,
-            booking_date: bookingDate,
-            time_start: time,
-            time_end: `${String(parseInt(time.split(":")[0]) + 1).padStart(2, "0")}:00`,
-            slots: 1,
-            customer_name: user?.fullName || "Nhân viên",
-            customer_phone: "0000000000",
-            payment_method: "cash",
-          })
-          if (res && (res as any).success !== false) {
-            // API succeeded → add to local state
-            setAllBookings(prev => [...prev, { courtId, dateLabel, time, status: employeeAction, bookedBy: user?.fullName || "Nhân viên" }])
-          } else {
-            // API returned error (e.g., conflict)
-            alert((res as any)?.error || "Slot đã được đặt bởi người khác. Vui lòng tải lại trang.")
-          }
-        } catch (err: any) {
-          // API threw (conflict / network error)
-          alert(err?.message || "Slot đã được đặt bởi người khác hoặc có lỗi xảy ra.")
-        }
-      }
+    if (!selectedCourt) return
+
+    if (currentStatus !== "available") {
+      toast("Ô này đã có booking. Nhấn chuột phải để hủy và nhập lý do.")
+      return
     }
-    // Always re-fetch from API to get latest state
-    setBookingsVersion(v => v + 1)
-  }, [employeeAction, user?.fullName, allBookings])
 
-  /* ─── KPI (branch-only) ─── */
+    const parts = dateLabel.split("/")
+    const day = Number(parts[0])
+    const month = Number(parts[1])
+    const slotDate = new Date(new Date().getFullYear(), month - 1, day)
+
+    if (isSlotPast(slotDate, time)) {
+      toast.error("Không thể thao tác với khung giờ đã qua.")
+      return
+    }
+
+    try {
+      const bookingDate = parts.length >= 2
+        ? `${slotDate.getFullYear()}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+        : new Date().toISOString().split("T")[0]
+
+      const created = await bookingApi.create({
+        court_id: courtId,
+        booking_date: bookingDate,
+        time_start: time,
+        time_end: `${String(parseInt(time.split(":")[0] || "0", 10) + 1).padStart(2, "0")}:00`,
+        slots: 1,
+        customer_name: user?.fullName || "Nhân viên",
+        customer_phone: user?.phone || "0000000000",
+        customer_email: user?.email || undefined,
+        payment_method: "cash",
+      })
+
+      if (!created.success || !created.booking) {
+        toast.error(created.error || "Không thể tạo booking cho ô này.")
+        return
+      }
+
+      if (employeeAction === "booked") {
+        const confirmed = await bookingApi.confirm(created.booking.id)
+        if (!confirmed.success) {
+          toast.error(confirmed.error || "Đã tạo booking giữ chỗ nhưng chưa xác nhận được.")
+        } else {
+          toast.success("Đã đặt chỗ thành công.")
+        }
+      } else {
+        toast.success("Đã tạo giữ chỗ thành công.")
+      }
+
+      setBookingsVersion((value) => value + 1)
+      window.dispatchEvent(new Event("bh-notifications-refresh"))
+    } catch (error: any) {
+      toast.error(error?.message || "Không thể thao tác với ô này.")
+    }
+  }, [employeeAction, selectedCourt, user?.email, user?.fullName, user?.phone])
+
+  const openCancelDialog = useCallback((booking: CourtSlotBooking, dayName: string) => {
+    setCancelTarget({ ...booking, dayName })
+    setCancelReason("")
+  }, [])
+
+  const handleCancelBooking = useCallback(async () => {
+    if (!cancelTarget) return
+
+    const reason = cancelReason.trim()
+    if (!reason) {
+      toast.error("Vui lòng nhập lý do hủy sân.")
+      return
+    }
+
+    setCancelLoading(true)
+    try {
+      const result = await bookingApi.cancel(cancelTarget.bookingId, { reason })
+      if (!result.success) {
+        toast.error(result.error || "Không thể hủy booking này.")
+        return
+      }
+
+      toast.success("Đã hủy booking. Thông báo đã được gửi theo cấu hình hệ thống.")
+      setCancelTarget(null)
+      setCancelReason("")
+      setBookingsVersion((value) => value + 1)
+      window.dispatchEvent(new Event("bh-notifications-refresh"))
+    } finally {
+      setCancelLoading(false)
+    }
+  }, [cancelReason, cancelTarget])
+
   const totalCourts = branchCourts.length
-  const availableCourts = branchCourts.filter(c => c.available).length
-  const premiumVip = branchCourts.filter(c => c.type === "premium" || c.type === "vip").length
-  const avgPrice = totalCourts > 0 ? Math.round(branchCourts.reduce((s, c) => s + c.price, 0) / totalCourts) : 0
+  const availableCourts = branchCourts.filter((court) => court.available).length
+  const premiumVip = branchCourts.filter((court) => court.type === "premium" || court.type === "vip").length
+  const avgPrice = totalCourts > 0
+    ? Math.round(branchCourts.reduce((sum, court) => sum + court.price, 0) / totalCourts)
+    : 0
 
-  /* ─── Slot stats for selected court/week ─── */
   const slotStats = useMemo(() => {
-    const s = { total: 0, available: 0, booked: 0, hold: 0 }
-    if (!selectedCourt) return s
-    weekDays.forEach(d => {
-      const day = courtAvailability[d.label]
-      if (!day) return
-      timeSlots.forEach(t => {
-        s.total++
-        const st = day[t] || "available"
-        s[st]++
+    const stats = { total: 0, available: 0, booked: 0, hold: 0 }
+    if (!selectedCourt) return stats
+
+    weekDays.forEach((day) => {
+      const courtDay = courtAvailability[day.label]
+      if (!courtDay) return
+      timeSlots.forEach((time) => {
+        stats.total += 1
+        const status = courtDay[time] || "available"
+        stats[status] += 1
       })
     })
-    return s
-  }, [selectedCourt, courtAvailability, weekDays, timeSlots])
+
+    return stats
+  }, [courtAvailability, selectedCourt, timeSlots, weekDays])
 
   if (!employeeBranch) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-        <AlertTriangle className="h-10 w-10 mb-3 opacity-30" />
+        <AlertTriangle className="mb-3 h-10 w-10 opacity-30" />
         <p className="text-sm">Không xác định được chi nhánh của bạn.</p>
       </div>
     )
   }
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="font-serif text-2xl font-extrabold">Quản lý sân</h1>
-          <p className="text-sm text-muted-foreground">
-            Chi nhánh: <strong>{employeeBranch.replace("BadmintonHub ", "")}</strong> — Xem lịch đặt và quản lý slot
-          </p>
-        </div>
-        <Badge variant="outline" className="gap-1.5 py-1.5 px-3 text-xs bg-blue-50 text-blue-700 border-blue-200">
-          <Building2 className="h-3.5 w-3.5" />
-          {employeeBranch.replace("BadmintonHub ", "")}
-        </Badge>
-      </div>
-
-      {/* ─── KPI ─── */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 mb-6">
-        {[
-          { title: "Tổng số sân", value: totalCourts.toString(), icon: <Building2 className="h-5 w-5" />, color: "bg-primary/10 text-primary" },
-          { title: "Đang hoạt động", value: availableCourts.toString(), icon: <CheckCircle2 className="h-5 w-5" />, color: "bg-green-100 text-green-600" },
-          { title: "Premium / VIP", value: premiumVip.toString(), icon: <Star className="h-5 w-5" />, color: "bg-amber-100 text-amber-600" },
-          { title: "Giá TB / giờ", value: formatVND(avgPrice), icon: <DollarSign className="h-5 w-5" />, color: "bg-secondary/10 text-secondary" },
-        ].map((card, i) => (
-          <Card key={i} className="hover:-translate-y-0.5 transition-all">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <span className={cn("p-2 rounded-lg", card.color)}>{card.icon}</span>
-              </div>
-              <p className="font-serif text-2xl font-extrabold mt-3">{card.value}</p>
-              <p className="text-sm text-muted-foreground">{card.title}</p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {/* ─── Filters (no branch filter — locked to employee's branch) ─── */}
-      <Card className="mb-6">
-        <CardContent className="p-4">
-          <div className="flex flex-wrap items-end gap-4">
-            {/* Type combo */}
-            <div className="w-[160px]">
-              <Label className="text-xs text-muted-foreground mb-1 block">Loại sân</Label>
-              <Select value={typeFilter} onValueChange={setTypeFilter}>
-                <SelectTrigger className="h-9"><SelectValue placeholder="Loại sân" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Tất cả loại</SelectItem>
-                  <SelectItem value="standard">Standard</SelectItem>
-                  <SelectItem value="premium">Premium</SelectItem>
-                  <SelectItem value="vip">VIP</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {/* Court combo */}
-            <div className="flex-1 min-w-[220px]">
-              <Label className="text-xs text-muted-foreground mb-1 block">Chọn sân</Label>
-              <Select
-                value={selectedCourtId?.toString() || ""}
-                onValueChange={(v) => setSelectedCourtId(parseInt(v))}
-              >
-                <SelectTrigger className="h-9">
-                  <SelectValue placeholder="Chọn sân..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {filteredCourts.map(c => (
-                    <SelectItem key={c.id} value={c.id.toString()}>
-                      <span className="flex items-center gap-2">
-                        {c.name}
-                        {!c.available && <XCircle className="h-3 w-3 text-red-500" />}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            {/* Status */}
-            {selectedCourt && (
-              <div className="flex items-center gap-2">
-                <span
-                  className={cn(
-                    "inline-flex items-center gap-1.5 px-3 h-9 rounded-md text-xs font-medium border",
-                    selectedCourt.available
-                      ? "bg-green-50 text-green-700 border-green-200"
-                      : "bg-red-50 text-red-700 border-red-200"
-                  )}
-                >
-                  {selectedCourt.available ? <><CheckCircle2 className="h-3.5 w-3.5" /> Hoạt động</> : <><XCircle className="h-3.5 w-3.5" /> Tạm đóng</>}
-                </span>
-              </div>
-            )}
+    <>
+      <div>
+        <div className="mb-6 flex items-center justify-between">
+          <div>
+            <h1 className="font-serif text-2xl font-extrabold">Quản lý sân</h1>
+            <p className="text-sm text-muted-foreground">
+              Chi nhánh: <strong>{employeeBranch.replace("BadmintonHub ", "")}</strong> - Xem lịch đặt và quản lý slot
+            </p>
           </div>
-        </CardContent>
-      </Card>
-
-      {/* ─── Court info strip ─── */}
-      {selectedCourt && (
-        <div className="flex flex-wrap items-center gap-4 mb-4 text-sm">
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-lg">{selectedCourt.name}</span>
-            <CourtTypeBadge type={selectedCourt.type} />
-            {selectedCourt.indoor
-              ? <Badge variant="outline" className="text-[10px] bg-sky-50 text-sky-600 border-sky-200">Indoor</Badge>
-              : <Badge variant="outline" className="text-[10px] bg-orange-50 text-orange-600 border-orange-200">Outdoor</Badge>}
-          </div>
-          <span className="text-muted-foreground flex items-center gap-1"><MapPin className="h-3.5 w-3.5" /> {selectedCourt.branch}</span>
-          <span className="text-muted-foreground flex items-center gap-1"><Clock className="h-3.5 w-3.5" /> {selectedCourt.hours}</span>
-          <span className="font-semibold text-primary">{formatVND(selectedCourt.price)}/h</span>
-          <span className="flex items-center gap-1 text-muted-foreground">
-            <Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" /> {selectedCourt.rating} ({selectedCourt.reviews})
-          </span>
+          <Badge variant="outline" className="gap-1.5 border-blue-200 bg-blue-50 px-3 py-1.5 text-xs text-blue-700">
+            <Building2 className="h-3.5 w-3.5" />
+            {employeeBranch.replace("BadmintonHub ", "")}
+          </Badge>
         </div>
-      )}
 
-      {/* ─── Slot statistics strip ─── */}
-      {selectedCourt && (
-        <div className="flex flex-wrap gap-3 mb-4">
-          <Badge variant="outline" className="gap-1.5 py-1 px-2.5 text-xs bg-muted/50">
-            <CalendarDays className="h-3.5 w-3.5" /> Tổng slot: <strong>{slotStats.total}</strong>
-          </Badge>
-          <Badge variant="outline" className="gap-1.5 py-1 px-2.5 text-xs bg-green-50 text-green-700 border-green-200">
-            <Check className="h-3.5 w-3.5" /> Trống: <strong>{slotStats.available}</strong>
-          </Badge>
-          <Badge variant="outline" className="gap-1.5 py-1 px-2.5 text-xs bg-red-50 text-red-700 border-red-200">
-            <Lock className="h-3.5 w-3.5" /> Đã đặt: <strong>{slotStats.booked}</strong>
-          </Badge>
-          <Badge variant="outline" className="gap-1.5 py-1 px-2.5 text-xs bg-amber-50 text-amber-700 border-amber-200">
-            <Users className="h-3.5 w-3.5" /> Giữ chỗ: <strong>{slotStats.hold}</strong>
-          </Badge>
-          <span className="text-xs text-muted-foreground ml-auto self-center">
-            Tỉ lệ lấp đầy: <strong>{slotStats.total ? Math.round(((slotStats.booked + slotStats.hold) / slotStats.total) * 100) : 0}%</strong>
-          </span>
-        </div>
-      )}
-
-      {/* ─── Time slot grid ─── */}
-      {selectedCourt ? (
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle className="font-serif text-lg flex items-center gap-2">
-                <CalendarDays className="h-5 w-5 text-primary" /> Lịch đặt sân
-              </CardTitle>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline" size="icon" className="h-8 w-8"
-                  onClick={() => setWeekOffset(Math.max(0, weekOffset - 1))}
-                  disabled={weekOffset === 0}
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <span className="text-sm font-medium min-w-[140px] text-center">
-                  {weekDays[0]?.label} — {weekDays[6]?.label}
-                </span>
-                <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setWeekOffset(weekOffset + 1)}>
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-            {/* Legend + Action */}
-            <div className="flex flex-wrap items-center gap-4 mt-2">
-              <span className="flex items-center gap-1.5 text-xs"><span className="h-3 w-3 rounded bg-court-available" /> Trống</span>
-              <span className="flex items-center gap-1.5 text-xs"><span className="h-3 w-3 rounded bg-court-booked" /> Đã đặt</span>
-              <span className="flex items-center gap-1.5 text-xs"><span className="h-3 w-3 rounded bg-court-hold" /> Giữ chỗ</span>
-              <span className="border-l pl-4 ml-2 flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">Click ô:</span>
-                <Select value={employeeAction} onValueChange={(v: "booked" | "hold" | "remove") => setEmployeeAction(v)}>
-                  <SelectTrigger className="h-7 w-[130px] text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="booked">Đặt chỗ</SelectItem>
-                    <SelectItem value="hold">Giữ chỗ</SelectItem>
-                    <SelectItem value="remove">Xóa / Mở lại</SelectItem>
-                  </SelectContent>
-                </Select>
-              </span>
-            </div>
-          </CardHeader>
-          <CardContent className="p-0 pb-4">
-            <div className="overflow-x-auto px-4">
-              <div className="min-w-[700px]">
-                {/* Day headers */}
-                <div className="grid grid-cols-[56px_repeat(7,1fr)] gap-1 mb-1 sticky top-0 bg-background z-10 pb-1 border-b">
-                  <div className="text-center text-[10px] text-muted-foreground font-medium py-1">Giờ</div>
-                  {weekDays.map(d => (
-                    <div key={d.label} className="text-center py-1">
-                      <div className="text-[10px] text-muted-foreground">{d.dayName}</div>
-                      <div className="text-xs font-semibold">{d.label}</div>
-                    </div>
-                  ))}
-                </div>
-                {/* Rows */}
-                {timeSlots.map(time => (
-                  <div key={time} className="grid grid-cols-[56px_repeat(7,1fr)] gap-1 mb-[3px]">
-                    <div className="text-[11px] text-muted-foreground flex items-center justify-end pr-2 font-mono">{time}</div>
-                    {weekDays.map(d => {
-                      const status = courtAvailability[d.label]?.[time] || "available"
-                      const bookingEntry = (status === "booked" || status === "hold")
-                        ? allBookings.find(b => b.courtId === selectedCourt!.id && b.dateLabel === d.label && b.time === time)
-                        : null
-                      const slotBtn = (
-                        <button
-                          key={`${d.label}-${time}`}
-                          onClick={() => selectedCourt && handleSlotClick(selectedCourt.id, d.label, time, status)}
-                          className={cn(
-                            "h-8 w-full rounded-[4px] flex items-center justify-center text-[10px] font-medium transition-colors select-none cursor-pointer",
-                            status === "available" && "bg-court-available text-green-700 hover:bg-green-200",
-                            status === "booked" && "bg-court-booked text-red-600 hover:bg-red-200",
-                            status === "hold" && "bg-court-hold text-amber-700 hover:bg-amber-200",
-                          )}
-                        >
-                          {status === "booked" ? "Đã đặt" : status === "hold" ? "Giữ chỗ" : ""}
-                        </button>
-                      )
-                      if (bookingEntry && (bookingEntry.bookedBy || bookingEntry.phone)) {
-                        return (
-                          <Tooltip key={`${d.label}-${time}`}>
-                            <TooltipTrigger asChild>
-                              {slotBtn}
-                            </TooltipTrigger>
-                            <TooltipContent side="top" className="bg-foreground text-background rounded-lg px-3 py-2 text-xs shadow-lg max-w-[200px]">
-                              <div className="space-y-0.5">
-                                {bookingEntry.bookedBy && (
-                                  <p className="font-semibold">{bookingEntry.bookedBy}</p>
-                                )}
-                                {bookingEntry.phone && (
-                                  <p className="text-background/80">📞 {bookingEntry.phone}</p>
-                                )}
-                                <p className="text-background/60 text-[10px]">{d.dayName} {d.label} • {time}</p>
-                              </div>
-                            </TooltipContent>
-                          </Tooltip>
-                        )
-                      }
-                      return slotBtn
-                    })}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      ) : (
-        <Card>
-          <CardContent className="py-16 text-center text-muted-foreground">
-            <Building2 className="h-10 w-10 mx-auto mb-3 opacity-30" />
-            <p className="text-sm">Chọn sân để xem lịch đặt</p>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ─── All courts mini cards ─── */}
-      <details className="mt-6 group" open>
-        <summary className="cursor-pointer text-sm font-semibold flex items-center gap-2 mb-3 select-none">
-          <Building2 className="h-4 w-4 text-primary" />
-          Danh sách sân ({filteredCourts.length})
-          <ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" />
-        </summary>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {filteredCourts.map(court => (
-            <Card
-              key={court.id}
-              className={cn(
-                "cursor-pointer transition-all hover:-translate-y-0.5",
-                selectedCourtId === court.id && "ring-2 ring-primary shadow-md"
-              )}
-              onClick={() => setSelectedCourtId(court.id)}
-            >
+        <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          {[
+            { title: "Tổng số sân", value: totalCourts.toString(), icon: <Building2 className="h-5 w-5" />, color: "bg-primary/10 text-primary" },
+            { title: "Đang hoạt động", value: availableCourts.toString(), icon: <CheckCircle2 className="h-5 w-5" />, color: "bg-green-100 text-green-600" },
+            { title: "Premium / VIP", value: premiumVip.toString(), icon: <Star className="h-5 w-5" />, color: "bg-amber-100 text-amber-600" },
+            { title: "Giá TB / giờ", value: formatVND(avgPrice), icon: <DollarSign className="h-5 w-5" />, color: "bg-secondary/10 text-secondary" },
+          ].map((card) => (
+            <Card key={card.title} className="transition-all hover:-translate-y-0.5">
               <CardContent className="p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-sm">{court.name}</span>
-                    <CourtTypeBadge type={court.type} />
-                  </div>
-                  <Sheet>
-                    <SheetTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={e => e.stopPropagation()}>
-                        <Eye className="h-3.5 w-3.5" />
-                      </Button>
-                    </SheetTrigger>
-                    <CourtDetailSheet court={court} />
-                  </Sheet>
+                <div className="flex items-center justify-between">
+                  <span className={cn("rounded-lg p-2", card.color)}>{card.icon}</span>
                 </div>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                  <span className="font-semibold text-primary">{formatVND(court.price)}/h</span>
-                  <span className="flex items-center gap-0.5">
-                    <Star className="h-3 w-3 text-amber-500 fill-amber-500" /> {court.rating}
-                  </span>
-                  {court.indoor
-                    ? <Badge variant="outline" className="text-[9px] py-0 h-4 bg-sky-50 text-sky-600 border-sky-200">Indoor</Badge>
-                    : <Badge variant="outline" className="text-[9px] py-0 h-4 bg-orange-50 text-orange-600 border-orange-200">Outdoor</Badge>}
-                  <span className={cn(
-                    "ml-auto inline-flex items-center gap-1 text-[10px] font-medium",
-                    court.available ? "text-green-600" : "text-red-500"
-                  )}>
-                    {court.available ? <><CheckCircle2 className="h-3 w-3" /> Hoạt động</> : <><XCircle className="h-3 w-3" /> Tạm đóng</>}
-                  </span>
-                </div>
+                <p className="mt-3 font-serif text-2xl font-extrabold">{card.value}</p>
+                <p className="text-sm text-muted-foreground">{card.title}</p>
               </CardContent>
             </Card>
           ))}
         </div>
-      </details>
-    </div>
-  )
-}
 
-/* ─── Court Detail Sheet ─── */
-function CourtDetailSheet({ court }: { court: Court }) {
-  return (
-    <SheetContent className="w-full sm:max-w-[480px] overflow-y-auto">
-      <SheetHeader>
-        <SheetTitle className="font-serif">Chi tiết sân</SheetTitle>
-      </SheetHeader>
-      <div className="mt-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="font-medium text-lg">{court.name}</p>
-            <p className="text-sm text-muted-foreground">{court.branch}</p>
+        <Card className="mb-6">
+          <CardContent className="p-4">
+            <div className="flex flex-wrap items-end gap-4">
+              <div className="w-[160px]">
+                <Label className="mb-1 block text-xs text-muted-foreground">Loại sân</Label>
+                <Select value={typeFilter} onValueChange={setTypeFilter}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="Loại sân" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Tất cả loại</SelectItem>
+                    <SelectItem value="standard">Standard</SelectItem>
+                    <SelectItem value="premium">Premium</SelectItem>
+                    <SelectItem value="vip">VIP</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="min-w-[220px] flex-1">
+                <Label className="mb-1 block text-xs text-muted-foreground">Chọn sân</Label>
+                <Select value={selectedCourtId?.toString() || ""} onValueChange={(value) => setSelectedCourtId(parseInt(value, 10))}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="Chọn sân..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {filteredCourts.map((court) => (
+                      <SelectItem key={court.id} value={court.id.toString()}>
+                        <span className="flex items-center gap-2">
+                          {court.name}
+                          {!court.available && <XCircle className="h-3 w-3 text-red-500" />}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {selectedCourt && (
+                <div className="flex items-center gap-2">
+                  <span
+                    className={cn(
+                      "inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-xs font-medium",
+                      selectedCourt.available
+                        ? "border-green-200 bg-green-50 text-green-700"
+                        : "border-red-200 bg-red-50 text-red-700",
+                    )}
+                  >
+                    {selectedCourt.available ? (
+                      <>
+                        <CheckCircle2 className="h-3.5 w-3.5" /> Hoạt động
+                      </>
+                    ) : (
+                      <>
+                        <XCircle className="h-3.5 w-3.5" /> Tạm đóng
+                      </>
+                    )}
+                  </span>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {selectedCourt && (
+          <div className="mb-4 flex flex-wrap items-center gap-4 text-sm">
+            <div className="flex items-center gap-2">
+              <span className="text-lg font-semibold">{selectedCourt.name}</span>
+              <CourtTypeBadge type={selectedCourt.type} />
+              {selectedCourt.indoor ? (
+                <Badge variant="outline" className="border-sky-200 bg-sky-50 text-[10px] text-sky-600">Indoor</Badge>
+              ) : (
+                <Badge variant="outline" className="border-orange-200 bg-orange-50 text-[10px] text-orange-600">Outdoor</Badge>
+              )}
+            </div>
+            <span className="flex items-center gap-1 text-muted-foreground">
+              <MapPin className="h-3.5 w-3.5" /> {selectedCourt.branch}
+            </span>
+            <span className="flex items-center gap-1 text-muted-foreground">
+              <Clock className="h-3.5 w-3.5" /> {selectedCourt.hours}
+            </span>
+            <span className="font-semibold text-primary">{formatVND(selectedCourt.price)}/h</span>
+            <span className="flex items-center gap-1 text-muted-foreground">
+              <Star className="h-3.5 w-3.5 fill-amber-500 text-amber-500" /> {selectedCourt.rating} ({selectedCourt.reviews})
+            </span>
           </div>
-          <CourtTypeBadge type={court.type} />
-        </div>
-        <Card>
-          <CardContent className="p-4 space-y-2">
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Giá / giờ</span>
-              <span className="font-bold text-primary">{formatVND(court.price)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Loại</span>
-              <span>{court.indoor ? "Indoor" : "Outdoor"}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Giờ mở cửa</span>
-              <span>{court.hours}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Đánh giá</span>
-              <span className="flex items-center gap-1">
-                <Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />{court.rating} ({court.reviews} reviews)
-              </span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Trạng thái</span>
-              <span className={court.available ? "text-green-600" : "text-red-600"}>
-                {court.available ? "Hoạt động" : "Tạm đóng"}
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Địa chỉ</CardTitle></CardHeader>
-          <CardContent className="p-4 pt-0">
-            <div className="flex items-start gap-2 text-sm text-muted-foreground">
-              <MapPin className="h-4 w-4 shrink-0 mt-0.5" />
-              {court.address}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Mô tả</CardTitle></CardHeader>
-          <CardContent className="p-4 pt-0">
-            <p className="text-sm text-muted-foreground">{court.description}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Tiện nghi</CardTitle></CardHeader>
-          <CardContent className="p-4 pt-0">
-            <div className="flex flex-wrap gap-1.5">
-              {court.amenities.map((a, i) => (
-                <Badge key={i} variant="secondary" className="text-xs">{a}</Badge>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+        )}
+
+        {selectedCourt && (
+          <div className="mb-4 flex flex-wrap gap-3">
+            <Badge variant="outline" className="gap-1.5 bg-muted/50 px-2.5 py-1 text-xs">
+              <CalendarDays className="h-3.5 w-3.5" /> Tổng slot: <strong>{slotStats.total}</strong>
+            </Badge>
+            <Badge variant="outline" className="gap-1.5 border-green-200 bg-green-50 px-2.5 py-1 text-xs text-green-700">
+              <Check className="h-3.5 w-3.5" /> Trống: <strong>{slotStats.available}</strong>
+            </Badge>
+            <Badge variant="outline" className="gap-1.5 border-red-200 bg-red-50 px-2.5 py-1 text-xs text-red-700">
+              <Lock className="h-3.5 w-3.5" /> Đã đặt: <strong>{slotStats.booked}</strong>
+            </Badge>
+            <Badge variant="outline" className="gap-1.5 border-amber-200 bg-amber-50 px-2.5 py-1 text-xs text-amber-700">
+              <Users className="h-3.5 w-3.5" /> Giữ chỗ: <strong>{slotStats.hold}</strong>
+            </Badge>
+            <span className="ml-auto self-center text-xs text-muted-foreground">
+              Tỉ lệ lấp đầy: <strong>{slotStats.total ? Math.round(((slotStats.booked + slotStats.hold) / slotStats.total) * 100) : 0}%</strong>
+            </span>
+          </div>
+        )}
+
+        {selectedCourt ? (
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2 font-serif text-lg">
+                  <CalendarDays className="h-5 w-5 text-primary" /> Lịch đặt sân
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => setWeekOffset(Math.max(0, weekOffset - 1))}
+                    disabled={weekOffset === 0}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <span className="min-w-[140px] text-center text-sm font-medium">
+                    {weekDays[0]?.label} - {weekDays[6]?.label}
+                  </span>
+                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setWeekOffset(weekOffset + 1)}>
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+
+              <div className="mt-2 flex flex-wrap items-center gap-4">
+                <span className="flex items-center gap-1.5 text-xs"><span className="h-3 w-3 rounded bg-court-available" /> Trống</span>
+                <span className="flex items-center gap-1.5 text-xs"><span className="h-3 w-3 rounded bg-court-booked" /> Đã đặt</span>
+                <span className="flex items-center gap-1.5 text-xs"><span className="h-3 w-3 rounded bg-court-hold" /> Giữ chỗ</span>
+                <span className="ml-2 flex items-center gap-2 border-l pl-4">
+                  <span className="text-xs text-muted-foreground">Click ô trống:</span>
+                  <Select value={employeeAction} onValueChange={(value: "booked" | "hold") => setEmployeeAction(value)}>
+                    <SelectTrigger className="h-7 w-[130px] text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="booked">Đặt chỗ</SelectItem>
+                      <SelectItem value="hold">Giữ chỗ</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  Chuột phải ô đã có booking để hủy và nhập lý do.
+                </span>
+              </div>
+            </CardHeader>
+
+            <CardContent className="p-0 pb-4">
+              <div className="overflow-x-auto px-4">
+                <div className="min-w-[700px]">
+                  <div className="sticky top-0 z-10 mb-1 grid grid-cols-[56px_repeat(7,1fr)] gap-1 border-b bg-background pb-1">
+                    <div className="py-1 text-center text-[10px] font-medium text-muted-foreground">Giờ</div>
+                    {weekDays.map((day) => (
+                      <div key={day.label} className="py-1 text-center">
+                        <div className="text-[10px] text-muted-foreground">{day.dayName}</div>
+                        <div className="text-xs font-semibold">{day.label}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {timeSlots.map((time) => (
+                    <div key={time} className="mb-[3px] grid grid-cols-[56px_repeat(7,1fr)] gap-1">
+                      <div className="flex items-center justify-end pr-2 font-mono text-[11px] text-muted-foreground">{time}</div>
+                      {weekDays.map((day) => {
+                        const status = courtAvailability[day.label]?.[time] || "available"
+                        const bookingEntry = status === "available"
+                          ? null
+                          : allBookings.find(
+                              (booking) => booking.courtId === selectedCourt.id && booking.dateLabel === day.label && booking.time === time,
+                            ) || null
+
+                        const slotButton = (
+                          <button
+                            key={`${day.label}-${time}`}
+                            type="button"
+                            onClick={() => handleSlotClick(selectedCourt.id, day.label, time, status)}
+                            onContextMenu={(event) => {
+                              if (!bookingEntry) return
+                              event.preventDefault()
+                              openCancelDialog(bookingEntry, day.dayName)
+                            }}
+                            className={cn(
+                              "flex h-8 w-full cursor-pointer items-center justify-center rounded-[4px] text-[10px] font-medium transition-colors select-none",
+                              status === "available" && "bg-court-available text-green-700 hover:bg-green-200",
+                              status === "booked" && "bg-court-booked text-red-600 hover:bg-red-200",
+                              status === "hold" && "bg-court-hold text-amber-700 hover:bg-amber-200",
+                            )}
+                          >
+                            {status === "booked" ? "Đã đặt" : status === "hold" ? "Giữ chỗ" : ""}
+                          </button>
+                        )
+
+                        if (bookingEntry && (bookingEntry.bookedBy || bookingEntry.phone || bookingEntry.bookingCode)) {
+                          return (
+                            <Tooltip key={`${day.label}-${time}`}>
+                              <TooltipTrigger asChild>{slotButton}</TooltipTrigger>
+                              <TooltipContent side="top" className="max-w-[220px] rounded-lg bg-foreground px-3 py-2 text-xs text-background shadow-lg">
+                                <div className="space-y-0.5">
+                                  {bookingEntry.bookedBy && <p className="font-semibold">{bookingEntry.bookedBy}</p>}
+                                  {bookingEntry.phone && <p className="text-background/80">SĐT: {bookingEntry.phone}</p>}
+                                  {bookingEntry.bookingCode && <p className="text-background/80">Mã: {bookingEntry.bookingCode}</p>}
+                                  <p className="text-[10px] text-background/60">{day.dayName} {day.label} - {time}</p>
+                                  <p className="pt-1 text-[10px] text-background/60">Chuột phải để hủy booking.</p>
+                                </div>
+                              </TooltipContent>
+                            </Tooltip>
+                          )
+                        }
+
+                        return slotButton
+                      })}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardContent className="py-16 text-center text-muted-foreground">
+              <Building2 className="mx-auto mb-3 h-10 w-10 opacity-30" />
+              <p className="text-sm">Chọn sân để xem lịch đặt</p>
+            </CardContent>
+          </Card>
+        )}
       </div>
-    </SheetContent>
+
+      <Dialog
+        open={!!cancelTarget}
+        onOpenChange={(open) => {
+          if (!open && !cancelLoading) {
+            setCancelTarget(null)
+            setCancelReason("")
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Hủy booking sân</DialogTitle>
+          </DialogHeader>
+
+          {cancelTarget && (
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-muted/30 p-3 text-sm">
+                <p><strong>Khách:</strong> {cancelTarget.bookedBy || "Khách hàng"}</p>
+                {cancelTarget.phone && <p><strong>SĐT:</strong> {cancelTarget.phone}</p>}
+                {cancelTarget.bookingCode && <p><strong>Mã booking:</strong> {cancelTarget.bookingCode}</p>}
+                <p><strong>Thời gian:</strong> {cancelTarget.dayName} {cancelTarget.dateLabel} - {cancelTarget.time}</p>
+                <p><strong>Trạng thái:</strong> {cancelTarget.status === "hold" ? "Giữ chỗ" : "Đã đặt"}</p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="cancel-reason">Lý do hủy</Label>
+                <Textarea
+                  id="cancel-reason"
+                  value={cancelReason}
+                  onChange={(event) => setCancelReason(event.target.value)}
+                  placeholder="Nhập lý do để hệ thống gửi thông báo cho admin và khách hàng..."
+                  rows={4}
+                  disabled={cancelLoading}
+                />
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (cancelLoading) return
+                setCancelTarget(null)
+                setCancelReason("")
+              }}
+              disabled={cancelLoading}
+            >
+              Đóng
+            </Button>
+            <Button variant="destructive" onClick={handleCancelBooking} disabled={cancelLoading}>
+              {cancelLoading ? "Đang hủy..." : "Xác nhận hủy"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
