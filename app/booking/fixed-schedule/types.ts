@@ -1,58 +1,12 @@
 // ═══════════════════════════════════════════════════════════════
-// ENUMS - Khớp với BE booking.dto.ts
+// types.ts — Fixed Schedule FE types
+// CHANGES: CheckSlotResponse thêm price, isOriginal, hasAvailable
 // ═══════════════════════════════════════════════════════════════
 
-export type PaymentMethod = 'cash' | 'bank_transfer' | 'momo' | 'vnpay';
-
-/**
- * Một buổi trong tuần: thứ mấy + giờ.
- * dayOfWeek: 0=CN, 1=T2, 2=T3, 3=T4, 4=T5, 5=T6, 6=T7
- */
-export interface WeeklySlot {
-  dayOfWeek: number;
-  timeStart: string; // HH:mm
-  timeEnd: string;   // HH:mm
-}
-
-/**
- * Action cho từng occurrence khi confirm gói.
- * Khớp với OccurrenceAction enum ở BE.
- */
-export type OccurrenceAction = 'keep' | 'replace' | 'custom' | 'skip';
-
-// ═══════════════════════════════════════════════════════════════
-// CHECK SLOT (dùng trong modal đổi giờ)
-// ═══════════════════════════════════════════════════════════════
-
-export interface CheckSlotRequest {
-  courtId: number;
-  date: string;
-  timeStart: string;
-  timeEnd: string;
-}
-
-export interface CourtAvailability {
-  id: number;
-  name: string;
-  type: string;
-  price: number;
-  available: boolean;
-  isSelected: boolean;
-}
-
-export interface CheckSlotResponse {
-  courtId: number;
-  date: string;
-  timeStart: string;
-  timeEnd: string;
-  available: boolean;
-  conflicts: { time: string; status: string; bookedBy: string | null }[];
-  courts: CourtAvailability[];
-}
-
-// ═══════════════════════════════════════════════════════════════
-// COURT
-// ═══════════════════════════════════════════════════════════════
+export type FixedScheduleCycle = "weekly" | "monthly";
+export type FixedScheduleBookingMode = "occurrence_count" | "date_range";
+export type PaymentMethod = "cash" | "bank_transfer" | "momo" | "vnpay";
+export type OccurrenceAction = "keep" | "replace" | "custom" | "skip";
 
 export interface Court {
   id: number;
@@ -60,21 +14,38 @@ export interface Court {
   type: string;
   price: number;
   branchId: number;
+  available?: boolean;
 }
 
-// ═══════════════════════════════════════════════════════════════
-// PREVIEW - Request & Response
-// ═══════════════════════════════════════════════════════════════
+export interface FixedScheduleRule {
+  dayOfWeek?: number;
+  dayOfMonth?: number;
+  timeStart: string;
+  timeEnd: string;
+}
 
-/** Payload gửi lên POST /bookings/fixed/preview */
+// ─── Preview Request ──────────────────────────────────────────
+
 export interface FixedSchedulePreviewRequest {
   courtId: number;
-  startDate: string;     // YYYY-MM-DD
-  numberOfWeeks: number; // tối thiểu 4
-  weeklySlots: WeeklySlot[];
+  cycle: FixedScheduleCycle;
+  bookingMode?: FixedScheduleBookingMode;
+  startDate: string;
+  endDate?: string;
+  occurrenceCount?: number;
+  rules?: FixedScheduleRule[];
+  timeStart?: string;
+  timeEnd?: string;
 }
 
-/** Sân thay thế BE gợi ý khi có conflict */
+// ─── Preview Response ─────────────────────────────────────────
+
+export interface ConflictSlot {
+  time: string;
+  status: string;
+  bookedBy: string | null;
+}
+
 export interface SuggestedReplacement {
   courtId: number;
   courtName: string;
@@ -83,109 +54,117 @@ export interface SuggestedReplacement {
   timeEnd: string;
 }
 
-/** Thông tin 1 conflict slot */
-export interface ConflictSlot {
-  time: string;
-  status: string;
-  bookedBy: string | null;
-}
-
-/**
- * Thông tin 1 buổi trong response /preview.
- * hasConflict = true → có suggestedReplacement (hoặc null nếu không tìm được sân bù)
- */
 export interface PreviewOccurrence {
-  date: string;         // YYYY-MM-DD
-  dayLabel: string;     // T2, T3...
-  timeStart: string;    // HH:mm - giờ bắt đầu của buổi
-  timeEnd: string;      // HH:mm - giờ kết thúc của buổi
+  courtId: number;
+  date: string;
+  dayLabel: string;
+  timeStart: string;
+  timeEnd: string;
   hasConflict: boolean;
   conflicts: ConflictSlot[];
   suggestedReplacement: SuggestedReplacement | null;
 }
 
-/** Response đầy đủ từ /preview */
+export interface PreviewSummary {
+  totalOccurrences: number;
+  availableCount: number;
+  conflictCount: number;
+  replaceableCount: number;
+  unresolvableCount: number;
+}
+
 export interface FixedSchedulePreviewResponse {
   court: Court;
-  startDate: string;
-  endDate: string;
-  numberOfWeeks: number;
-  weeklySlots: WeeklySlot[];
+  cycle?: FixedScheduleCycle;
+  bookingMode?: FixedScheduleBookingMode;
+  occurrenceCount?: number;
+  rules?: FixedScheduleRule[];
+  startDate?: string;
+  endDate?: string;
+  timeStart?: string;
+  timeEnd?: string;
   occurrences: PreviewOccurrence[];
-  summary: {
-    totalOccurrences: number;
-    availableCount: number;
-    replaceableCount: number;
-    unresolvableCount: number;
-  };
+  summary: PreviewSummary;
   pricing: {
     pricePerHour: number;
+    pricePerSession: number;
     estimatedTotal: number;
     currency: string;
   };
 }
 
-// ═══════════════════════════════════════════════════════════════
-// CONFIRM - Request & Response
-// ═══════════════════════════════════════════════════════════════
+// ─── OccurrenceUIState ────────────────────────────────────────
 
-/**
- * Quyết định của user cho 1 buổi khi confirm.
- * Chỉ gửi "ý định" - BE tự tính giá từ DB.
- */
+export interface OccurrenceUIState extends PreviewOccurrence {
+  action: OccurrenceAction;
+  selectedReplacement: SuggestedReplacement | null;
+  customCourtId?: number;
+  customCourtName?: string;
+  customTimeStart?: string;
+  customTimeEnd?: string;
+}
+
+// ─── Confirm ─────────────────────────────────────────────────
+
 export interface OccurrenceDecision {
   date: string;
   action: OccurrenceAction;
-  replaceWithCourtId?: number;  // required khi action = 'replace' hoặc 'custom'
-  customTimeStart?: string;     // required khi action = 'custom'
-  customTimeEnd?: string;       // required khi action = 'custom'
+  replaceWithCourtId?: number;
+  customTimeStart?: string;
+  customTimeEnd?: string;
   reason?: string;
 }
 
-/** Payload gửi lên POST /bookings/fixed/confirm */
 export interface FixedScheduleConfirmRequest {
-  // Thông tin gói
   courtId: number;
+  cycle: FixedScheduleCycle;
+  bookingMode?: FixedScheduleBookingMode;
   startDate: string;
-  numberOfWeeks: number;
-  weeklySlots: WeeklySlot[];
-  // Thông tin khách
+  endDate?: string;
+  occurrenceCount?: number;
+  rules?: FixedScheduleRule[];
+  timeStart?: string;
+  timeEnd?: string;
   customerName: string;
   customerPhone: string;
   customerEmail?: string;
   paymentMethod: PaymentMethod;
   userId?: string;
-  // Decisions
   decisions: OccurrenceDecision[];
   adjustmentLimit?: number;
 }
 
-/** Response từ /confirm */
 export interface FixedScheduleConfirmResponse {
   scheduleId: string;
-  invoiceId: string;
   invoiceCode: string;
-  totalAmount: number;
   bookingsCreated: number;
-  skipped: number;
-  status: string;
+  totalAmount: number;
+  paymentMethod: PaymentMethod;
 }
 
-// ═══════════════════════════════════════════════════════════════
-// UI STATE - dùng nội bộ trong components
-// ═══════════════════════════════════════════════════════════════
+// ─── Check Slot ───────────────────────────────────────────────
+// UPDATED: thêm price, isOriginal, hasAvailable
 
-/**
- * State của 1 occurrence trên UI (sau khi user đã chọn action).
- * Extend từ PreviewOccurrence, thêm field UI state.
- */
-export interface OccurrenceUIState extends PreviewOccurrence {
-  action: OccurrenceAction;
-  // action='replace': sân BE gợi ý
-  selectedReplacement: SuggestedReplacement | null;
-  // action='custom': user tự chọn
-  customCourtId?: number;
-  customCourtName?: string;
-  customTimeStart?: string;
-  customTimeEnd?: string;
+export interface CheckSlotRequest {
+  courtId: number; // sân GỐC của gói (để lấy branchId + type)
+  date: string; // ngày của buổi cần đổi
+  timeStart: string; // khung giờ MỚI
+  timeEnd: string;
+}
+
+export interface CheckSlotCourtResult {
+  id: number;
+  name: string;
+  type: string;
+  price: number; // NEW: để hiển thị giá trong modal
+  available: boolean;
+  isOriginal: boolean; // NEW: true nếu là sân gốc của gói
+}
+
+export interface CheckSlotResponse {
+  date: string;
+  timeStart: string;
+  timeEnd: string;
+  courts: CheckSlotCourtResult[];
+  hasAvailable: boolean; // NEW: shortcut để FE biết nhanh
 }

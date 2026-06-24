@@ -737,6 +737,8 @@ function FixedScheduleView() {
       {loadingDetail && dialogOpen && (
         <Dialog open onOpenChange={() => setDialogOpen(false)}>
           <DialogContent className="max-w-sm">
+            {/* DialogTitle bắt buộc cho accessibility (Radix UI) — ẩn khỏi UI bằng sr-only */}
+            <DialogTitle className="sr-only">Đang tải chi tiết lịch</DialogTitle>
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-8 w-8 text-primary animate-spin" />
             </div>
