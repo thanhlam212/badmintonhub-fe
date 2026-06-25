@@ -18,7 +18,7 @@ import {
 } from "lucide-react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { formatVND } from "@/lib/utils"
 import { branchApi, orderApi, type ApiBranch } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -44,6 +44,7 @@ export default function CheckoutPage() {
   const [pickupBranch, setPickupBranch] = useState<number>(1) // default first branch
   const [agreed, setAgreed] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const submitLockRef = useRef(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [branches, setBranches] = useState<ApiBranch[]>([])
 
@@ -87,7 +88,9 @@ export default function CheckoutPage() {
   }
 
   const handleSubmit = async () => {
+    if (submitLockRef.current) return
     if (!validate()) return
+    submitLockRef.current = true
     setSubmitting(true)
 
     try {
@@ -137,10 +140,12 @@ export default function CheckoutPage() {
         }, 1500)
       } else {
         alert(result.error || "Đặt hàng thất bại. Vui lòng thử lại.")
+        submitLockRef.current = false
         setSubmitting(false)
       }
     } catch {
       alert("Lỗi kết nối server. Vui lòng thử lại.")
+      submitLockRef.current = false
       setSubmitting(false)
     }
   }
