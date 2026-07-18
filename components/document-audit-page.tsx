@@ -11,7 +11,15 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { inventoryApi, orderApi, purchaseOrderApi, salesOrderApi, transferApi } from "@/lib/api"
 import { printOrderInvoice, printTransferSlip, printWarehouseSlip } from "@/lib/print-utils"
-import { formatHDReference, formatPOReference, formatVND, formatTransferReference } from "@/lib/utils"
+import {
+  formatHDReference,
+  formatPOReference,
+  formatVND,
+  formatTransferReference,
+  formatPNKReference,
+  formatPXKReference,
+  formatSalesOrderReference,
+} from "@/lib/utils"
 import { Eye, Printer, Search } from "lucide-react"
 
 export type AuditDocCategory = "invoice" | "export" | "import" | "transfer" | "purchase" | "other"
@@ -20,6 +28,7 @@ type AuditDocKind =
   | "invoice-sale"
   | "invoice-online"
   | "export-sale"
+  | "export-online"
   | "export-transfer"
   | "export-admin"
   | "export-other"
@@ -61,17 +70,18 @@ const auditCategoryMeta: Record<AuditDocCategory, { label: string; cls: string }
 }
 
 const auditKindLabel: Record<AuditDocKind, string> = {
-  "invoice-sale": "Hoa don ban",
-  "invoice-online": "Hoa don online",
-  "export-sale": "Xuat ban",
-  "export-transfer": "Xuat dieu chuyen",
-  "export-admin": "Xuat admin",
-  "export-other": "Xuat khac",
-  "import-transfer": "Nhap dieu chuyen",
-  "import-po": "Nhap PO",
-  "import-admin": "Nhap admin",
-  "import-other": "Nhap khac",
-  "transfer-request": "Phieu dieu chuyen",
+  "invoice-sale": "Hóa đơn POS",
+  "invoice-online": "Hóa đơn online",
+  "export-sale": "Xuất bán POS",
+  "export-online": "Xuất bán online",
+  "export-transfer": "Xuất điều chuyển",
+  "export-admin": "Xuất nội bộ",
+  "export-other": "Xuất khác",
+  "import-transfer": "Nhập điều chuyển",
+  "import-po": "Nhập từ PO",
+  "import-admin": "Nhập nội bộ",
+  "import-other": "Nhập khác",
+  "transfer-request": "Phiếu điều chuyển",
   "purchase-order": "PO",
 }
 
@@ -91,17 +101,125 @@ function formatLocalDate(value?: string | number | Date) {
   return `${yyyy}-${mm}-${dd}`
 }
 
-function buildWarehouseDocCode(prefix: "PNK" | "PXK", rawId?: string) {
-  const raw = String(rawId || "").trim()
-  if (!raw) return ""
-  if (new RegExp(`^${prefix}-`, "i").test(raw)) return raw.toUpperCase()
-  const normalized = raw.replace(/[^a-zA-Z0-9]/g, "").toUpperCase()
-  return `${prefix}-${normalized.slice(0, 8)}`
+function normalizeDateKey(value?: string | number | Date) {
+  if (!value) return ""
+  if (typeof value === "string") {
+    const trimmed = value.trim()
+    if (!trimmed) return ""
+    const isoDate = trimmed.match(/^(\d{4}-\d{2}-\d{2})/)
+    if (isoDate) return isoDate[1]
+  }
+  return formatLocalDate(value)
 }
 
-function buildTransferWarehouseDocCode(prefix: "PNK" | "PXK", transferCode: string) {
-  const normalized = String(transferCode || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase()
-  return `${prefix}-DC-${normalized.slice(-8)}`
+function buildWarehouseDocCode(prefix: "PNK" | "PXK", rawId?: string, createdAt?: string | number | Date) {
+  return prefix === "PNK"
+    ? formatPNKReference(rawId, createdAt ? new Date(createdAt) : null)
+    : formatPXKReference(rawId, createdAt ? new Date(createdAt) : null)
+}
+
+function buildTransferWarehouseDocCode(prefix: "PNK" | "PXK", transferCode: string, createdAt?: string | number | Date) {
+  return buildWarehouseDocCode(prefix, transferCode, createdAt)
+}
+
+function firstText(...values: unknown[]) {
+  for (const value of values) {
+    if (value === null || value === undefined) continue
+    const text = String(value).trim()
+    if (text) return text
+  }
+  return ""
+}
+
+function getWarehouseName(raw: any) {
+  return firstText(
+    raw?.warehouse_name,
+    raw?.warehouseName,
+    raw?.warehouse?.name,
+    raw?.warehouse,
+    raw?.fulfillingWarehouseName,
+    raw?.fulfillingWarehouse,
+    raw?.fulfilling_warehouse_name,
+  )
+}
+
+function getFromWarehouseName(raw: any) {
+  return firstText(raw?.from_warehouse_name, raw?.fromWarehouseName, raw?.fromWarehouse, raw?.from_warehouse, "Kho nguồn")
+}
+
+function getToWarehouseName(raw: any) {
+  return firstText(raw?.to_warehouse_name, raw?.toWarehouseName, raw?.toWarehouse, raw?.to_warehouse, "Kho đích")
+}
+
+function getPOCode(raw: any) {
+  const rawCode = firstText(raw?.po_code, raw?.poCode, raw?.order_code, raw?.orderCode, raw?.poId, raw?.po_id, raw?.poRawId, raw?.po_raw_id, raw?.id)
+  return rawCode ? formatPOReference(rawCode, raw?.poCreatedAt || raw?.po_created_at || raw?.created_at || raw?.createdAt || raw?.createdDate || raw?.date) : ""
+}
+
+function getLinkedPOCode(raw: any) {
+  const rawCode = firstText(raw?.po_code, raw?.poCode, raw?.order_code, raw?.orderCode, raw?.poId, raw?.po_id, raw?.poRawId, raw?.po_raw_id)
+  return rawCode ? formatPOReference(rawCode, raw?.poCreatedAt || raw?.po_created_at || raw?.created_at || raw?.createdAt || raw?.createdDate || raw?.date) : ""
+}
+
+function getSalesCode(raw: any) {
+  return formatSalesOrderReference(raw?.sales_code || raw?.orderCode || raw?.order_code || raw?.code || raw?.id, raw?.created_at || raw?.createdAt)
+}
+
+function getOnlineOrderCode(raw: any) {
+  return formatHDReference(raw?.orderCode || raw?.order_code || raw?.invoiceCode || raw?.invoice_code || raw?.code || raw?.id, raw?.createdAt || raw?.created_at)
+}
+
+function describeOnlineFulfillment(raw: any) {
+  const method = firstText(raw?.deliveryMethod, raw?.delivery_method)
+  const methodText = method === "pickup" ? "khách nhận tại cửa hàng" : "giao hàng online"
+  const warehouse = getWarehouseName(raw)
+  return warehouse ? `${methodText} từ ${warehouse}` : methodText
+}
+
+function getTransferCreatorText(raw: any) {
+  const role = firstText(raw?.createdByRole, raw?.created_by_role)
+  const warehouse = firstText(raw?.createdByWarehouseName, raw?.created_by_warehouse_name)
+  if (role === "admin") return "Admin tạo"
+  if (role === "employee") {
+    if (normalizeText(warehouse).includes("hub")) return "Hub tạo"
+    return warehouse ? `${warehouse} tạo` : "Nhân viên kho tạo"
+  }
+  return ""
+}
+
+function describeTransfer(raw: any, transferCode: string, direction: "request" | "export" | "import") {
+  const fromWarehouse = getFromWarehouseName(raw)
+  const toWarehouse = getToWarehouseName(raw)
+  const creator = getTransferCreatorText(raw)
+  const suffix = creator ? ` - ${creator}` : ""
+  if (direction === "export") return `Xuất điều chuyển ${transferCode}: từ ${fromWarehouse} đến ${toWarehouse}${suffix}`
+  if (direction === "import") return `Nhập từ điều chuyển ${transferCode}: từ ${fromWarehouse} vào ${toWarehouse}${suffix}`
+  return `Điều chuyển ${transferCode}: ${fromWarehouse} → ${toWarehouse}${suffix}`
+}
+
+function getInventoryDocKind(tx: any, category: AuditDocCategory): AuditDocKind {
+  const rawType = String(tx?.type || "").replace(/_/g, "-")
+  const text = normalizeText(`${rawType} ${tx?.source || ""} ${tx?.reason || ""} ${tx?.note || ""}`)
+  if (rawType === "transfer-in") return "import-transfer"
+  if (rawType === "transfer-out") return "export-transfer"
+  if (category === "import" && (getLinkedPOCode(tx) || text.includes("po "))) return "import-po"
+  if (category === "import") return "import-other"
+  return text.includes("transfer") || text.includes("dieu chuyen") ? "export-transfer" : "export-other"
+}
+
+function describeInventoryTransaction(tx: any, category: AuditDocCategory, kind: AuditDocKind) {
+  const product = firstText(tx?.product_name, tx?.productName, tx?.name, "Sản phẩm")
+  const qty = Number(tx?.qty || tx?.quantity || 0)
+  const warehouse = getWarehouseName(tx) || "Kho"
+  const poCode = getLinkedPOCode(tx)
+  const transferCode = tx?.transfer_code || tx?.transferCode || tx?.transferId || tx?.transfer_id
+    ? formatTransferReference(tx?.transfer_code || tx?.transferCode || tx?.transferId || tx?.transfer_id, tx?.date || tx?.created_at)
+    : ""
+
+  if (kind === "import-po") return `Nhập kho từ PO ${poCode || "chưa rõ"} vào ${warehouse}: ${product} x${qty}`
+  if (kind === "import-transfer") return `Nhập kho từ điều chuyển${transferCode ? ` ${transferCode}` : ""} vào ${warehouse}: ${product} x${qty}`
+  if (kind === "export-transfer") return `Xuất kho điều chuyển${transferCode ? ` ${transferCode}` : ""} từ ${warehouse}: ${product} x${qty}`
+  return `${category === "import" ? "Nhập kho" : "Xuất kho"} tại ${warehouse}: ${product} x${qty}`
 }
 
 function getWarehouseFromTransfer(raw: any, category: AuditDocCategory) {
@@ -183,6 +301,8 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
   const [docs, setDocs] = useState<AuditDocument[]>([])
   const [query, setQuery] = useState("")
   const [categoryFilter, setCategoryFilter] = useState<"all" | AuditDocCategory>("all")
+  const [dateFrom, setDateFrom] = useState("")
+  const [dateTo, setDateTo] = useState("")
   const [selectedDoc, setSelectedDoc] = useState<AuditDocument | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
 
@@ -220,8 +340,10 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
           ? getWarehouseFromTransfer(raw, doc.category)
           : String(raw?.warehouse_name || raw?.warehouse || doc.subject || "Kho"),
         supplier: raw?.supplier_name || raw?.supplier,
-        poId: raw?.po_code || raw?.order_code || raw?.poId || (doc.kind === "export-sale" ? doc.summary : undefined),
-        note: String(raw?.note || doc.summary || ""),
+        poId: doc.kind === "import-po"
+          ? getLinkedPOCode(raw) || getPOCode(raw) || doc.summary
+          : raw?.po_code || raw?.order_code || raw?.poId || (doc.kind === "export-sale" || doc.kind === "export-online" ? doc.summary : undefined),
+        note: String(doc.kind === "import-po" ? doc.summary : raw?.note || doc.summary || ""),
         createdBy: String(raw?.created_by_name || raw?.createdBy || raw?.operator || ""),
         assignedTo: String(raw?.assigned_to || raw?.assignedTo || raw?.customer_name || raw?.customerName || raw?.to_warehouse_name || raw?.toWarehouse || ""),
         processedBy: raw?.processed_by || raw?.processedBy,
@@ -296,7 +418,7 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
         const salesRes: any = await salesOrderApi.getAll()
         const salesOrders = salesRes?.success && Array.isArray(salesRes.data) ? salesRes.data : []
         for (const order of salesOrders) {
-          const code = formatHDReference(order?.sales_code || order?.id, order?.created_at)
+          const code = getSalesCode(order)
           pushDoc({
             id: `sales-${String(order?.id || code)}`,
             code,
@@ -305,11 +427,11 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
 	            kind: "invoice-sale",
 	            date: formatLocalDate(order?.created_at),
             subject: String(order?.customer_name || "Khách"),
-            summary: String(order?.status || ""),
+            summary: `Hóa đơn bán tại shop/POS - trạng thái ${String(order?.status || "chưa rõ")}`,
 	            raw: order,
 	          })
 	          if (order?.status === "approved" || order?.status === "exported") {
-	            const exportCode = buildWarehouseDocCode("PXK", String(order?.id || code))
+	            const exportCode = buildWarehouseDocCode("PXK", String(order?.id || code), order?.created_at)
 	            pushDoc({
 	              id: `sales-export-${String(order?.id || exportCode)}`,
 	              code: exportCode,
@@ -318,7 +440,7 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
 	              kind: "export-sale",
 	              date: formatLocalDate(order?.approved_at || order?.created_at),
 	              subject: String(order?.customer_name || "Khach"),
-	              summary: `Don ban ${code}`,
+	              summary: `Xuất kho bán tại shop/POS - hóa đơn ${code}`,
 	              raw: order,
 	            })
 	          }
@@ -338,9 +460,24 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
 	            kind: "invoice-online",
 	            date: formatLocalDate(order?.createdAt || order?.created_at),
             subject: String(order?.customerName || order?.customer_name || "Khách"),
-            summary: String(order?.status || ""),
+            summary: `Hóa đơn bán online - trạng thái ${String(order?.status || "chưa rõ")}`,
             raw: order,
           })
+          const onlineStatus = String(order?.status || "").replace(/_/g, "-")
+          if (["processing", "shipping", "delivered", "completed"].includes(onlineStatus)) {
+            const exportCode = buildWarehouseDocCode("PXK", String(order?.id || code), order?.updatedAt || order?.updated_at || order?.createdAt || order?.created_at)
+            pushDoc({
+              id: `online-export-${String(order?.id || exportCode)}`,
+              code: exportCode,
+              category: "export",
+              source: "online-order",
+              kind: "export-online",
+              date: formatLocalDate(order?.updatedAt || order?.updated_at || order?.createdAt || order?.created_at),
+              subject: String(order?.customerName || order?.customer_name || "Khách"),
+              summary: `Xuất kho bán online - ${describeOnlineFulfillment(order)} - hóa đơn ${code}`,
+              raw: order,
+            })
+          }
         }
       } catch {}
 
@@ -351,15 +488,16 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
           const rawType = String(tx?.type || "").replace(/_/g, "-")
           const category: AuditDocCategory = rawType === "import" || rawType === "transfer-in" ? "import" : "export"
           const prefix = category === "import" ? "PNK" : "PXK"
+          const kind = getInventoryDocKind(tx, category)
           pushDoc({
             id: `inventory-${String(tx?.id || "")}`,
-            code: buildWarehouseDocCode(prefix, String(tx?.id || "")),
+            code: buildWarehouseDocCode(prefix, String(tx?.id || ""), tx?.date || tx?.created_at),
 	            category,
 	            source: "inventory-transaction",
-	            kind: category === "import" ? "import-other" : "export-other",
+	            kind,
 	            date: formatLocalDate(tx?.date),
             subject: String(tx?.warehouse_name || tx?.warehouse || "Kho"),
-            summary: `${String(tx?.product_name || tx?.name || "Sản phẩm")} x${Number(tx?.qty || tx?.quantity || 0)}`,
+            summary: describeInventoryTransaction(tx, category, kind),
             raw: tx,
           })
         }
@@ -387,34 +525,34 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
 	            source: "transfer-request",
 	            kind: "transfer-request",
 	            date,
-            subject: `${String(transfer?.from_warehouse_name || transfer?.fromWarehouse || "Kho nguồn")} → ${String(transfer?.to_warehouse_name || transfer?.toWarehouse || "Kho đích")}`,
-	            summary: String(transfer?.reason || transfer?.note || ""),
+            subject: `${getFromWarehouseName(transfer)} → ${getToWarehouseName(transfer)}`,
+	            summary: `${describeTransfer(transfer, transferCode, "request")}${firstText(transfer?.reason, transfer?.note) ? ` - ${firstText(transfer?.reason, transfer?.note)}` : ""}`,
 	            raw: transfer,
 	          })
 	          const transferStatus = String(transfer?.status || "").replace(/_/g, "-")
 	          if (transferStatus === "in-transit" || transferStatus === "completed") {
 	            pushDoc({
 	              id: `transfer-export-${String(transfer?.id || transferCode)}`,
-	              code: buildTransferWarehouseDocCode("PXK", transferCode),
+	              code: buildTransferWarehouseDocCode("PXK", transferCode, transfer?.created_at || transfer?.date),
 	              category: "export",
 	              source: "transfer-request",
 	              kind: "export-transfer",
 	              date,
-	              subject: String(transfer?.from_warehouse_name || transfer?.fromWarehouse || "Kho nguon"),
-	              summary: `Xuat dieu chuyen ${transferCode}`,
+	              subject: getFromWarehouseName(transfer),
+	              summary: describeTransfer(transfer, transferCode, "export"),
 	              raw: transfer,
 	            })
 	          }
 	          if (transferStatus === "completed") {
 	            pushDoc({
 	              id: `transfer-import-${String(transfer?.id || transferCode)}`,
-	              code: buildTransferWarehouseDocCode("PNK", transferCode),
+	              code: buildTransferWarehouseDocCode("PNK", transferCode, transfer?.completed_at || transfer?.completedAt || transfer?.created_at || transfer?.date),
 	              category: "import",
 	              source: "transfer-request",
 	              kind: "import-transfer",
 	              date: formatLocalDate(transfer?.completed_at || transfer?.completedAt || transfer?.created_at || transfer?.date),
-	              subject: String(transfer?.to_warehouse_name || transfer?.toWarehouse || "Kho dich"),
-	              summary: `Nhap dieu chuyen ${transferCode}`,
+	              subject: getToWarehouseName(transfer),
+	              summary: describeTransfer(transfer, transferCode, "import"),
 	              raw: transfer,
 	            })
 	          }
@@ -425,7 +563,7 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
         const poRes: any = await purchaseOrderApi.getAll()
         const purchaseOrders = poRes?.success && Array.isArray(poRes.data) ? poRes.data : []
         for (const po of purchaseOrders) {
-          const code = formatPOReference(po?.po_code || po?.order_code || po?.id)
+          const code = formatPOReference(po?.po_code || po?.order_code || po?.id, po?.created_at || po?.createdDate)
           pushDoc({
             id: `po-${String(po?.id || code)}`,
             code,
@@ -434,19 +572,19 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
 	            kind: "purchase-order",
 	            date: formatLocalDate(po?.created_at || po?.createdDate),
             subject: String(po?.supplier_name || po?.supplier || "Nhà cung cấp"),
-            summary: String(po?.status || ""),
+            summary: `Đơn đặt hàng NCC ${code} - ${String(po?.status || "chưa rõ")}`,
 	            raw: po,
 	          })
 	          if (String(po?.status || "") === "received") {
 	            pushDoc({
 	              id: `po-import-${String(po?.id || code)}`,
-	              code: buildWarehouseDocCode("PNK", String(po?.id || code)),
+	              code: buildWarehouseDocCode("PNK", String(po?.id || code), po?.created_at || po?.createdDate),
 	              category: "import",
 	              source: "purchase-order",
 	              kind: "import-po",
 	              date: formatLocalDate(po?.received_at || po?.updated_at || po?.created_at || po?.createdDate),
 	              subject: String(po?.warehouse_name || po?.warehouse || "Kho"),
-	              summary: `Nhap PO ${code}`,
+	              summary: `Nhập kho từ PO ${code} - nhà cung cấp ${String(po?.supplier_name || po?.supplier || "chưa rõ")}`,
 	              raw: po,
 	            })
 	          }
@@ -456,7 +594,7 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
       try {
         const rawSlips = JSON.parse(localStorage.getItem("exportSlips") || "[]")
         for (const slip of Array.isArray(rawSlips) ? rawSlips : []) {
-          const code = String(slip?.id || "").trim()
+          const code = buildWarehouseDocCode("PXK", String(slip?.id || ""), slip?.date)
           if (!code) continue
           pushDoc({
             id: `export-slip-${code}`,
@@ -466,7 +604,7 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
 	            kind: "export-sale",
 	            date: String(slip?.date || ""),
             subject: String(slip?.customer || "Khách"),
-            summary: `ĐH ${String(slip?.orderCode || slip?.orderId || "—")}`,
+            summary: `Xuất kho bán tại shop/POS - hóa đơn ${formatHDReference(slip?.orderCode || slip?.orderId || slip?.id, slip?.date)}`,
             raw: slip,
           })
         }
@@ -477,15 +615,19 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
         for (const adminSlip of Array.isArray(rawAdminSlips) ? rawAdminSlips : []) {
           const rawType = String(adminSlip?.type || "")
           const category: AuditDocCategory = rawType === "import" ? "import" : "export"
+          const linkedPOCode = getLinkedPOCode(adminSlip)
+          const code = buildWarehouseDocCode(category === "import" ? "PNK" : "PXK", String(adminSlip?.id || ""), adminSlip?.date)
           pushDoc({
             id: `admin-slip-${String(adminSlip?.id || "")}`,
-            code: String(adminSlip?.id || ""),
+            code,
 	            category,
 	            source: "admin-slip",
-	            kind: category === "import" ? "import-admin" : "export-admin",
+	            kind: category === "import" ? (linkedPOCode ? "import-po" : "import-admin") : "export-admin",
 	            date: String(adminSlip?.date || ""),
             subject: String(adminSlip?.warehouse || "Kho"),
-            summary: String(adminSlip?.note || ""),
+            summary: linkedPOCode
+              ? `Nhập kho từ PO ${linkedPOCode} vào ${String(adminSlip?.warehouse || "Kho")}`
+              : `${category === "import" ? "Nhập kho nội bộ" : "Xuất kho nội bộ"} tại ${String(adminSlip?.warehouse || "Kho")}${adminSlip?.note ? ` - ${String(adminSlip.note)}` : ""}`,
             raw: adminSlip,
           })
         }
@@ -516,11 +658,23 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
     const q = normalizeText(query.trim())
     return docs.filter((doc) => {
       if (categoryFilter !== "all" && doc.category !== categoryFilter) return false
+      const docDate = normalizeDateKey(doc.date)
+      if (dateFrom && (!docDate || docDate < dateFrom)) return false
+      if (dateTo && (!docDate || docDate > dateTo)) return false
       if (!q) return true
-      const haystack = normalizeText(`${doc.code} ${auditKindLabel[doc.kind]} ${doc.subject} ${doc.summary}`)
+      const haystack = normalizeText(`${doc.code} ${doc.date} ${auditKindLabel[doc.kind]} ${doc.subject} ${doc.summary}`)
       return haystack.includes(q)
     })
-  }, [docs, categoryFilter, query])
+  }, [docs, categoryFilter, dateFrom, dateTo, query])
+
+  const hasActiveFilters = Boolean(query.trim() || categoryFilter !== "all" || dateFrom || dateTo)
+
+  const clearFilters = () => {
+    setQuery("")
+    setCategoryFilter("all")
+    setDateFrom("")
+    setDateTo("")
+  }
 
   const selectedLines = useMemo(() => {
     if (!selectedDoc) return [] as DocumentLine[]
@@ -562,6 +716,31 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
                 <SelectItem value="purchase">PO</SelectItem>
               </SelectContent>
             </Select>
+            <div className="flex items-center gap-2">
+              <Label htmlFor="audit-date-from" className="text-xs text-muted-foreground whitespace-nowrap">Từ ngày</Label>
+              <Input
+                id="audit-date-from"
+                type="date"
+                value={dateFrom}
+                onChange={(event) => setDateFrom(event.target.value)}
+                className="h-9 w-[155px]"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Label htmlFor="audit-date-to" className="text-xs text-muted-foreground whitespace-nowrap">Đến ngày</Label>
+              <Input
+                id="audit-date-to"
+                type="date"
+                value={dateTo}
+                onChange={(event) => setDateTo(event.target.value)}
+                className="h-9 w-[155px]"
+              />
+            </div>
+            {hasActiveFilters && (
+              <Button type="button" variant="outline" size="sm" className="h-9" onClick={clearFilters}>
+                Xóa lọc
+              </Button>
+            )}
             <Badge variant="secondary" className="h-8 px-2.5">{filteredDocs.length} kết quả</Badge>
           </div>
         </CardContent>
@@ -581,7 +760,7 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
                   <TableRow>
                     <TableHead className="text-xs w-[200px]">Mã phiếu</TableHead>
                     <TableHead className="text-xs w-[120px]">Danh mục</TableHead>
-                    <TableHead className="text-xs w-[150px]">Nghiep vu</TableHead>
+                    <TableHead className="text-xs w-[150px]">Nghiệp vụ</TableHead>
                     <TableHead className="text-xs w-[130px]">Ngày</TableHead>
                     <TableHead className="text-xs">Đối tượng</TableHead>
                     <TableHead className="text-xs">Mô tả</TableHead>
@@ -650,7 +829,7 @@ export function DocumentAuditPage({ title, subtitle }: { title: string; subtitle
                       <span className="font-mono text-xs text-primary">{selectedDoc.code}</span>
                     </div>
                     <div className="flex justify-between gap-2">
-                      <span className="text-muted-foreground">Nghiep vu</span>
+                      <span className="text-muted-foreground">Nghiệp vụ</span>
                       <span className="text-right">{auditKindLabel[selectedDoc.kind]}</span>
                     </div>
                     <div className="flex justify-between gap-2">

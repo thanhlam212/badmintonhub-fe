@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback } from "react"
+import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -24,6 +25,7 @@ type CheckinResult = {
 }
 
 export default function AdminCheckinPage() {
+  const searchParams = useSearchParams()
   const [scanning, setScanning] = useState(false)
   const [manualCode, setManualCode] = useState("")
   const [loading, setLoading] = useState(false)
@@ -33,6 +35,11 @@ export default function AdminCheckinPage() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const scannerRef = useRef<any>(null)
   const streamRef = useRef<MediaStream | null>(null)
+
+  useEffect(() => {
+    const bookingId = searchParams.get("bookingId")
+    if (bookingId) setManualCode(bookingId)
+  }, [searchParams])
 
   // Start QR scanner
   const startScanner = useCallback(async () => {

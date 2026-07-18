@@ -39,7 +39,7 @@ export default function CheckoutPage() {
   const [address, setAddress] = useState(user?.address || "")
   const [customerCoords, setCustomerCoords] = useState<{ lat: number; lng: number } | null>(null)
   const [note, setNote] = useState("")
-  const [paymentMethod, setPaymentMethod] = useState("momo")
+  const [paymentMethod, setPaymentMethod] = useState("sepay")
   const [deliveryMethod, setDeliveryMethod] = useState<"delivery" | "pickup">("delivery")
   const [pickupBranch, setPickupBranch] = useState<number>(1) // default first branch
   const [agreed, setAgreed] = useState(false)

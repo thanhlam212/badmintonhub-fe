@@ -29,13 +29,18 @@ export interface UseFixedScheduleReturn {
     date: string,
     action: OccurrenceAction,
     replaceWithCourtId?: number,
+    timeStart?: string,
+    timeEnd?: string,
   ) => void;
   setCustomAction: (
     date: string,
+    customDate: string,
     courtId: number,
     courtName: string,
     timeStart: string,
     timeEnd: string,
+    originalTimeStart?: string,
+    originalTimeEnd?: string,
   ) => void;
   checkSlot: (req: CheckSlotRequest) => Promise<CheckSlotResponse | null>;
   confirmBooking: (
@@ -75,6 +80,12 @@ export function useFixedSchedule(): UseFixedScheduleReturn {
         const response: FixedSchedulePreviewResponse =
           await fixedScheduleApi.preview(payload);
         console.log("📥 Preview Response:", response);
+
+        // Xử lý lỗi validation từ BE (ví dụ: khoảng ngày không đủ buổi)
+        if ((response as any)?._error) {
+          toast.error((response as any).message);
+          return false;
+        }
 
         // FIX: BE trả về response.occurrences (không phải weeklySlots/numberOfWeeks)
         // Guard an toàn nếu BE trả về cấu trúc không đúng
@@ -169,10 +180,21 @@ export function useFixedSchedule(): UseFixedScheduleReturn {
   // ─────────────────────────────────────────────────────────────
 
   const setOccurrenceAction = useCallback(
-    (date: string, action: OccurrenceAction, replaceWithCourtId?: number) => {
+    (
+      date: string,
+      action: OccurrenceAction,
+      replaceWithCourtId?: number,
+      timeStart?: string,
+      timeEnd?: string,
+    ) => {
       setOccurrences((prev) =>
         prev.map((occ) => {
-          if (occ.date !== date) return occ;
+          if (
+            occ.date !== date ||
+            (timeStart && timeEnd && (occ.timeStart !== timeStart || occ.timeEnd !== timeEnd))
+          ) {
+            return occ;
+          }
 
           if (action === "replace") {
             const newReplacement =
@@ -197,18 +219,29 @@ export function useFixedSchedule(): UseFixedScheduleReturn {
   const setCustomAction = useCallback(
     (
       date: string,
+      customDate: string,
       courtId: number,
       courtName: string,
       timeStart: string,
       timeEnd: string,
+      originalTimeStart?: string,
+      originalTimeEnd?: string,
     ) => {
       setOccurrences((prev) =>
         prev.map((occ) => {
-          if (occ.date !== date) return occ;
+          if (
+            occ.date !== date ||
+            (originalTimeStart &&
+              originalTimeEnd &&
+              (occ.timeStart !== originalTimeStart || occ.timeEnd !== originalTimeEnd))
+          ) {
+            return occ;
+          }
           return {
             ...occ,
             action: "custom" as OccurrenceAction,
             selectedReplacement: null,
+            customDate,
             customCourtId: courtId,
             customCourtName: courtName,
             customTimeStart: timeStart,
@@ -235,7 +268,15 @@ export function useFixedSchedule(): UseFixedScheduleReturn {
           body: JSON.stringify(req),
         });
         if (!res.ok) throw new Error("Không thể kiểm tra slot");
-        return await res.json();
+        const json = await res.json();
+        const data = json?.success === true && "data" in json ? json.data : json;
+        return {
+          date: data?.date || req.date,
+          timeStart: data?.timeStart || req.timeStart,
+          timeEnd: data?.timeEnd || req.timeEnd,
+          courts: Array.isArray(data?.courts) ? data.courts : [],
+          hasAvailable: Boolean(data?.hasAvailable),
+        };
       } catch (err: any) {
         toast.error(err.message || "Lỗi kiểm tra slot");
         return null;
@@ -266,7 +307,7 @@ export function useFixedSchedule(): UseFixedScheduleReturn {
         );
         return response;
       } catch (error: any) {
-        console.error("❌ Confirm error:", error);
+        console.warn("Fixed schedule confirm error:", error);
 
         const msg =
           error?.response?.data?.message ||
@@ -274,7 +315,12 @@ export function useFixedSchedule(): UseFixedScheduleReturn {
           "Không thể đặt lịch. Vui lòng thử lại!";
 
         const displayMsg = Array.isArray(msg) ? msg.join(", ") : msg;
-        toast.error(displayMsg);
+        const friendlyMsg =
+          typeof displayMsg === "string" &&
+          displayMsg.includes("customDate should not exist")
+            ? "Backend đang chạy bản cũ chưa nhận field đổi ngày. Hãy restart server backend rồi thử lại."
+            : displayMsg;
+        toast.error(friendlyMsg);
         return null;
       } finally {
         setLoadingConfirm(false);

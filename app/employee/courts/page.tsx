@@ -18,7 +18,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useAuth } from "@/lib/auth-context"
 import { bookingApi, branchApi, courtApi, type ApiCourt } from "@/lib/api"
-import { cn, formatDateLabel, formatVND, generateTimeSlots, getWeekDays, isSlotPast } from "@/lib/utils"
+import { cn, formatDateLabel, formatSlotRange, formatVND, generateTimeSlots, getWeekDays, isSlotPast } from "@/lib/utils"
 import {
   AlertTriangle,
   Building2,
@@ -83,7 +83,7 @@ export default function EmployeeCourtsPage() {
   const [cancelLoading, setCancelLoading] = useState(false)
 
   useEffect(() => {
-    courtApi.getAll().then((res) => {
+    courtApi.getAll({ includeUnavailable: true }).then((res) => {
       if (Array.isArray(res)) setCourtsData(res)
     }).catch(() => setCourtsData([]))
 
@@ -520,7 +520,7 @@ export default function EmployeeCourtsPage() {
             <CardContent className="p-0 pb-4">
               <div className="overflow-x-auto px-4">
                 <div className="min-w-[700px]">
-                  <div className="sticky top-0 z-10 mb-1 grid grid-cols-[56px_repeat(7,1fr)] gap-1 border-b bg-background pb-1">
+                  <div className="sticky top-0 z-10 mb-1 grid grid-cols-[90px_repeat(7,1fr)] gap-1 border-b bg-background pb-1">
                     <div className="py-1 text-center text-[10px] font-medium text-muted-foreground">Giờ</div>
                     {weekDays.map((day) => (
                       <div key={day.label} className="py-1 text-center">
@@ -531,8 +531,8 @@ export default function EmployeeCourtsPage() {
                   </div>
 
                   {timeSlots.map((time) => (
-                    <div key={time} className="mb-[3px] grid grid-cols-[56px_repeat(7,1fr)] gap-1">
-                      <div className="flex items-center justify-end pr-2 font-mono text-[11px] text-muted-foreground">{time}</div>
+                    <div key={time} className="mb-[3px] grid grid-cols-[90px_repeat(7,1fr)] gap-1">
+                      <div className="flex items-center justify-end pr-2 font-mono text-[10px] text-muted-foreground">{formatSlotRange(time)}</div>
                       {weekDays.map((day) => {
                         const status = courtAvailability[day.label]?.[time] || "available"
                         const bookingEntry = status === "available"

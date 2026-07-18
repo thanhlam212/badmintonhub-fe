@@ -34,6 +34,63 @@ interface SepayPaymentState {
   amount: number
 }
 
+interface RegularBookingData {
+  id: string
+  bookingCode?: string
+  createdAt?: string
+  courtName: string
+  courtType: string
+  branch: string
+  courtAddress?: string
+  courtLat?: number
+  courtLng?: number
+  date: string
+  timeRange: string
+  people: number
+  amount: number
+  paymentMethod: string
+  status: string
+  contact: {
+    name: string
+    phone: string
+    email: string
+    address: string
+  }
+  racketRental: boolean
+  note?: string
+}
+
+const PENDING_PAYMENT_SESSION_KEY = 'pendingPaymentSession'
+const BOOKING_FORM_DRAFT_KEY = 'bookingFormDraft'
+
+interface PendingPaymentSession {
+  bookingId: string
+  invoiceId: string
+  paymentId?: string
+  completedData: RegularBookingData
+}
+
+interface BookingFormDraft {
+  bookingKey: string
+  step: number
+  people: number
+  racketRental: boolean
+  note: string
+  bookForOther: boolean
+  otherName: string
+  otherPhone: string
+  paymentMethod: string
+  agreed: boolean
+  contactName: string
+  contactPhone: string
+  contactEmail: string
+  contactAddress: string
+}
+
+function getBookingDraftKey(booking: PendingBooking) {
+  return `${booking.courtId}|${booking.date}|${booking.timeRange}|${booking.slots.join(',')}`
+}
+
 // ─── Stepper ──────────────────────────────────────────────────────────────────
 function Stepper({ step }: { step: number }) {
   const steps = [
@@ -187,7 +244,7 @@ export default function BookingPage() {
   const [note, setNote]                     = useState("")
   const [bookForOther, setBookForOther]     = useState(false)
   const [notifPref, setNotifPref]           = useState("sms")
-  const [paymentMethod, setPaymentMethod]   = useState("momo")
+  const [paymentMethod, setPaymentMethod]   = useState("sepay")
   const [discountCode, setDiscountCode]     = useState("")
   const [discountApplied, setDiscountApplied] = useState(false)
   const [agreed, setAgreed]                 = useState(false)
@@ -200,6 +257,9 @@ export default function BookingPage() {
   const [sepayCountdown, setSepayCountdown] = useState(600) // 10 minutes
   const [copied, setCopied]                 = useState(false)
   const [existingInvoiceId, setExistingInvoiceId] = useState<string | null>(null)
+  const [existingBookingId, setExistingBookingId] = useState<string | null>(null)
+  const [pendingPaymentData, setPendingPaymentData] = useState<RegularBookingData | null>(null)
+  const [holdingSlot, setHoldingSlot]             = useState(false)
 
   // Contact info
   const [contactName, setContactName]       = useState(user?.fullName === "Khách" ? "" : (user?.fullName || ""))
@@ -223,7 +283,128 @@ export default function BookingPage() {
       try { setBooking(JSON.parse(stored)) }
       catch { router.push('/courts') }
     } else { router.push('/courts') }
+
+    const savedPaymentSession = localStorage.getItem(PENDING_PAYMENT_SESSION_KEY)
+    if (savedPaymentSession) {
+      try {
+        const session = JSON.parse(savedPaymentSession) as PendingPaymentSession
+        const data = session.completedData
+        setExistingBookingId(session.bookingId)
+        setExistingInvoiceId(session.invoiceId)
+        setPendingPaymentData(data)
+        setPeople(data.people)
+        setRacketRental(data.racketRental)
+        setNote(data.note || '')
+        setPaymentMethod(data.paymentMethod || 'momo')
+        setContactName(data.contact.name || '')
+        setContactPhone(data.contact.phone || '')
+        setContactEmail(data.contact.email || '')
+        setContactAddress(data.contact.address || '')
+        setStep(2)
+        setErrors({})
+      } catch {
+        localStorage.removeItem(PENDING_PAYMENT_SESSION_KEY)
+      }
+    }
   }, [router])
+
+  useEffect(() => {
+    if (!booking) return
+    if (pendingPaymentData) return
+
+    const savedDraft = localStorage.getItem(BOOKING_FORM_DRAFT_KEY)
+    if (!savedDraft) return
+
+    try {
+      const draft = JSON.parse(savedDraft) as BookingFormDraft
+      if (draft.bookingKey !== getBookingDraftKey(booking)) return
+
+      setStep(draft.step)
+      setPeople(draft.people)
+      setRacketRental(draft.racketRental)
+      setNote(draft.note)
+      setBookForOther(draft.bookForOther)
+      setOtherName(draft.otherName)
+      setOtherPhone(draft.otherPhone)
+      setPaymentMethod(draft.paymentMethod)
+      setAgreed(draft.agreed)
+      setContactName(draft.contactName)
+      setContactPhone(draft.contactPhone)
+      setContactEmail(draft.contactEmail)
+      setContactAddress(draft.contactAddress)
+      setErrors({})
+    } catch {
+      localStorage.removeItem(BOOKING_FORM_DRAFT_KEY)
+    }
+  }, [booking, pendingPaymentData])
+
+  useEffect(() => {
+    if (!booking) return
+
+    const draft: BookingFormDraft = {
+      bookingKey: getBookingDraftKey(booking),
+      step,
+      people,
+      racketRental,
+      note,
+      bookForOther,
+      otherName,
+      otherPhone,
+      paymentMethod,
+      agreed,
+      contactName,
+      contactPhone,
+      contactEmail,
+      contactAddress,
+    }
+    localStorage.setItem(BOOKING_FORM_DRAFT_KEY, JSON.stringify(draft))
+  }, [
+    agreed,
+    booking,
+    bookForOther,
+    contactAddress,
+    contactEmail,
+    contactName,
+    contactPhone,
+    note,
+    otherName,
+    otherPhone,
+    paymentMethod,
+    people,
+    racketRental,
+    step,
+  ])
+
+  useEffect(() => {
+    if (!user || user.role === 'guest') return
+
+    let filled = false
+    if (!contactName && user.fullName && user.fullName !== 'Khách') {
+      setContactName(user.fullName)
+      filled = true
+    }
+    if (!contactPhone && user.phone) {
+      setContactPhone(user.phone)
+      filled = true
+    }
+    if (!contactEmail && user.email) {
+      setContactEmail(user.email)
+      filled = true
+    }
+    if (!contactAddress && user.address) {
+      setContactAddress(user.address)
+      filled = true
+    }
+    if (filled) {
+      setErrors(prev => ({
+        ...prev,
+        contactName: '',
+        contactPhone: '',
+        contactEmail: '',
+        contactAddress: '',
+      }))
+    }
+  }, [contactAddress, contactEmail, contactName, contactPhone, user])
 
   // ─── SePay polling: check payment status every 3s ──────────────
   useEffect(() => {
@@ -235,6 +416,15 @@ export default function BookingPage() {
         const paymentStatus = status.data?.status
         const invoiceStatus = status.data?.invoiceStatus
         if (status.success && (paymentStatus === 'success' || invoiceStatus === 'paid')) {
+          if (pendingPaymentData) {
+            localStorage.setItem('completedBooking', JSON.stringify({
+              ...pendingPaymentData,
+              status: 'confirmed',
+            }))
+          }
+          localStorage.removeItem('pendingBooking')
+          localStorage.removeItem(BOOKING_FORM_DRAFT_KEY)
+          localStorage.removeItem(PENDING_PAYMENT_SESSION_KEY)
           router.push('/booking/success')
         } else if (status.success && paymentStatus === 'failed') {
           setSepayStatus('failed')
@@ -247,7 +437,7 @@ export default function BookingPage() {
     checkStatus()
     const timer = window.setInterval(checkStatus, 3000)
     return () => window.clearInterval(timer)
-  }, [router, sepayPayment?.paymentId, sepayStatus])
+  }, [pendingPaymentData, router, sepayPayment?.paymentId, sepayStatus])
 
   // ─── SePay countdown: 10 minute timeout ────────────────────────
   useEffect(() => {
@@ -300,6 +490,7 @@ export default function BookingPage() {
     fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/bookings/release-expired`, { method: 'POST' }).catch(() => {})
     // Xóa pending booking khỏi localStorage
     localStorage.removeItem('pendingBooking')
+    localStorage.removeItem(BOOKING_FORM_DRAFT_KEY)
 
     return (
       <div className="min-h-screen flex flex-col bg-[#F7F8FA]">
@@ -345,6 +536,41 @@ export default function BookingPage() {
       setSepayStatus('waiting')
       setSepayCountdown(600)
       setSubmitting(false)
+      setSubmitError("")
+      setErrors({})
+      setStep(2)
+    }
+
+    const handleCancelHold = async () => {
+      if (!existingBookingId) {
+        localStorage.removeItem('pendingBooking')
+        localStorage.removeItem(BOOKING_FORM_DRAFT_KEY)
+        localStorage.removeItem('completedBooking')
+        localStorage.removeItem(PENDING_PAYMENT_SESSION_KEY)
+        router.push('/courts')
+        return
+      }
+
+      setSubmitting(true)
+      const result = await bookingApi.cancel(existingBookingId, {
+        reason: 'Khách hủy giao dịch SePay',
+      })
+      setSubmitting(false)
+
+      if (!result.success) {
+        setSubmitError(result.error || 'Không thể hủy giữ chỗ. Vui lòng thử lại.')
+        return
+      }
+
+      localStorage.removeItem('pendingBooking')
+      localStorage.removeItem(BOOKING_FORM_DRAFT_KEY)
+      localStorage.removeItem('completedBooking')
+      localStorage.removeItem(PENDING_PAYMENT_SESSION_KEY)
+      setExistingInvoiceId(null)
+      setExistingBookingId(null)
+      setPendingPaymentData(null)
+      setSepayPayment(null)
+      router.push('/courts')
     }
 
     const countdownMin = Math.floor(sepayCountdown / 60).toString().padStart(2, '0')
@@ -401,6 +627,13 @@ export default function BookingPage() {
               </div>
             )}
 
+            {submitError && (
+              <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 px-5 py-4">
+                <AlertCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+                <p className="text-sm font-semibold text-red-700">{submitError}</p>
+              </div>
+            )}
+
             {sepayStatus === 'waiting' && (
               <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
                 <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
@@ -452,18 +685,19 @@ export default function BookingPage() {
                   onClick={handleRetryPayment}
                   className="flex-1 flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-[#FF6B35] to-[#e85a28] py-3.5 text-sm font-bold text-white shadow-lg shadow-[#FF6B35]/30 hover:shadow-xl hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200"
                 >
-                  Thử lại thanh toán
+                  Đổi phương thức thanh toán
                 </button>
               )}
               <button
                 type="button"
-                onClick={() => router.push('/my-bookings')}
+                onClick={handleCancelHold}
+                disabled={submitting}
                 className={cn(
-                  "rounded-2xl border-2 border-gray-200 bg-white px-5 py-3 text-sm font-bold text-gray-600 hover:bg-gray-50",
+                  "rounded-2xl border-2 border-red-100 bg-white px-5 py-3 text-sm font-bold text-red-600 hover:bg-red-50 disabled:opacity-60",
                   (sepayStatus === 'failed' || sepayStatus === 'expired') ? "flex-1" : "w-full"
                 )}
               >
-                Xem lịch đặt của tôi
+                {submitting ? 'Đang hủy...' : 'Hủy giữ chỗ'}
               </button>
             </div>
           </div>
@@ -493,9 +727,168 @@ export default function BookingPage() {
     if (code === 'BADMINTON10' || code === 'GIAM10') setDiscountApplied(true)
   }
 
+  const getBookingDateParts = () => {
+    const dates = booking.date.split(',').map((d: string) => d.trim())
+    const [dayStr, monthStr] = dates[0].split('/')
+    const year = new Date().getFullYear()
+    const bookingDate = `${year}-${monthStr.padStart(2, '0')}-${dayStr.padStart(2, '0')}`
+    const [timeStart, timeEnd] = booking.timeRange.split(' - ').map((t: string) => t.trim())
+    const slotDate = new Date(year, Number(monthStr) - 1, Number(dayStr))
+
+    return { bookingDate, timeStart, timeEnd, slotDate }
+  }
+
+  const buildCompletedData = (createdBooking: any): RegularBookingData => ({
+    id: createdBooking.id,
+    bookingCode: createdBooking.bookingCode,
+    createdAt: createdBooking.createdAt,
+    courtName: booking.courtName,
+    courtType: booking.courtType,
+    branch: booking.branch,
+    courtAddress: booking.courtAddress,
+    courtLat: booking.courtLat,
+    courtLng: booking.courtLng,
+    date: booking.date,
+    timeRange: booking.timeRange,
+    people,
+    amount: total,
+    paymentMethod,
+    status: createdBooking.status,
+    contact: { name: contactName, phone: contactPhone, email: contactEmail, address: contactAddress },
+    racketRental,
+    note,
+  })
+
+  const ensureSlotHold = async () => {
+    if (existingBookingId && existingInvoiceId && pendingPaymentData) {
+      const completedData = {
+        ...pendingPaymentData,
+        people,
+        amount: total,
+        paymentMethod,
+        contact: { name: contactName, phone: contactPhone, email: contactEmail, address: contactAddress },
+        racketRental,
+        note,
+      }
+      setPendingPaymentData(completedData)
+      localStorage.setItem(
+        PENDING_PAYMENT_SESSION_KEY,
+        JSON.stringify({
+          bookingId: existingBookingId,
+          invoiceId: existingInvoiceId,
+          completedData,
+        } satisfies PendingPaymentSession),
+      )
+
+      return {
+        success: true as const,
+        bookingId: existingBookingId,
+        invoiceId: existingInvoiceId,
+        completedData,
+      }
+    }
+
+    const { bookingDate, timeStart, timeEnd, slotDate } = getBookingDateParts()
+    if (isSlotPast(slotDate, timeStart)) {
+      localStorage.removeItem('pendingBooking')
+      localStorage.removeItem(BOOKING_FORM_DRAFT_KEY)
+      return {
+        success: false as const,
+        error: 'Khung giờ đã qua, vui lòng chọn lại lịch trống',
+      }
+    }
+
+    const bePaymentMethod = paymentMethod === 'bank' ? 'bank_transfer'
+      : paymentMethod === 'wallet' ? 'cash'
+      : paymentMethod
+
+    const result = await bookingApi.createHold({
+      court_id: booking.courtId,
+      booking_date: bookingDate,
+      time_start: timeStart,
+      time_end: timeEnd,
+      people,
+      payment_method: bePaymentMethod,
+      customer_name: contactName || 'Khách',
+      customer_phone: contactPhone,
+      customer_email: contactEmail || undefined,
+      user_id: user?.role !== 'guest' ? user?.id : undefined,
+      note: note || undefined,
+    })
+
+    if (!result.success || !result.booking) {
+      return {
+        success: false as const,
+        error: result.error || 'Không thể giữ chỗ. Vui lòng chọn lại lịch trống.',
+      }
+    }
+
+    const invoiceId = result.booking.invoice_id
+    if (!invoiceId) {
+      return {
+        success: false as const,
+        error: 'Không thể tạo hóa đơn giữ chỗ. Vui lòng thử lại.',
+      }
+    }
+
+    const completedData = buildCompletedData(result.booking)
+    setExistingInvoiceId(invoiceId)
+    setExistingBookingId(result.booking.id)
+    setPendingPaymentData(completedData)
+    localStorage.setItem(
+      PENDING_PAYMENT_SESSION_KEY,
+      JSON.stringify({
+        bookingId: result.booking.id,
+        invoiceId,
+        completedData,
+      } satisfies PendingPaymentSession),
+    )
+
+    return {
+      success: true as const,
+      bookingId: result.booking.id,
+      invoiceId,
+      completedData,
+    }
+  }
+
+  const proceedToPaymentStep = async () => {
+    if (!validateStep1()) return
+
+    setHoldingSlot(true)
+    setSubmitError("")
+    try {
+      const hold = await ensureSlotHold()
+      if (!hold.success) {
+        setSubmitError(hold.error)
+        return
+      }
+      setStep(2)
+    } catch {
+      setSubmitError('Lỗi kết nối server. Vui lòng thử lại.')
+    } finally {
+      setHoldingSlot(false)
+    }
+  }
+
   // ─── Helper: xử lý kết quả payment gateway ────────────────────
   const handlePaymentGateway = async (invoiceId: string) => {
     const payResult = await paymentApi.create(invoiceId, paymentMethod as 'vnpay' | 'momo' | 'sepay')
+    if (payResult.success && payResult.paymentId) {
+      const savedPaymentSession = localStorage.getItem(PENDING_PAYMENT_SESSION_KEY)
+      if (savedPaymentSession) {
+        try {
+          const session = JSON.parse(savedPaymentSession) as PendingPaymentSession
+          localStorage.setItem(
+            PENDING_PAYMENT_SESSION_KEY,
+            JSON.stringify({ ...session, paymentId: payResult.paymentId } satisfies PendingPaymentSession),
+          )
+        } catch {
+          localStorage.removeItem(PENDING_PAYMENT_SESSION_KEY)
+        }
+      }
+    }
+
     if (paymentMethod === 'sepay' && payResult.success && payResult.paymentId) {
       if (payResult.qrImageUrl) {
         setSepayPayment({
@@ -531,7 +924,22 @@ export default function BookingPage() {
       window.location.href = payResult.payUrl
       return
     } else {
-      setSubmitError(payResult.error || 'Không thể tạo liên kết thanh toán. Vui lòng thanh toán tại quầy.')
+      const errorMessage = payResult.error || 'Không thể tạo liên kết thanh toán. Vui lòng thanh toán tại quầy.'
+      const isExpiredOrCancelledInvoice =
+        errorMessage.includes('Hóa đơn đã bị hủy') ||
+        errorMessage.includes('Phiên giữ chỗ')
+
+      if (isExpiredOrCancelledInvoice) {
+        localStorage.removeItem('pendingBooking')
+        localStorage.removeItem(BOOKING_FORM_DRAFT_KEY)
+        localStorage.removeItem(PENDING_PAYMENT_SESSION_KEY)
+        setExistingBookingId(null)
+        setExistingInvoiceId(null)
+        setPendingPaymentData(null)
+        setSubmitError('Phiên giữ chỗ đã hết hạn hoặc đã bị hủy. Vui lòng chọn lại lịch trống.')
+      } else {
+        setSubmitError(errorMessage)
+      }
       setSubmitting(false)
       return
     }
@@ -541,6 +949,25 @@ export default function BookingPage() {
     setSubmitting(true)
     setSubmitError("")
     try {
+      const hold = await ensureSlotHold()
+      if (!hold.success) {
+        setSubmitError(hold.error)
+        setSubmitting(false)
+        return
+      }
+
+      if (paymentMethod === 'vnpay' || paymentMethod === 'momo' || paymentMethod === 'sepay') {
+        await handlePaymentGateway(hold.invoiceId)
+        return
+      }
+
+      localStorage.setItem('completedBooking', JSON.stringify(hold.completedData))
+      localStorage.removeItem('pendingBooking')
+      localStorage.removeItem(BOOKING_FORM_DRAFT_KEY)
+      localStorage.removeItem(PENDING_PAYMENT_SESSION_KEY)
+      setTimeout(() => router.push('/booking/success'), 1500)
+      return
+      /*
       // Nếu đã có booking + invoice từ lần trước (payment thất bại) → chỉ tạo payment mới
       if (existingInvoiceId && (paymentMethod === 'vnpay' || paymentMethod === 'momo' || paymentMethod === 'sepay')) {
         await handlePaymentGateway(existingInvoiceId)
@@ -555,9 +982,25 @@ export default function BookingPage() {
       const slotDate = new Date(year, Number(monthStr) - 1, Number(dayStr))
       if (isSlotPast(slotDate, timeStart)) {
         localStorage.removeItem('pendingBooking')
+        localStorage.removeItem(BOOKING_FORM_DRAFT_KEY)
         setSubmitError('Khung giờ đã qua, vui lòng chọn lại lịch trống')
         setSubmitting(false)
         return
+      }
+
+      if (existingBookingId && existingInvoiceId && !['vnpay', 'momo', 'sepay'].includes(paymentMethod)) {
+        const cancelResult = await bookingApi.cancel(existingBookingId, {
+          reason: 'Khách đổi phương thức thanh toán',
+        })
+        if (!cancelResult.success) {
+          setSubmitError(cancelResult.error || 'Không thể đổi phương thức thanh toán. Vui lòng thử lại.')
+          setSubmitting(false)
+          return
+        }
+        setExistingBookingId(null)
+        setExistingInvoiceId(null)
+        setPendingPaymentData(null)
+        localStorage.removeItem(PENDING_PAYMENT_SESSION_KEY)
       }
 
       // Map FE payment method to BE payment_method
@@ -590,17 +1033,32 @@ export default function BookingPage() {
           contact: { name: contactName, phone: contactPhone, email: contactEmail, address: contactAddress },
           racketRental, note,
         }
-        localStorage.setItem('completedBooking', JSON.stringify(completedData))
-        localStorage.removeItem('pendingBooking')
+        const isOnlinePayment = paymentMethod === 'vnpay' || paymentMethod === 'momo' || paymentMethod === 'sepay'
 
         // Lưu invoice ID để retry payment nếu cần
         if (result.booking.invoice_id) {
           setExistingInvoiceId(result.booking.invoice_id)
         }
+        setExistingBookingId(result.booking.id)
+        setPendingPaymentData(completedData)
+        if (isOnlinePayment && result.booking.invoice_id) {
+          localStorage.setItem(
+            PENDING_PAYMENT_SESSION_KEY,
+            JSON.stringify({
+              bookingId: result.booking.id,
+              invoiceId: result.booking.invoice_id,
+              completedData,
+            } satisfies PendingPaymentSession),
+          )
+        }
 
         // For payment gateways: redirect or submit checkout form
-        if ((paymentMethod === 'vnpay' || paymentMethod === 'momo' || paymentMethod === 'sepay') && result.booking.invoice_id) {
+        if (isOnlinePayment && result.booking.invoice_id) {
           if (result.booking.status === 'confirmed' || result.booking.invoice_status === 'paid') {
+            localStorage.setItem('completedBooking', JSON.stringify(completedData))
+            localStorage.removeItem('pendingBooking')
+            localStorage.removeItem(BOOKING_FORM_DRAFT_KEY)
+            localStorage.removeItem(PENDING_PAYMENT_SESSION_KEY)
             setTimeout(() => router.push('/booking/success'), 800)
             return
           }
@@ -609,11 +1067,16 @@ export default function BookingPage() {
         }
 
         // For cash / bank / wallet: go to success page
+        localStorage.setItem('completedBooking', JSON.stringify(completedData))
+        localStorage.removeItem('pendingBooking')
+        localStorage.removeItem(BOOKING_FORM_DRAFT_KEY)
+        localStorage.removeItem(PENDING_PAYMENT_SESSION_KEY)
         setTimeout(() => router.push('/booking/success'), 1500)
       } else {
         setSubmitError(result.error || 'Đặt sân thất bại. Vui lòng thử lại.')
         setSubmitting(false)
       }
+      */
     } catch {
       setSubmitError('Lỗi kết nối server. Vui lòng thử lại.')
       setSubmitting(false)
@@ -932,6 +1395,13 @@ export default function BookingPage() {
                     </RadioGroup>
                   </Section>
 
+                  {submitError && (
+                    <div className="flex items-center gap-2.5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3.5 text-sm text-red-700">
+                      <AlertCircle className="h-4 w-4 shrink-0" />
+                      {submitError}
+                    </div>
+                  )}
+
                   <div className="flex gap-3">
                     <button
                       onClick={() => setStep(0)}
@@ -940,10 +1410,11 @@ export default function BookingPage() {
                       Quay lại
                     </button>
                     <button
-                      onClick={() => { if (validateStep1()) setStep(2) }}
+                      onClick={proceedToPaymentStep}
+                      disabled={holdingSlot}
                       className="flex-1 flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-[#FF6B35] to-[#e85a28] py-3.5 text-sm font-bold text-white shadow-lg shadow-[#FF6B35]/30 hover:shadow-xl hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200"
                     >
-                      Tiếp tục <ChevronRight className="h-4 w-4" />
+                      {holdingSlot ? <><Loader2 className="h-4 w-4 animate-spin" /> Đang giữ chỗ...</> : <>Tiếp tục <ChevronRight className="h-4 w-4" /></>}
                     </button>
                   </div>
                 </>
@@ -1126,11 +1597,12 @@ export default function BookingPage() {
               <button
                 onClick={() => {
                   if (step === 0) setStep(1)
-                  else if (step === 1 && validateStep1()) setStep(2)
+                  else if (step === 1) proceedToPaymentStep()
                 }}
+                disabled={holdingSlot}
                 className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-[#FF6B35] to-[#e85a28] px-5 py-2.5 text-sm font-bold text-white shadow-md"
               >
-                Tiếp <ChevronRight className="h-4 w-4" />
+                {holdingSlot ? <Loader2 className="h-4 w-4 animate-spin" /> : <>Tiếp <ChevronRight className="h-4 w-4" /></>}
               </button>
             ) : (
               <button

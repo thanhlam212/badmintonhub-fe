@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
+import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -10,14 +11,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { StockLevelIndicator } from "@/components/shared"
-import { formatVND } from "@/lib/utils"
+import { formatVND, formatPNKReference, formatPOReference } from "@/lib/utils"
+import { purchaseOrderApi } from "@/lib/api"
 import { useInventory } from "@/lib/inventory-context"
 import { useAuth } from "@/lib/auth-context"
 import { cn } from "@/lib/utils"
 import { exportInventoryCheckSheet } from "@/lib/export-inventory-check"
+import { printWarehouseSlip } from "@/lib/print-utils"
 import {
   Search, Package, AlertTriangle, XOctagon, DollarSign,
-  Warehouse, FileSpreadsheet
+  Warehouse, FileSpreadsheet, FileText, Clock, CheckCircle2, Printer, ArrowDownToLine
 } from "lucide-react"
 import {
   Pagination, PaginationContent, PaginationItem, PaginationLink,
@@ -26,14 +29,39 @@ import {
 
 const HUB_INV_PAGE_SIZE = 20
 
+function formatHubImportSlipReference(slip: { id?: string; date?: string }) {
+  return formatPNKReference(slip.id, slip.date)
+}
+
+function formatAdminSlipPOReference(slip: { poId?: string; poRawId?: string; poCreatedAt?: string; date?: string }) {
+  const poValue = slip.poId || slip.poRawId
+  return poValue ? formatPOReference(poValue, slip.poCreatedAt || slip.date) : ""
+}
+
+function describeAdminSlipNote(slip: { type?: string; note?: string; poId?: string; poRawId?: string; poCreatedAt?: string; date?: string }) {
+  const poCode = formatAdminSlipPOReference(slip)
+  if (poCode && slip.type === "import") return `Nhập kho theo PO ${poCode}`
+  return slip.note || ""
+}
+
 export default function HubInventoryPage() {
+  const searchParams = useSearchParams()
   const { user } = useAuth()
-  const { inventory } = useInventory()
+  const ctx = useInventory()
+  const { inventory, adminSlips } = ctx
 
   const [search, setSearch] = useState("")
   const [categoryFilter, setCategoryFilter] = useState("all")
   const [alertOnly, setAlertOnly] = useState(false)
   const [hubInvPage, setHubInvPage] = useState(1)
+
+  useEffect(() => {
+    const sku = searchParams.get("sku")
+    if (sku) {
+      setSearch(sku)
+      setHubInvPage(1)
+    }
+  }, [searchParams])
 
   // Hub only items
   const hubItems = useMemo(() => inventory.filter(i => i.warehouse === "Kho Hub"), [inventory])
@@ -81,6 +109,53 @@ export default function HubInventoryPage() {
     { title: "Hết hàng", value: outOfStock.toString(), icon: <XOctagon className="h-5 w-5" />, color: "bg-red-100 text-red-600", alert: outOfStock > 0 },
   ]
 
+  const pendingImportSlips = useMemo(
+    () => adminSlips.filter(s => s.type === "import" && s.status === "pending" && s.warehouse === "Kho Hub"),
+    [adminSlips]
+  )
+
+  const handleProcessImportSlip = async (slip: typeof pendingImportSlips[0]) => {
+    if (slip.poRawId) {
+      const res = await purchaseOrderApi.updateStatus(slip.poRawId, "received")
+      if (!res.success) {
+        alert(res.error || "Không thể nhận hàng theo PO")
+        return
+      }
+    } else {
+      await ctx.importItems({
+        warehouse: slip.warehouse,
+        date: new Date().toISOString().split("T")[0],
+        note: describeAdminSlipNote(slip) || `Nhập theo phiếu ${formatHubImportSlipReference(slip)}`,
+        operator: user?.fullName || "NV Hub",
+        items: slip.items.map(item => ({
+          sku: item.sku,
+          name: item.name,
+          qty: item.qty,
+          cost: item.unitCost,
+        })),
+      })
+    }
+
+    await ctx.processAdminSlip(slip.id, user?.fullName || "NV Hub")
+    await ctx.refreshInventory()
+  }
+
+  const printImportSlip = (slip: typeof pendingImportSlips[0]) => {
+    printWarehouseSlip({
+      id: formatHubImportSlipReference(slip),
+      type: "import",
+      date: slip.date,
+      warehouse: slip.warehouse,
+      supplier: slip.supplier,
+      poId: formatAdminSlipPOReference(slip),
+      note: describeAdminSlipNote(slip),
+      createdBy: slip.createdBy,
+      assignedTo: slip.assignedTo || slip.warehouse,
+      processedBy: user?.fullName || "NV Hub",
+      items: slip.items,
+    })
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -108,6 +183,51 @@ export default function HubInventoryPage() {
           <FileSpreadsheet className="h-3.5 w-3.5" /> Xuất phiếu kiểm kê
         </Button>
       </div>
+
+      {pendingImportSlips.length > 0 && (
+        <Card className="mb-6 border-emerald-200 bg-emerald-50/40">
+          <CardHeader className="pb-2">
+            <CardTitle className="font-serif text-base flex items-center gap-2">
+              <FileText className="h-5 w-5 text-emerald-600" />
+              Phiếu nhập kho Hub đang chờ xử lý
+              <Badge className="bg-emerald-600 text-white">{pendingImportSlips.length}</Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {pendingImportSlips.slice(0, 5).map(slip => (
+              <div key={slip.id} className="rounded-xl border bg-white p-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-sm font-bold text-emerald-700">{formatHubImportSlipReference(slip)}</span>
+                    <Badge className="bg-amber-100 text-amber-700">
+                      <Clock className="h-3 w-3 mr-1" /> Chờ nhập
+                    </Badge>
+                    {formatAdminSlipPOReference(slip) && <Badge variant="outline">PO: {formatAdminSlipPOReference(slip)}</Badge>}
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-1">{describeAdminSlipNote(slip) || "Phiếu nhập từ admin/PO"}</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {slip.items.map(item => (
+                      <Badge key={`${slip.id}-${item.sku}`} variant="outline" className="text-xs font-normal bg-white">
+                        {item.sku}: {item.name} × {item.qty}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <a href="/hub/transfers">
+                    <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white">
+                      <ArrowDownToLine className="h-4 w-4 mr-1" /> Sang Điều chuyển
+                    </Button>
+                  </a>
+                </div>
+              </div>
+            ))}
+            {pendingImportSlips.length > 5 && (
+              <p className="text-xs text-muted-foreground">Còn {pendingImportSlips.length - 5} phiếu khác. Vào Điều chuyển để lọc và xử lý chi tiết.</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-6">

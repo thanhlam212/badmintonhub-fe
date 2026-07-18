@@ -54,6 +54,7 @@ export interface CommunityPost {
 export interface CommunityMatch {
   id: string
   title: string
+  createdAt?: string
   status?: CommunityMatchStatus
   statusLabel?: string
   district: CommunityDistrict

@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
+import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -10,14 +11,16 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
-import { formatVND } from "@/lib/utils"
+import { formatPNKReference, formatPOReference, formatPXKReference, formatTransferReference } from "@/lib/utils"
+import { printWarehouseSlip } from "@/lib/print-utils"
+import { purchaseOrderApi } from "@/lib/api"
 import { useInventory, type TransferRequest } from "@/lib/inventory-context"
 import { useAuth } from "@/lib/auth-context"
 import { cn } from "@/lib/utils"
 import {
   Repeat, ArrowRight, Eye, Package, Clock, CheckCircle2,
   XOctagon, Truck, Warehouse, Plus, Send, Trash2, Minus,
-  ArrowDownToLine
+  ArrowDownToLine, Printer, Search
 } from "lucide-react"
 
 const BRANCH_WAREHOUSES = ["Kho Cầu Giấy", "Kho Thanh Xuân", "Kho Long Biên"]
@@ -30,14 +33,45 @@ interface NewTransferItem {
   unitCost: number
 }
 
+function normalizeHubSearch(value: unknown) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+}
+
+function normalizeDateKey(value?: string | number | Date) {
+  if (!value) return ""
+  if (typeof value === "string") {
+    const trimmed = value.trim()
+    const isoDate = trimmed.match(/^(\d{4}-\d{2}-\d{2})/)
+    if (isoDate) return isoDate[1]
+  }
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ""
+  return date.toISOString().slice(0, 10)
+}
+
+function isWithinDateRange(value: string | number | Date | undefined, from: string, to: string) {
+  const date = normalizeDateKey(value)
+  if (from && (!date || date < from)) return false
+  if (to && (!date || date > to)) return false
+  return true
+}
+
 export default function HubTransfersPage() {
+  const searchParams = useSearchParams()
   const { user } = useAuth()
   const {
-    inventory, transferRequests, transactions,
-    createTransfer, exportTransferItems, receiveTransferItems, updateTransferStatus
+    inventory, transferRequests, transactions, adminSlips,
+    createTransfer, exportTransferItems, receiveTransferItems, updateTransferStatus,
+    importItems, processAdminSlip, refreshInventory,
   } = useInventory()
 
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "in-transit" | "completed" | "rejected">("all")
+  const [query, setQuery] = useState("")
+  const [dateFrom, setDateFrom] = useState("")
+  const [dateTo, setDateTo] = useState("")
   const [detailOpen, setDetailOpen] = useState(false)
   const [selectedTransfer, setSelectedTransfer] = useState<TransferRequest | null>(null)
 
@@ -57,6 +91,19 @@ export default function HubTransfersPage() {
   const [actionType, setActionType] = useState<"export" | "receive" | "reject">("export")
   const [actionSuccess, setActionSuccess] = useState(false)
 
+  type HubWarehouseDoc = {
+    key: string
+    code: string
+    kind: "transfer" | "export-transfer" | "import-transfer" | "import-po"
+    date: string
+    source: string
+    target: string
+    summary: string
+    status: string
+    transfer?: TransferRequest
+    slip?: typeof adminSlips[number]
+  }
+
   const hubItems = useMemo(() => inventory.filter(i => i.warehouse === "Kho Hub"), [inventory])
 
   // Only show transfers involving Hub
@@ -65,13 +112,202 @@ export default function HubTransfersPage() {
     [transferRequests]
   )
 
-  const filtered = hubTransfers.filter(t => statusFilter === "all" || t.status === statusFilter)
+  const normalizedQuery = useMemo(() => normalizeHubSearch(query.trim()), [query])
+
+  const matchesQuery = (parts: unknown[]) => {
+    if (!normalizedQuery) return true
+    return normalizeHubSearch(parts.join(" ")).includes(normalizedQuery)
+  }
+
+  const filtered = useMemo(() => hubTransfers.filter(t => {
+    if (statusFilter !== "all" && t.status !== statusFilter) return false
+    if (!isWithinDateRange(t.date, dateFrom, dateTo)) return false
+    return matchesQuery([
+      t.reference,
+      t.date,
+      t.fromWarehouse,
+      t.toWarehouse,
+      t.status,
+      t.reason,
+      t.note,
+      t.items.map(i => `${i.sku} ${i.name} ${i.qty}`).join(" "),
+    ])
+  }), [hubTransfers, statusFilter, dateFrom, dateTo, normalizedQuery])
+
+  useEffect(() => {
+    const transferId = searchParams.get("transferId")
+    if (!transferId) return
+
+    const transfer = hubTransfers.find((item) => item.id === transferId || item.reference === transferId)
+    if (!transfer) return
+
+    setStatusFilter("all")
+    setSelectedTransfer(transfer)
+    setDetailOpen(true)
+  }, [hubTransfers, searchParams])
 
   // Hub related transactions
   const hubTransactions = useMemo(() =>
     transactions.filter(t => t.warehouse === "Kho Hub"),
     [transactions]
   )
+
+  const findTransferForTransaction = (txn: typeof transactions[number]) => {
+    const note = String(txn.note || "")
+    const uuidMatch = note.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0]
+    const shortMatch = note.match(/\[([0-9a-f]{8})\]/i)?.[1]
+    return hubTransfers.find(t =>
+      (uuidMatch && t.id.toLowerCase() === uuidMatch.toLowerCase()) ||
+      (shortMatch && t.id.toLowerCase().startsWith(shortMatch.toLowerCase())) ||
+      note.includes(t.reference)
+    )
+  }
+
+  const formatHubTransactionReference = (txn: typeof transactions[number]) => {
+    const transfer = txn.type === "transfer-out" || txn.type === "transfer-in"
+      ? findTransferForTransaction(txn)
+      : null
+    if (txn.type === "import" || txn.type === "transfer-in") {
+      return formatPNKReference(transfer?.reference || txn.id, txn.date)
+    }
+    return formatPXKReference(transfer?.reference || txn.id, txn.date)
+  }
+
+  const formatHubTransactionNote = (txn: typeof transactions[number]) => {
+    const transfer = findTransferForTransaction(txn)
+    if (transfer && txn.type === "transfer-out") {
+      return `Xuất điều chuyển ${transfer.reference}: Kho Hub → ${transfer.toWarehouse}`
+    }
+    if (transfer && txn.type === "transfer-in") {
+      return `Nhập điều chuyển ${transfer.reference}: ${transfer.fromWarehouse} → Kho Hub`
+    }
+    return txn.note
+  }
+
+  const receivedTransfers = useMemo(
+    () => hubTransfers.filter(t => t.toWarehouse === "Kho Hub" && t.status === "completed"),
+    [hubTransfers],
+  )
+
+  const formatAdminSlipPOReference = (slip: { poId?: string; poRawId?: string; poCreatedAt?: string; date?: string }) => {
+    const poValue = slip.poId || slip.poRawId
+    return poValue ? formatPOReference(poValue, slip.poCreatedAt || slip.date) : ""
+  }
+
+  const describeAdminSlipNote = (slip: { type?: string; note?: string; poId?: string; poRawId?: string; poCreatedAt?: string; date?: string }) => {
+    const poCode = formatAdminSlipPOReference(slip)
+    if (poCode && slip.type === "import") return `Nhập kho theo PO ${poCode}`
+    return slip.note || ""
+  }
+
+  const hubImportSlips = useMemo(
+    () => adminSlips.filter(slip => slip.type === "import" && slip.warehouse === "Kho Hub"),
+    [adminSlips],
+  )
+
+  const hubWarehouseDocs = useMemo<HubWarehouseDoc[]>(() => {
+    const docs: HubWarehouseDoc[] = []
+
+    for (const transfer of hubTransfers) {
+      docs.push({
+        key: `dc-${transfer.id}`,
+        code: transfer.reference,
+        kind: "transfer",
+        date: transfer.date,
+        source: transfer.fromWarehouse,
+        target: transfer.toWarehouse,
+        summary: `Phiếu điều chuyển ${transfer.fromWarehouse} → ${transfer.toWarehouse}`,
+        status: transfer.status,
+        transfer,
+      })
+
+      if (transfer.fromWarehouse === "Kho Hub" && ["in-transit", "completed"].includes(transfer.status)) {
+        docs.push({
+          key: `pxk-transfer-${transfer.id}`,
+          code: formatPXKReference(transfer.reference, transfer.date),
+          kind: "export-transfer",
+          date: transfer.date,
+          source: "Kho Hub",
+          target: transfer.toWarehouse,
+          summary: `Xuất điều chuyển theo ${transfer.reference}`,
+          status: transfer.status,
+          transfer,
+        })
+      }
+
+      if (transfer.toWarehouse === "Kho Hub" && transfer.status === "completed") {
+        docs.push({
+          key: `pnk-transfer-${transfer.id}`,
+          code: formatPNKReference(transfer.reference, transfer.completedAt || transfer.date),
+          kind: "import-transfer",
+          date: transfer.completedAt ? new Date(transfer.completedAt).toISOString().slice(0, 10) : transfer.date,
+          source: transfer.fromWarehouse,
+          target: "Kho Hub",
+          summary: `Nhập điều chuyển theo ${transfer.reference}`,
+          status: transfer.status,
+          transfer,
+        })
+      }
+    }
+
+    for (const slip of hubImportSlips) {
+      const poCode = formatAdminSlipPOReference(slip)
+      docs.push({
+        key: `pnk-po-${slip.id}`,
+        code: formatPNKReference(slip.id, slip.date),
+        kind: poCode ? "import-po" : "import-transfer",
+        date: slip.date,
+        source: slip.supplier || "Admin",
+        target: slip.warehouse,
+        summary: poCode ? `Nhập kho theo PO ${poCode}` : describeAdminSlipNote(slip),
+        status: slip.status,
+        slip,
+      })
+    }
+
+    return docs.sort((a, b) => b.date.localeCompare(a.date) || a.code.localeCompare(b.code))
+  }, [hubImportSlips, hubTransfers])
+
+  const filteredHubWarehouseDocs = useMemo(() => hubWarehouseDocs.filter(doc => {
+    if (!isWithinDateRange(doc.date, dateFrom, dateTo)) return false
+    return matchesQuery([doc.code, doc.date, doc.kind, doc.source, doc.target, doc.summary, doc.status])
+  }), [hubWarehouseDocs, dateFrom, dateTo, normalizedQuery])
+
+  const filteredReceivedTransfers = useMemo(() => receivedTransfers.filter(t => {
+    const receivedDate = t.completedAt ? new Date(t.completedAt).toISOString().slice(0, 10) : t.date
+    if (!isWithinDateRange(receivedDate, dateFrom, dateTo)) return false
+    return matchesQuery([
+      formatPNKReference(t.reference, t.completedAt || t.date),
+      t.reference,
+      receivedDate,
+      t.fromWarehouse,
+      t.toWarehouse,
+      t.items.map(i => `${i.sku} ${i.name} ${i.qty}`).join(" "),
+      t.status,
+    ])
+  }), [receivedTransfers, dateFrom, dateTo, normalizedQuery])
+
+  const filteredHubTransactions = useMemo(() => hubTransactions.filter(txn => {
+    if (!isWithinDateRange(txn.date, dateFrom, dateTo)) return false
+    return matchesQuery([
+      formatHubTransactionReference(txn),
+      txn.date,
+      txn.type,
+      txn.sku,
+      txn.productName,
+      txn.qty,
+      formatHubTransactionNote(txn),
+    ])
+  }), [hubTransactions, dateFrom, dateTo, normalizedQuery])
+
+  const hasActiveHubFilters = Boolean(query.trim() || statusFilter !== "all" || dateFrom || dateTo)
+
+  const clearHubFilters = () => {
+    setQuery("")
+    setStatusFilter("all")
+    setDateFrom("")
+    setDateTo("")
+  }
 
   const statusBadge = (status: string) => {
     switch (status) {
@@ -81,6 +317,64 @@ export default function HubTransfersPage() {
       case "rejected": return <Badge className="bg-red-100 text-red-700 text-xs"><XOctagon className="h-3 w-3 mr-1" /> Từ chối</Badge>
       default: return <Badge variant="outline" className="text-xs">{status}</Badge>
     }
+  }
+
+  const docKindLabel: Record<HubWarehouseDoc["kind"], string> = {
+    transfer: "Phiếu DC",
+    "export-transfer": "PXK điều chuyển",
+    "import-transfer": "PNK điều chuyển",
+    "import-po": "PNK theo PO",
+  }
+
+  const docStatusBadge = (doc: HubWarehouseDoc) => {
+    if (doc.slip) {
+      return doc.status === "pending"
+        ? <Badge className="bg-amber-100 text-amber-700 text-xs"><Clock className="h-3 w-3 mr-1" /> Chờ nhập</Badge>
+        : <Badge className="bg-green-100 text-green-700 text-xs"><CheckCircle2 className="h-3 w-3 mr-1" /> Đã nhập</Badge>
+    }
+    return statusBadge(doc.status)
+  }
+
+  const printHubImportSlip = (slip: typeof adminSlips[number]) => {
+    printWarehouseSlip({
+      id: formatPNKReference(slip.id, slip.date),
+      type: "import",
+      date: slip.date,
+      warehouse: slip.warehouse,
+      supplier: slip.supplier,
+      poId: formatAdminSlipPOReference(slip),
+      note: describeAdminSlipNote(slip),
+      createdBy: slip.createdBy,
+      assignedTo: slip.assignedTo || slip.warehouse,
+      processedBy: user?.fullName || "NV Hub",
+      items: slip.items,
+    })
+  }
+
+  const handleProcessHubImportSlip = async (slip: typeof adminSlips[number]) => {
+    if (slip.poRawId) {
+      const res = await purchaseOrderApi.updateStatus(slip.poRawId, "received")
+      if (!res.success) {
+        alert(res.error || "Không thể nhập kho theo PO")
+        return
+      }
+    } else {
+      await importItems({
+        warehouse: slip.warehouse,
+        date: new Date().toISOString().split("T")[0],
+        note: describeAdminSlipNote(slip) || `Nhập theo phiếu ${formatPNKReference(slip.id, slip.date)}`,
+        operator: user?.fullName || "NV Hub",
+        items: slip.items.map(item => ({
+          sku: item.sku,
+          name: item.name,
+          qty: item.qty,
+          cost: item.unitCost,
+        })),
+      })
+    }
+
+    await processAdminSlip(slip.id, user?.fullName || "NV Hub")
+    await refreshInventory()
   }
 
   const stats = useMemo(() => ({
@@ -138,7 +432,7 @@ export default function HubTransfersPage() {
     setActionOpen(true)
   }
 
-  const handleAction = () => {
+  const handleAction = async () => {
     if (!actionTransfer) return
     const today = new Date().toISOString().slice(0, 10)
 
@@ -146,7 +440,7 @@ export default function HubTransfersPage() {
       // Hub exports items → status "in-transit"
       const qtys: Record<string, number> = {}
       actionTransfer.items.forEach(i => { qtys[i.sku] = i.qty })
-      exportTransferItems({
+      await exportTransferItems({
         transferId: actionTransfer.id,
         qtys,
         date: today,
@@ -155,9 +449,9 @@ export default function HubTransfersPage() {
       })
     } else if (actionType === "receive") {
       // Hub receives items from branch → status "completed"
-      receiveTransferItems(actionTransfer.id, user?.fullName || "NV Hub")
+      await receiveTransferItems(actionTransfer.id, user?.fullName || "NV Hub")
     } else if (actionType === "reject") {
-      updateTransferStatus(actionTransfer.id, "rejected")
+      await updateTransferStatus(actionTransfer.id, "rejected")
     }
     setActionSuccess(true)
     setTimeout(() => { setActionSuccess(false); setActionOpen(false) }, 1200)
@@ -208,7 +502,16 @@ export default function HubTransfersPage() {
       </div>
 
       {/* Filter */}
-      <div className="flex items-center gap-3 mb-4">
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <div className="relative flex-1 min-w-[280px] max-w-xl">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Tìm mã phiếu, chứng từ, kho, SKU, sản phẩm..."
+            className="h-9 pl-9"
+          />
+        </div>
         <Select value={statusFilter} onValueChange={v => setStatusFilter(v as typeof statusFilter)}>
           <SelectTrigger className="w-[180px] h-9"><SelectValue placeholder="Trạng thái" /></SelectTrigger>
           <SelectContent>
@@ -219,6 +522,34 @@ export default function HubTransfersPage() {
             <SelectItem value="rejected">Từ chối</SelectItem>
           </SelectContent>
         </Select>
+        <div className="flex items-center gap-2">
+          <Label htmlFor="hub-transfer-date-from" className="text-xs text-muted-foreground whitespace-nowrap">Từ ngày</Label>
+          <Input
+            id="hub-transfer-date-from"
+            type="date"
+            value={dateFrom}
+            onChange={(event) => setDateFrom(event.target.value)}
+            className="h-9 w-[155px]"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <Label htmlFor="hub-transfer-date-to" className="text-xs text-muted-foreground whitespace-nowrap">Đến ngày</Label>
+          <Input
+            id="hub-transfer-date-to"
+            type="date"
+            value={dateTo}
+            onChange={(event) => setDateTo(event.target.value)}
+            className="h-9 w-[155px]"
+          />
+        </div>
+        {hasActiveHubFilters && (
+          <Button type="button" variant="outline" size="sm" className="h-9" onClick={clearHubFilters}>
+            Xóa lọc
+          </Button>
+        )}
+        <Badge variant="secondary" className="h-8 px-2.5">
+          {filtered.length} phiếu / {filteredHubWarehouseDocs.length} chứng từ
+        </Badge>
       </div>
 
       {/* Transfers table */}
@@ -301,8 +632,125 @@ export default function HubTransfersPage() {
         </CardContent>
       </Card>
 
+      {/* Hub warehouse documents */}
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle className="font-serif text-lg flex items-center gap-2">
+            <Package className="h-5 w-5 text-purple-600" /> Chứng từ kho Hub
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="text-xs">Mã chứng từ</TableHead>
+                <TableHead className="text-xs">Nghiệp vụ</TableHead>
+                <TableHead className="text-xs">Ngày</TableHead>
+                <TableHead className="text-xs">Nguồn</TableHead>
+                <TableHead className="text-xs">Đích</TableHead>
+                <TableHead className="text-xs">Nội dung</TableHead>
+                <TableHead className="text-xs text-center">Trạng thái</TableHead>
+                <TableHead className="text-xs text-center">Thao tác</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredHubWarehouseDocs.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                    Chưa có chứng từ kho Hub
+                  </TableCell>
+                </TableRow>
+              )}
+              {filteredHubWarehouseDocs.map(doc => (
+                <TableRow key={doc.key}>
+                  <TableCell className="font-mono text-xs text-primary">{doc.code}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className="text-[10px]">{docKindLabel[doc.kind]}</Badge>
+                  </TableCell>
+                  <TableCell className="text-sm">{doc.date}</TableCell>
+                  <TableCell className="text-sm">{doc.source}</TableCell>
+                  <TableCell className="text-sm">{doc.target}</TableCell>
+                  <TableCell className="text-sm max-w-[260px] truncate">{doc.summary}</TableCell>
+                  <TableCell className="text-center">{docStatusBadge(doc)}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center justify-center gap-1">
+                      {doc.transfer && (
+                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0"
+                          onClick={() => { setSelectedTransfer(doc.transfer!); setDetailOpen(true) }}>
+                          <Eye className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                      {doc.slip && (
+                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0"
+                          onClick={() => printHubImportSlip(doc.slip!)}>
+                          <Printer className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                      {doc.slip?.status === "pending" && (
+                        <Button size="sm" className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+                          onClick={() => handleProcessHubImportSlip(doc.slip!)}>
+                          <ArrowDownToLine className="h-3 w-3 mr-1" /> Nhập kho
+                        </Button>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      {/* Received transfer import slips */}
+      {filteredReceivedTransfers.length > 0 && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="font-serif text-lg flex items-center gap-2">
+              <ArrowDownToLine className="h-5 w-5 text-green-600" /> Phiếu đã nhập vào Kho Hub
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs">Mã phiếu nhập</TableHead>
+                  <TableHead className="text-xs">Phiếu điều chuyển</TableHead>
+                  <TableHead className="text-xs">Ngày</TableHead>
+                  <TableHead className="text-xs">Từ kho</TableHead>
+                  <TableHead className="text-xs">Sản phẩm</TableHead>
+                  <TableHead className="text-xs text-center">Trạng thái</TableHead>
+                  <TableHead className="text-xs text-center">Thao tác</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredReceivedTransfers.map(t => (
+                  <TableRow key={`received-${t.id}`}>
+                    <TableCell className="font-mono text-xs text-green-700">
+                      {formatPNKReference(t.reference, t.completedAt || t.date)}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs text-purple-600">{t.reference}</TableCell>
+                    <TableCell className="text-sm">{t.completedAt ? new Date(t.completedAt).toISOString().slice(0, 10) : t.date}</TableCell>
+                    <TableCell className="text-sm">{t.fromWarehouse}</TableCell>
+                    <TableCell className="text-sm max-w-[220px] truncate">
+                      {t.items.map(i => `${i.name} (x${i.qty})`).join(", ")}
+                    </TableCell>
+                    <TableCell className="text-center">{statusBadge(t.status)}</TableCell>
+                    <TableCell className="text-center">
+                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0"
+                        onClick={() => { setSelectedTransfer(t); setDetailOpen(true) }}>
+                        <Eye className="h-3.5 w-3.5" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Recent Hub transactions */}
-      {hubTransactions.length > 0 && (
+      {filteredHubTransactions.length > 0 && (
         <Card className="mt-6">
           <CardHeader>
             <CardTitle className="font-serif text-lg flex items-center gap-2">
@@ -323,9 +771,9 @@ export default function HubTransfersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {hubTransactions.slice(0, 20).map(txn => (
+                {filteredHubTransactions.slice(0, 20).map(txn => (
                   <TableRow key={txn.id}>
-                    <TableCell className="font-mono text-[11px]">{txn.id}</TableCell>
+                    <TableCell className="font-mono text-[11px]">{formatHubTransactionReference(txn)}</TableCell>
                     <TableCell className="text-sm">{txn.date}</TableCell>
                     <TableCell>
                       <Badge className={cn(
@@ -343,7 +791,7 @@ export default function HubTransfersPage() {
                     <TableCell className="font-mono text-xs">{txn.sku}</TableCell>
                     <TableCell className="text-sm">{txn.productName}</TableCell>
                     <TableCell className="text-center text-sm font-medium">{txn.qty}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">{txn.note}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground max-w-[260px] truncate">{formatHubTransactionNote(txn)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

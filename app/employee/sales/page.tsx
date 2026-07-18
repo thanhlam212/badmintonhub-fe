@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Textarea } from "@/components/ui/textarea"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { formatVND, formatSalesOrderReference, formatHDReference } from "@/lib/utils"
+import { formatVND, formatSalesOrderReference, formatHDReference, formatPXKReference } from "@/lib/utils"
 import { productApi, salesOrderApi, orderApi } from "@/lib/api"
 import { useInventory } from "@/lib/inventory-context"
 import { printOrderInvoice, printWarehouseSlip, printWarrantyCard } from "@/lib/print-utils"
@@ -132,6 +132,14 @@ const slipStatusConfig: Record<string, { label: string; color: string }> = {
 const paymentLabels: Record<string, string> = {
   cash: "Tiền mặt", cod: "COD", momo: "MoMo", vnpay: "VNPay", bank: "Chuyển khoản",
   "Tiền mặt": "Tiền mặt", "MoMo": "MoMo", "VNPay": "VNPay", "Chuyển khoản": "Chuyển khoản",
+}
+
+function formatSalesExportSlipReference(order: SalesOrder) {
+  return formatPXKReference(order.rawId || order.id, order.date)
+}
+
+function formatExportSlipReference(slip: Pick<ExportSlip, "id" | "date">) {
+  return formatPXKReference(slip.id, slip.date)
 }
 
 export default function EmployeeSales() {
@@ -295,7 +303,7 @@ export default function EmployeeSales() {
     const fromOrders = salesOrders
       .filter(order => order.status === "approved" || order.status === "exported")
       .map(order => ({
-        id: `PXK-${(order.rawId || order.id).slice(0, 8).toUpperCase()}`,
+        id: formatSalesExportSlipReference(order),
         orderId: order.id,
         date: order.date,
         items: order.items,
@@ -316,7 +324,7 @@ export default function EmployeeSales() {
   const filteredExportSlips = useMemo(() => {
     return salesExportSlips.filter(s => {
       if (slipStatusFilter !== "all" && s.status !== slipStatusFilter) return false
-      if (slipSearch && !s.id.toLowerCase().includes(slipSearch.toLowerCase()) && !s.orderId.toLowerCase().includes(slipSearch.toLowerCase())) return false
+      if (slipSearch && !formatExportSlipReference(s).toLowerCase().includes(slipSearch.toLowerCase()) && !s.orderId.toLowerCase().includes(slipSearch.toLowerCase())) return false
       return true
     })
   }, [salesExportSlips, slipStatusFilter, slipSearch])
@@ -622,7 +630,7 @@ export default function EmployeeSales() {
 
   const printSalesOrderWarehouseSlip = (order: SalesOrder) => {
     printWarehouseSlip({
-      id: `PXK-${(order.rawId || order.id).slice(0, 8).toUpperCase()}`,
+      id: formatSalesExportSlipReference(order),
       type: "export",
       date: order.date,
       warehouse: selectedWarehouse && selectedWarehouse !== "__all__" ? selectedWarehouse : user?.warehouse || "Kho bán hàng",
@@ -641,7 +649,7 @@ export default function EmployeeSales() {
 
   const printExportSlip = (slip: ExportSlip) => {
     printWarehouseSlip({
-      id: slip.id,
+      id: formatExportSlipReference(slip),
       type: "export",
       date: slip.date,
       warehouse: selectedWarehouse && selectedWarehouse !== "__all__" ? selectedWarehouse : user?.warehouse || "Kho bán hàng",
@@ -1430,7 +1438,7 @@ export default function EmployeeSales() {
                     {selectedOrderDetail.exportSlipId && (
                       <div className="flex items-center gap-2 p-2 bg-green-50 rounded-lg border border-green-200 text-sm">
                         <FileText className="h-4 w-4 text-green-600" />
-                        <span>Phiếu xuất kho: <strong className="text-green-700 font-mono">{selectedOrderDetail.exportSlipId}</strong></span>
+                        <span>Phiếu xuất kho: <strong className="text-green-700 font-mono">{formatPXKReference(selectedOrderDetail.exportSlipId, selectedOrderDetail.date)}</strong></span>
                       </div>
                     )}
                     {selectedOrderDetail.rejectReason && (
@@ -1640,7 +1648,7 @@ export default function EmployeeSales() {
                             "hover:bg-muted/50",
                             slip.status === "pending" && "bg-orange-50/30"
                           )}>
-                            <TableCell className="font-mono text-xs text-orange-600 font-bold">{slip.id}</TableCell>
+                            <TableCell className="font-mono text-xs text-orange-600 font-bold">{formatExportSlipReference(slip)}</TableCell>
                             <TableCell className="font-mono text-xs text-blue-600">{slip.orderId}</TableCell>
                             <TableCell className="text-sm">{slip.date}</TableCell>
                             <TableCell className="text-sm">{slip.customer}</TableCell>

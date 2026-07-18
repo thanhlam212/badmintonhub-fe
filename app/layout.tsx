@@ -4,6 +4,7 @@ import { Analytics } from '@vercel/analytics/next'
 import { AuthProvider } from '@/lib/auth-context'
 import { InventoryProvider } from '@/lib/inventory-context'
 import { CartProvider } from '@/lib/cart-context'
+import { AiChatbox } from '@/components/ai-chatbox'
 import { Toaster } from 'sonner'
 import './globals.css'
 
@@ -42,6 +43,7 @@ export default function RootLayout({
           <InventoryProvider>
             <CartProvider>
               {children}
+              <AiChatbox />
               <Toaster richColors position="top-right" />
             </CartProvider>
           </InventoryProvider>

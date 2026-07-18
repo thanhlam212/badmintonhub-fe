@@ -3,9 +3,9 @@
 // CHANGES: CheckSlotResponse thêm price, isOriginal, hasAvailable
 // ═══════════════════════════════════════════════════════════════
 
-export type FixedScheduleCycle = "weekly" | "monthly";
+export type FixedScheduleCycle = "weekly" | "monthly" | "daily";
 export type FixedScheduleBookingMode = "occurrence_count" | "date_range";
-export type PaymentMethod = "cash" | "bank_transfer" | "momo" | "vnpay";
+export type PaymentMethod = "cash" | "bank_transfer" | "sepay" | "momo" | "vnpay";
 export type OccurrenceAction = "keep" | "replace" | "custom" | "skip";
 
 export interface Court {
@@ -22,6 +22,10 @@ export interface FixedScheduleRule {
   dayOfMonth?: number;
   timeStart: string;
   timeEnd: string;
+  repeat?: boolean;
+  specificDate?: string;
+  repeatWeeks?: number;
+  repeatUntil?: "weeks" | "month_end";
 }
 
 // ─── Preview Request ──────────────────────────────────────────
@@ -68,7 +72,6 @@ export interface PreviewOccurrence {
 export interface PreviewSummary {
   totalOccurrences: number;
   availableCount: number;
-  conflictCount: number;
   replaceableCount: number;
   unresolvableCount: number;
 }
@@ -98,6 +101,7 @@ export interface FixedSchedulePreviewResponse {
 export interface OccurrenceUIState extends PreviewOccurrence {
   action: OccurrenceAction;
   selectedReplacement: SuggestedReplacement | null;
+  customDate?: string;
   customCourtId?: number;
   customCourtName?: string;
   customTimeStart?: string;
@@ -108,8 +112,11 @@ export interface OccurrenceUIState extends PreviewOccurrence {
 
 export interface OccurrenceDecision {
   date: string;
+  timeStart?: string;
+  timeEnd?: string;
   action: OccurrenceAction;
   replaceWithCourtId?: number;
+  customDate?: string;
   customTimeStart?: string;
   customTimeEnd?: string;
   reason?: string;
@@ -129,17 +136,46 @@ export interface FixedScheduleConfirmRequest {
   customerPhone: string;
   customerEmail?: string;
   paymentMethod: PaymentMethod;
-  userId?: string;
   decisions: OccurrenceDecision[];
   adjustmentLimit?: number;
 }
 
 export interface FixedScheduleConfirmResponse {
   scheduleId: string;
+  invoiceId: string;
   invoiceCode: string;
   bookingsCreated: number;
   totalAmount: number;
   paymentMethod: PaymentMethod;
+}
+
+export const FIXED_CHECKOUT_STORAGE_KEY = "fixedScheduleCheckout";
+
+export interface FixedScheduleCheckout {
+  fixedSchedule: {
+    id: string;
+    courtName: string;
+    cycle: FixedScheduleCycle;
+    bookingMode: FixedScheduleBookingMode;
+    startDate: string;
+    endDate?: string;
+    occurrenceCount: number;
+    invoiceCode: string;
+    totalAmount: number;
+  };
+  invoiceId: string;
+  invoiceCode: string;
+  totalAmount: number;
+  bookingsCreated: number;
+  paymentMethod: PaymentMethod;
+  paymentId?: string;
+  paymentStatus: "pending" | "success" | "failed";
+  paymentError?: string;
+  qrImageUrl?: string;
+  checkinQrValue?: string;
+  bankCode?: string;
+  accountNumber?: string;
+  transferContent?: string;
 }
 
 // ─── Check Slot ───────────────────────────────────────────────

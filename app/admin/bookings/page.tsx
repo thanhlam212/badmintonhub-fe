@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useCallback, useEffect, useMemo, Fragment } from "react"
+import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -41,7 +42,7 @@ interface BookingHistoryEntry {
 
 interface CourtBookingEntry {
   courtId: number; dateLabel: string; time: string
-  status: 'booked' | 'hold'; bookedBy?: string; bookingId?: string; phone?: string
+  status: 'booked' | 'hold'; bookedBy?: string; bookingId?: string; bookingCode?: string; phone?: string
 }
 
 interface BranchItem { id: number; name: string; address?: string }
@@ -74,7 +75,7 @@ function bookingsToSlots(bookings: BookingHistoryEntry[]): CourtBookingEntry[] {
         courtId: b.courtId, dateLabel,
         time: `${h.toString().padStart(2, '0')}:00`,
         status: "booked", bookedBy: b.customer.name,
-        bookingId: b.id, phone: b.customer.phone,
+        bookingId: b.id, bookingCode: b.bookingCode || formatBookingReference(b.id, b.createdAt), phone: b.customer.phone,
       })
     }
   }
@@ -99,6 +100,23 @@ function formatDate(dateStr: string) {
 
 function formatDateShort(date: Date) {
   return `${date.getDate()}/${date.getMonth() + 1}`
+}
+
+function getBookingEndAt(booking: BookingHistoryEntry) {
+  const endTime = booking.time.split(" - ")[1]?.trim()
+  if (!booking.date || !endTime) return null
+  const endAt = new Date(`${booking.date}T${endTime}:00`)
+  return Number.isNaN(endAt.getTime()) ? null : endAt
+}
+
+function isMissedCheckinBooking(booking: BookingHistoryEntry, now = new Date()) {
+  if (booking.status !== "confirmed") return false
+  const endAt = getBookingEndAt(booking)
+  return Boolean(endAt && endAt < now)
+}
+
+function getBookingDisplayStatus(booking: BookingHistoryEntry) {
+  return isMissedCheckinBooking(booking) ? "missed_checkin" : booking.status
 }
 
 const statusFlow: Record<string, string> = {
@@ -143,6 +161,8 @@ function BookingDetailSheet({
   onEdit: (booking: BookingHistoryEntry) => void
 }) {
   const step = getTimelineStep(booking.status)
+  const displayStatus = getBookingDisplayStatus(booking)
+  const missedCheckin = displayStatus === "missed_checkin"
 
   return (
     <SheetContent className="w-full sm:max-w-[480px] overflow-y-auto">
@@ -157,7 +177,7 @@ function BookingDetailSheet({
             <p className="font-mono text-sm text-primary font-semibold">{booking.bookingCode || formatBookingReference(booking.id, booking.createdAt)}</p>
             <p className="text-lg font-serif font-bold mt-1">{booking.court}</p>
           </div>
-          <BookingStatusBadge status={booking.status} />
+          <BookingStatusBadge status={displayStatus} />
         </div>
 
         {/* Timeline */}
@@ -318,7 +338,12 @@ function BookingDetailSheet({
             </>
           )}
           {booking.status === "confirmed" && (
-            <Button className="flex-1 bg-secondary hover:bg-secondary/90 text-secondary-foreground" onClick={() => onStatusChange(booking.id, "playing")}>Check-in</Button>
+            <Button
+              className="flex-1 bg-secondary hover:bg-secondary/90 text-secondary-foreground"
+              onClick={() => onStatusChange(booking.id, missedCheckin ? "completed" : "playing")}
+            >
+              {missedCheckin ? "Hoàn thành quên check-in" : "Check-in"}
+            </Button>
           )}
           {booking.status === "playing" && (
             <Button className="flex-1" onClick={() => onStatusChange(booking.id, "completed")}>Hoàn thành</Button>
@@ -475,7 +500,7 @@ function BookingFormDialog({
       time: `${startTime} - ${endTime}`,
       people,
       amount: totalPrice,
-      status,
+      status: status === "pending" ? "confirmed" : status,
       paymentMethod,
       customer: { name: customerName, phone: customerPhone, email: customerEmail },
       createdAt: editBooking?.createdAt || new Date().toISOString(),
@@ -691,14 +716,14 @@ function ScheduleView({
 
   // Build map: courtId → time → booking info
   const scheduleMap = useMemo(() => {
-    const map: Record<number, Record<string, { status: string; bookedBy?: string; bookingId?: string }>> = {}
+    const map: Record<number, Record<string, { status: string; bookedBy?: string; bookingId?: string; bookingCode?: string }>> = {}
     branchCourts.forEach(c => {
       map[c.id] = {}
       timeSlots.forEach(t => { map[c.id][t] = { status: "available" } })
     })
     courtBookings.forEach(b => {
       if (map[b.courtId] && b.dateLabel === dateLabel) {
-        map[b.courtId][b.time] = { status: b.status, bookedBy: b.bookedBy, bookingId: b.bookingId }
+        map[b.courtId][b.time] = { status: b.status, bookedBy: b.bookedBy, bookingId: b.bookingId, bookingCode: b.bookingCode }
       }
     })
     return map
@@ -830,7 +855,7 @@ function ScheduleView({
                                 {isBooked ? (
                                   <div className="text-xs">
                                     <p className="font-semibold">{cell.bookedBy}</p>
-                                    {cell.bookingId && <p className="text-muted-foreground">Mã: {cell.bookingId}</p>}
+                                    {(cell.bookingCode || cell.bookingId) && <p className="text-muted-foreground">Mã: {cell.bookingCode || cell.bookingId}</p>}
                                     <p className="text-muted-foreground">{time} - {endTimeStr}</p>
                                   </div>
                                 ) : isHold ? (
@@ -887,6 +912,8 @@ function ScheduleView({
    ═══════════════════════════════════════════════════════════ */
 
 export default function AdminBookings() {
+  const searchParams = useSearchParams()
+
   // Data
   const [bookings, setBookings] = useState<BookingHistoryEntry[]>([])
   const [courtBookings, setCourtBookings] = useState<CourtBookingEntry[]>([])
@@ -1011,15 +1038,26 @@ export default function AdminBookings() {
     { value: "all", label: "Tất cả", count: bookings.length },
     { value: "pending", label: "Chờ xác nhận", count: bookings.filter(b => b.status === "pending").length },
     { value: "confirmed", label: "Đã xác nhận", count: bookings.filter(b => b.status === "confirmed").length },
+    { value: "missed_checkin", label: "Quên check-in", count: bookings.filter(b => isMissedCheckinBooking(b)).length },
     { value: "playing", label: "Đang chơi", count: bookings.filter(b => b.status === "playing").length },
     { value: "completed", label: "Hoàn thành", count: bookings.filter(b => b.status === "completed").length },
     { value: "cancelled", label: "Đã huỷ", count: bookings.filter(b => b.status === "cancelled").length },
   ], [bookings])
 
+  useEffect(() => {
+    const bookingId = searchParams.get("bookingId")
+    if (!bookingId) return
+
+    setActiveTab("all")
+    setSearch(bookingId)
+  }, [searchParams])
+
   const filtered = useMemo(() => {
     let result = [...bookings]
 
-    if (activeTab !== "all") {
+    if (activeTab === "missed_checkin") {
+      result = result.filter(b => isMissedCheckinBooking(b))
+    } else if (activeTab !== "all") {
       result = result.filter(b => b.status === activeTab)
     }
 
@@ -1027,6 +1065,7 @@ export default function AdminBookings() {
       const q = search.toLowerCase()
       result = result.filter(b =>
         b.id.toLowerCase().includes(q) ||
+        (b.bookingCode || "").toLowerCase().includes(q) ||
         b.customer.name.toLowerCase().includes(q) ||
         b.customer.phone.includes(q) ||
         b.court.toLowerCase().includes(q)
@@ -1311,13 +1350,18 @@ export default function AdminBookings() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filtered.map((booking, idx) => (
+                    {filtered.map((booking, idx) => {
+                      const displayStatus = getBookingDisplayStatus(booking)
+                      const missedCheckin = displayStatus === "missed_checkin"
+                      const nextStatus = missedCheckin ? "completed" : statusFlow[booking.status]
+                      return (
                       <Fragment key={booking.id}>
                         <TableRow
                           className={cn(
                             "cursor-pointer hover:bg-muted/50 transition-colors",
                             idx % 2 !== 0 && "bg-muted/20",
-                            selectedIds.includes(booking.id) && "bg-primary/5"
+                            selectedIds.includes(booking.id) && "bg-primary/5",
+                            missedCheckin && "border-l-4 border-l-red-500 bg-red-50/50"
                           )}
                           onClick={() => setExpandedRow(expandedRow === booking.id ? null : booking.id)}
                         >
@@ -1351,11 +1395,11 @@ export default function AdminBookings() {
                           <TableCell className="text-sm">{booking.time}</TableCell>
                           <TableCell className="text-sm font-medium">{formatVND(booking.amount)}</TableCell>
                           <TableCell><PaymentBadge method={booking.paymentMethod} /></TableCell>
-                          <TableCell><BookingStatusBadge status={booking.status} /></TableCell>
+                          <TableCell><BookingStatusBadge status={displayStatus} /></TableCell>
                           <TableCell>
                             <div className="flex items-center gap-0.5" onClick={e => e.stopPropagation()}>
                               {/* Quick status action */}
-                              {statusFlow[booking.status] && (
+                              {nextStatus && (
                                 <TooltipProvider>
                                   <Tooltip>
                                     <TooltipTrigger asChild>
@@ -1363,14 +1407,14 @@ export default function AdminBookings() {
                                         variant="ghost"
                                         size="icon"
                                         className="h-7 w-7 text-green-600 hover:bg-green-50"
-                                        onClick={() => handleStatusChange(booking.id, statusFlow[booking.status])}
+                                        onClick={() => handleStatusChange(booking.id, nextStatus)}
                                       >
                                         {booking.status === "pending" && <CheckCircle2 className="h-3.5 w-3.5" />}
-                                        {booking.status === "confirmed" && <Play className="h-3.5 w-3.5" />}
+                                        {booking.status === "confirmed" && (missedCheckin ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />)}
                                         {booking.status === "playing" && <CheckCircle2 className="h-3.5 w-3.5" />}
                                       </Button>
                                     </TooltipTrigger>
-                                    <TooltipContent>{statusActionLabel[booking.status]}</TooltipContent>
+                                    <TooltipContent>{missedCheckin ? "Hoàn thành quên check-in" : statusActionLabel[booking.status]}</TooltipContent>
                                   </Tooltip>
                                 </TooltipProvider>
                               )}
@@ -1444,7 +1488,7 @@ export default function AdminBookings() {
                           </TableRow>
                         )}
                       </Fragment>
-                    ))}
+                    )})}
                   </TableBody>
                 </Table>
               </CardContent>

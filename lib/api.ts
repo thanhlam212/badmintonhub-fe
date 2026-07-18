@@ -69,6 +69,30 @@ export async function apiFetch<T = any>(
 
 // ─── Type definitions ────────────────────────────────────────
 
+export interface AiChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export const aiApi = {
+  chat: async (message: string, history: AiChatMessage[] = []) => {
+    const res = await apiFetch<{
+      reply: string;
+      provider: "openai" | "gemini" | "local";
+      quickReplies?: string[];
+    }>("/ai/chat", {
+      method: "POST",
+      body: JSON.stringify({ message, history }),
+    });
+
+    if (!res.success || !res.data) {
+      throw new Error(res.message || "Không thể kết nối trợ lý AI");
+    }
+
+    return res.data;
+  },
+};
+
 export interface ApiBranch {
   id: number;
   name: string;
@@ -159,6 +183,7 @@ export interface ApiBooking {
   createdAt: string
   pricePerHour: number
   fixedScheduleId: string | null
+  fixedOccurrenceId?: string | null
   bookingCode?: string
   placedBy?: string | null
   placedByRole?: string | null
@@ -311,21 +336,21 @@ function transformBooking(raw: any): ApiBooking {
   // BE's mapBooking() trả về snake_case — handle cả hai dạng
   return {
     id: raw.id,
-    courtId:     raw.courtId     ?? raw.court_id     ?? 0,
-    courtName:   raw.courtName   || raw.court_name   || raw.court?.name  || '',
-    branchName:  raw.branchName  || raw.branch_name  || raw.court?.branch?.name || raw.branch?.name || '',
-    userId:      raw.userId      ?? raw.user_id      ?? null,
-    customerName:  raw.customerName  || raw.customer_name  || '',
+    courtId: raw.courtId ?? raw.court_id ?? 0,
+    courtName: raw.courtName || raw.court_name || raw.court?.name || '',
+    branchName: raw.branchName || raw.branch_name || raw.court?.branch?.name || raw.branch?.name || '',
+    userId: raw.userId ?? raw.user_id ?? null,
+    customerName: raw.customerName || raw.customer_name || '',
     customerPhone: raw.customerPhone || raw.customer_phone || '',
     customerEmail: raw.customerEmail || raw.customer_email || null,
-    bookingDate:   raw.bookingDate   || raw.booking_date   || '',
-    timeStart:     raw.timeStart     || raw.time_start     || '',
-    timeEnd:       raw.timeEnd       || raw.time_end       || '',
-    slots:   raw.people ?? raw.slots ?? 1,
-    amount:  parseFloat(String(raw.amount ?? 0)),
-    status:  raw.status || '',
+    bookingDate: raw.bookingDate || raw.booking_date || '',
+    timeStart: raw.timeStart || raw.time_start || '',
+    timeEnd: raw.timeEnd || raw.time_end || '',
+    slots: raw.people ?? raw.slots ?? 1,
+    amount: parseFloat(String(raw.amount ?? 0)),
+    status: raw.status || '',
     paymentMethod: raw.paymentMethod || raw.payment_method || null,
-    note:    raw.note || null,
+    note: raw.note || null,
     cancellationReason: raw.cancellationReason || raw.cancellation_reason || null,
     cancelledAt: raw.cancelledAt || raw.cancelled_at || null,
     cancelledByName: raw.cancelledByName || raw.cancelled_by_name || null,
@@ -333,6 +358,7 @@ function transformBooking(raw: any): ApiBooking {
     createdAt: raw.createdAt || raw.created_at || '',
     pricePerHour: parseFloat(String(raw.pricePerHour ?? raw.price_per_hour ?? 0)),
     fixedScheduleId: raw.fixedScheduleId || raw.fixed_schedule_id || null,
+    fixedOccurrenceId: raw.fixedOccurrenceId || raw.fixed_occurrence_id || null,
     bookingCode: raw.bookingCode || raw.booking_code || undefined,
     // BE dùng booked_by_* thay vì placed_by_*
     placedBy: raw.placedBy || raw.placed_by || raw.booked_by_name || null,
@@ -347,74 +373,75 @@ function transformBooking(raw: any): ApiBooking {
 }
 
 function transformOrder(raw: any): ApiOrder {
+  const source = raw?.data && typeof raw.data === "object" ? raw.data : raw;
   return {
-    id: raw.id,
+    id: source.id,
     orderCode:
-      raw.orderCode ||
-      raw.order_code ||
-      raw.sales_code ||
-      raw.invoiceCode ||
-      raw.invoice_code ||
+      source.orderCode ||
+      source.order_code ||
+      source.sales_code ||
+      source.invoiceCode ||
+      source.invoice_code ||
       undefined,
-    invoiceId: raw.invoiceId || raw.invoice_id || null,
-    invoiceStatus: raw.invoiceStatus || raw.invoice_status || null,
-    invoiceCode: raw.invoiceCode || raw.invoice_code || null,
-    userId: raw.userId ?? raw.user_id ?? null,
-    customerName: raw.customerName,
-    customerPhone: raw.customerPhone,
-    customerEmail: raw.customerEmail || null,
+    invoiceId: source.invoiceId || source.invoice_id || null,
+    invoiceStatus: source.invoiceStatus || source.invoice_status || null,
+    invoiceCode: source.invoiceCode || source.invoice_code || null,
+    userId: source.userId ?? source.user_id ?? null,
+    customerName: source.customerName,
+    customerPhone: source.customerPhone,
+    customerEmail: source.customerEmail || null,
     shippingAddress:
-      raw.shippingAddress ||
-      raw.shipping_address ||
-      raw.customerAddress ||
-      raw.customer_address ||
+      source.shippingAddress ||
+      source.shipping_address ||
+      source.customerAddress ||
+      source.customer_address ||
       "",
     subtotal: parseFloat(
       String(
-        raw.subtotal ??
-          raw.amount ??
-          raw.totalAmount ??
-          raw.total_amount ??
-          raw.total ??
-          0,
+        source.subtotal ??
+        source.amount ??
+        source.totalAmount ??
+        source.total_amount ??
+        source.total ??
+        0,
       ),
     ),
-    shippingFee: parseFloat(String(raw.shippingFee ?? raw.shipping_fee ?? 0)),
+    shippingFee: parseFloat(String(source.shippingFee ?? source.shipping_fee ?? 0)),
     totalAmount: parseFloat(
       String(
-        raw.totalAmount ?? raw.total_amount ?? raw.total ?? raw.amount ?? 0,
+        source.totalAmount ?? source.total_amount ?? source.total ?? source.amount ?? 0,
       ),
     ),
     amount: parseFloat(
       String(
-        raw.totalAmount ?? raw.total_amount ?? raw.total ?? raw.amount ?? 0,
+        source.totalAmount ?? source.total_amount ?? source.total ?? source.amount ?? 0,
       ),
     ),
-    status: raw.status,
-    paymentMethod: raw.paymentMethod || raw.payment_method || null,
-    note: raw.note || null,
-    deliveryMethod: raw.deliveryMethod || raw.delivery_method || "delivery",
-    pickupBranchId: raw.pickupBranchId ?? raw.pickup_branch_id ?? null,
+    status: source.status || "pending",
+    paymentMethod: source.paymentMethod || source.payment_method || null,
+    note: source.note || null,
+    deliveryMethod: source.deliveryMethod || source.delivery_method || "delivery",
+    pickupBranchId: source.pickupBranchId ?? source.pickup_branch_id ?? null,
     fulfillingWarehouseId:
-      raw.fulfillingWarehouseId ?? raw.fulfilling_warehouse_id ?? null,
+      source.fulfillingWarehouseId ?? source.fulfilling_warehouse_id ?? null,
     fulfillingWarehouse:
-      raw.fulfillingWarehouse ||
-      raw.fulfillingWarehouseName ||
-      raw.fulfilling_warehouse_name ||
+      source.fulfillingWarehouse ||
+      source.fulfillingWarehouseName ||
+      source.fulfilling_warehouse_name ||
       null,
     fulfillingWarehouseName:
-      raw.fulfillingWarehouseName ||
-      raw.fulfilling_warehouse_name ||
-      raw.fulfillingWarehouse ||
+      source.fulfillingWarehouseName ||
+      source.fulfilling_warehouse_name ||
+      source.fulfillingWarehouse ||
       null,
-    items: (raw.items || []).map((item: any) => ({
+    items: (source.items || []).map((item: any) => ({
       productId: item.productId ?? item.product_id,
       productName: item.productName || item.product_name || item.name || "",
       sku: item.product?.sku || item.sku || "",
       quantity: item.quantity ?? item.qty ?? 0,
       price: parseFloat(item.price),
     })),
-    createdAt: raw.createdAt,
+    createdAt: source.createdAt || source.created_at || "",
   };
 }
 
@@ -591,12 +618,15 @@ export const courtApi = {
     branchId?: number;
     type?: string;
     indoor?: boolean;
+    includeUnavailable?: boolean;
   }): Promise<ApiCourt[]> => {
     const params = new URLSearchParams();
     if (filters?.branchId) params.set("branchId", String(filters.branchId));
     if (filters?.type) params.set("type", filters.type);
     if (filters?.indoor !== undefined)
       params.set("indoor", String(filters.indoor));
+    if (filters?.includeUnavailable)
+      params.set("includeUnavailable", "true");
     const qs = params.toString();
     const res = await apiFetch<any[]>(`/courts${qs ? "?" + qs : ""}`);
     if (res.success && res.data) return res.data.map(transformCourt);
@@ -616,6 +646,21 @@ export const courtApi = {
   },
 
   // ← ĐÃ THÊM LẠI getReviews
+  update: async (id: number, data: Partial<Pick<ApiCourt, "name" | "type" | "indoor" | "price" | "image" | "description" | "hours" | "amenities">>) => {
+    const res = await apiFetch<any>(`/courts/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    if (res.success && res.data) return { success: true, court: transformCourt(res.data) };
+    return { success: false, error: res.message };
+  },
+
+  toggleAvailable: async (id: number) => {
+    const res = await apiFetch<any>(`/courts/${id}/toggle`, { method: "PATCH" });
+    if (res.success && res.data) return { success: true, court: transformCourt(res.data) };
+    return { success: false, error: res.message };
+  },
+
   getReviews: async (courtId: number) => {
     const res = await apiFetch<any[]>(`/courts/${courtId}/reviews`);
     if (res.success && res.data) return res.data;
@@ -1002,10 +1047,13 @@ export const bookingApi = {
     booking_date: string;
     time_start: string;
     time_end: string;
+    people?: number;
     slots?: number;
     customer_name: string;
     customer_phone: string;
-    amount: number;
+    customer_email?: string;
+    user_id?: string;
+    amount?: number;
     payment_method?: string;
     note?: string;
   }) => {
@@ -1040,7 +1088,7 @@ export const bookingApi = {
 
   previewFixed: async (data: {
     courtId: number;
-    cycle: "weekly" | "monthly";
+    cycle: "weekly" | "monthly" | "daily";
     startDate: string;
     endDate: string;
     timeStart: string;
@@ -1055,7 +1103,7 @@ export const bookingApi = {
 
   confirmFixed: async (data: {
     courtId: number;
-    cycle: "weekly" | "monthly";
+    cycle: "weekly" | "monthly" | "daily";
     startDate: string;
     endDate: string;
     timeStart: string;
@@ -1141,7 +1189,11 @@ export const orderApi = {
       method: "PATCH",
       body: JSON.stringify({ status }),
     });
-    return { success: res.success, error: res.message };
+    return {
+      success: res.success,
+      error: res.message,
+      order: res.success && res.data ? transformOrder(res.data) : null,
+    };
   },
 };
 
@@ -1162,6 +1214,46 @@ export const inventoryApi = {
     const res = await apiFetch("/inventory/transactions");
     const list = Array.isArray(res.data) ? res.data : [];
     return { success: res.success, data: list };
+  },
+
+  // GET /inventory/admin-slips
+  getAdminSlips: async (filters?: {
+    status?: string;
+    type?: string;
+    warehouseId?: number;
+  }) => {
+    const params = new URLSearchParams();
+    if (filters?.status && filters.status !== "all") params.set("status", filters.status);
+    if (filters?.type && filters.type !== "all") params.set("type", filters.type);
+    if (filters?.warehouseId) params.set("warehouseId", String(filters.warehouseId));
+    const qs = params.toString();
+    const res = await apiFetch(`/inventory/admin-slips${qs ? `?${qs}` : ""}`);
+    const list = Array.isArray(res.data) ? res.data : [];
+    return { success: res.success, data: list, error: res.message };
+  },
+
+  // POST /inventory/admin-slips
+  createAdminSlip: async (payload: {
+    type: "import" | "export";
+    poId?: string;
+    supplierId?: number;
+    warehouseId: number;
+    note?: string;
+    items: { sku: string; name?: string; qty: number; unitCost: number }[];
+  }) => {
+    const res = await apiFetch("/inventory/admin-slips", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    return { success: res.success, data: res.data, error: res.message };
+  },
+
+  // POST /inventory/admin-slips/:id/process
+  processAdminSlip: async (id: string) => {
+    const res = await apiFetch(`/inventory/admin-slips/${id}/process`, {
+      method: "POST",
+    });
+    return { success: res.success, data: res.data, error: res.message };
   },
 
   // GET /inventory/warehouse/:id
@@ -1358,15 +1450,15 @@ export const salesOrderApi = {
         order_type: dto.order_type,
         fulfillment_mode: dto.fulfillment_mode,
         fulfill_warehouse_id: dto.fulfill_warehouse_id,
-        payment_method:       dto.payment_method,
-        total:                dto.total,
-        discount:             dto.discount,
-        final_total:          dto.final_total,
+        payment_method: dto.payment_method,
+        total: dto.total,
+        discount: dto.discount,
+        final_total: dto.final_total,
         items: dto.items.map(i => ({
-          product_id:   i.product_id ?? null,
+          product_id: i.product_id ?? null,
           product_name: i.product_name || '',
-          price:        i.price,
-          qty:          i.quantity,
+          price: i.price,
+          qty: i.quantity,
         })),
       }),
     });
@@ -1477,7 +1569,7 @@ export interface ApiFixedSchedulePreview {
 
 interface FixedSchedulePreviewPayload {
   courtId: number;
-  cycle: "weekly" | "monthly";
+  cycle: "weekly" | "monthly" | "daily";
   bookingMode?: "occurrence_count" | "date_range";
   startDate: string;
   endDate?: string;
@@ -1494,7 +1586,7 @@ interface FixedSchedulePreviewPayload {
 
 interface FixedScheduleConfirmPayload {
   courtId: number;
-  cycle: "weekly" | "monthly";
+  cycle: "weekly" | "monthly" | "daily";
   bookingMode?: "occurrence_count" | "date_range";
   startDate: string;
   endDate?: string;
@@ -1515,8 +1607,11 @@ interface FixedScheduleConfirmPayload {
   adjustmentLimit?: number;
   decisions: {
     date: string;
+    timeStart?: string;
+    timeEnd?: string;
     action: "keep" | "replace" | "skip" | "custom";
     replaceWithCourtId?: number;
+    customDate?: string;
     customTimeStart?: string;
     customTimeEnd?: string;
     reason?: string;
@@ -1537,7 +1632,11 @@ export const fixedScheduleApi = {
     });
 
     if (!res.success) {
-      throw new Error(res.message || "Không thể xem trước lịch");
+      // Trả về error object thay vì throw → tránh React Error Overlay
+      const msg = Array.isArray(res.message)
+        ? res.message.join(", ")
+        : res.message || "Không thể xem trước lịch";
+      return { _error: true, message: msg } as any;
     }
 
     return res.data;
@@ -1564,9 +1663,111 @@ export const fixedScheduleApi = {
     return res.success ? (res.data as any[]) || [] : [];
   },
 
+  getFixedSchedules: async (filters?: { branchId?: number }) => {
+    const params = new URLSearchParams();
+    if (filters?.branchId) params.set("branchId", String(filters.branchId));
+    const qs = params.toString();
+    const res = await apiFetch(`/bookings/fixed/all${qs ? `?${qs}` : ""}`);
+    if (!res.success) {
+      throw new Error(res.message || "Không thể tải danh sách lịch cố định");
+    }
+    return Array.isArray(res.data) ? (res.data as any[]) : [];
+  },
+
   getScheduleDetail: async (scheduleId: string) => {
     const res = await apiFetch(`/bookings/fixed/${scheduleId}`);
     return res.success ? res.data : null;
+  },
+
+  getFixedScheduleDetail: async (scheduleId: string) => {
+    const res = await apiFetch(`/bookings/fixed/${scheduleId}`);
+    if (!res.success) {
+      throw new Error(res.message || "Không thể tải chi tiết lịch cố định");
+    }
+    return res.data;
+  },
+
+  checkSlot: async (data: {
+    courtId: number;
+    date: string;
+    timeStart: string;
+    timeEnd: string;
+  }) => {
+    const res = await apiFetch("/bookings/fixed/check-slot", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+
+    if (!res.success) {
+      throw new Error(res.message || "Không thể kiểm tra slot");
+    }
+
+    return res.data;
+  },
+
+  adjustOccurrence: async (
+    scheduleId: string,
+    occurrenceId: string,
+    data: {
+      type: "skip" | "reschedule" | "change_court";
+      newCourtId?: number;
+      newDate?: string;
+      newTimeStart?: string;
+      newTimeEnd?: string;
+      reason?: string;
+    },
+  ) => {
+    const res = await apiFetch(
+      `/bookings/fixed/${scheduleId}/occurrences/${occurrenceId}/adjust`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      },
+    );
+
+    if (!res.success) {
+      throw new Error(res.message || "Không thể điều chỉnh buổi lịch cố định");
+    }
+
+    return res.data;
+  },
+
+  confirmPayment: async (scheduleId: string, paymentMethod?: string) => {
+    const res = await apiFetch(`/bookings/fixed/${scheduleId}/confirm-payment`, {
+      method: "PATCH",
+      body: JSON.stringify({ paymentMethod }),
+    });
+
+    if (!res.success) {
+      throw new Error(res.message || "Không thể xác nhận thanh toán lịch cố định");
+    }
+
+    return res.data;
+  },
+
+  updateAdjustmentLimit: async (scheduleId: string, adjustmentLimit: number) => {
+    const res = await apiFetch(`/bookings/fixed/${scheduleId}/adjustment-limit`, {
+      method: "PATCH",
+      body: JSON.stringify({ adjustmentLimit }),
+    });
+
+    if (!res.success) {
+      throw new Error(res.message || "Không thể cập nhật số lượt đổi lịch cố định");
+    }
+
+    return res.data;
+  },
+
+  deleteTrash: async (scheduleId: string) => {
+    const res = await apiFetch(`/bookings/fixed/${scheduleId}/delete-trash`, {
+      method: "PATCH",
+    });
+
+    if (!res.success) {
+      throw new Error(res.message || "Không thể xóa lịch cố định");
+    }
+
+    return res.data;
   },
 };
 
@@ -1706,5 +1907,16 @@ export const paymentApi = {
       return { success: true, data: res.data };
     }
     return { success: false, error: res.message, data: null };
+  },
+
+  handleVnpayReturn: async (queryString: string) => {
+    const res = await apiFetch<{
+      success: boolean;
+      message: string;
+    }>(`/payment/vnpay/return?${queryString}`);
+
+    return res.success && res.data
+      ? res.data
+      : { success: false, message: res.message || "Không thể xác minh VNPay" };
   },
 };

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo } from "react"
+import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -9,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose, DialogTrigger } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
-import { formatVND, formatSalesOrderReference } from "@/lib/utils"
+import { formatVND, formatSalesOrderReference, formatPXKReference } from "@/lib/utils"
 import { salesOrderApi } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { printOrderInvoice, printWarehouseSlip } from "@/lib/print-utils"
@@ -23,6 +24,7 @@ import {
 interface SalesOrder {
   id: string
   rawId?: string
+  createdAt?: string
   date: string
   time: string
   customer: string
@@ -59,10 +61,12 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function mapOrder(o: any): SalesOrder {
+  const createdAt = o.created_at || o.createdAt || ""
   return {
     id:            String(o.id),
-    date:          o.created_at ? new Date(o.created_at).toLocaleDateString("vi-VN")  : "",
-    time:          o.created_at ? new Date(o.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "",
+    createdAt,
+    date:          createdAt ? new Date(createdAt).toLocaleDateString("vi-VN")  : "",
+    time:          createdAt ? new Date(createdAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "",
     customer:      o.customer_name  || "Khách lẻ",
     phone:         o.customer_phone || "",
     items:         (o.items || []).map((i: any) => ({
@@ -85,10 +89,18 @@ function mapOrder(o: any): SalesOrder {
   }
 }
 
+function getApprovalOrderCode(order: SalesOrder) {
+  return formatSalesOrderReference(order.rawId || order.id, order.createdAt || order.date)
+}
+
+function getApprovalExportSlipCode(order: SalesOrder) {
+  return formatPXKReference(order.rawId || order.id, order.createdAt || order.date)
+}
+
 // ─── Order Detail Dialog ──────────────────────────────────────────────────────
 function printApprovalOrderInvoice(order: SalesOrder) {
   printOrderInvoice({
-    code: formatSalesOrderReference(order.id, order.date),
+    code: getApprovalOrderCode(order),
     date: `${order.date} ${order.time}`,
     customerName: order.customer,
     customerPhone: order.phone,
@@ -108,7 +120,7 @@ function printApprovalOrderInvoice(order: SalesOrder) {
 
 function printApprovalWarehouseSlip(order: SalesOrder) {
   printWarehouseSlip({
-    id: `PXK-${order.id.slice(0, 8).toUpperCase()}`,
+    id: getApprovalExportSlipCode(order),
     type: "export",
     date: order.date,
     warehouse: "Kho bán hàng",
@@ -191,6 +203,7 @@ function OrderDetail({ order }: { order: SalesOrder }) {
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function ApprovalPage() {
+  const searchParams = useSearchParams()
   const [orders, setOrders]           = useState<SalesOrder[]>([])
   const [loading, setLoading]         = useState(true)
   const [search, setSearch]           = useState("")
@@ -212,6 +225,14 @@ export default function ApprovalPage() {
 
   useEffect(() => { loadData() }, [])
 
+  useEffect(() => {
+    const orderId = searchParams.get("orderId")
+    if (!orderId) return
+
+    setSearch(orderId)
+    setStatusFilter("all")
+  }, [searchParams])
+
   // ── Stats ───────────────────────────────────────────────────────────────
   const pendingCount  = orders.filter(o => o.status === "pending").length
   const approvedCount = orders.filter(o => o.status === "approved").length
@@ -226,7 +247,7 @@ export default function ApprovalPage() {
       if (statusFilter !== "all" && o.status !== statusFilter) return false
       if (search) {
         const q = search.toLowerCase()
-        return o.id.toLowerCase().includes(q) || o.customer.toLowerCase().includes(q)
+        return o.id.toLowerCase().includes(q) || o.customer.toLowerCase().includes(q) || o.phone.includes(q)
       }
       return true
     })
@@ -373,7 +394,7 @@ export default function ApprovalPage() {
                   <TableBody>
                     {filteredOrders.map(order => (
                       <TableRow key={order.id} className={cn("hover:bg-muted/50", order.status === "pending" && "bg-amber-50/30")}>
-                        <TableCell className="font-mono text-xs text-blue-600 font-semibold">{order.id.slice(0, 8).toUpperCase()}</TableCell>
+                        <TableCell className="font-mono text-xs text-blue-600 font-semibold">{getApprovalOrderCode(order)}</TableCell>
                         <TableCell className="text-xs">{order.date}<br /><span className="text-muted-foreground">{order.time}</span></TableCell>
                         <TableCell>
                           <p className="text-sm font-medium">{order.customer}</p>
@@ -393,7 +414,7 @@ export default function ApprovalPage() {
                               <DialogContent className="max-w-lg">
                                 <DialogHeader>
                                   <DialogTitle className="font-serif flex items-center gap-2 text-base">
-                                    Đơn {order.id.slice(0,8).toUpperCase()} <StatusBadge status={order.status} />
+                                    Đơn {getApprovalOrderCode(order)} <StatusBadge status={order.status} />
                                   </DialogTitle>
                                 </DialogHeader>
                                 <OrderDetail order={order} />
@@ -587,7 +608,7 @@ export default function ApprovalPage() {
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex-1">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-mono text-sm font-semibold text-orange-600">{order.id.slice(0,8).toUpperCase()}</span>
+                            <span className="font-mono text-sm font-semibold text-orange-600">{getApprovalExportSlipCode(order)}</span>
                             <StatusBadge status={order.status} />
                           </div>
                           <p className="text-xs text-muted-foreground mt-1">
@@ -668,7 +689,7 @@ export default function ApprovalPage() {
                   {doneExport.slice(0, 20).map(order => (
                     <div key={order.id} className="border rounded-lg p-3 flex items-center justify-between gap-4 bg-green-50/20">
                       <div>
-                        <span className="font-mono text-sm font-semibold text-green-700">{order.id.slice(0,8).toUpperCase()}</span>
+                        <span className="font-mono text-sm font-semibold text-green-700">{getApprovalExportSlipCode(order)}</span>
                         <span className="text-xs text-muted-foreground ml-2">{order.customer} • {order.date}</span>
                       </div>
 	                      <div className="flex items-center gap-2">

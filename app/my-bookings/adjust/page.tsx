@@ -1,14 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter, useParams } from 'next/navigation';
+import { useRouter, useParams, useSearchParams } from 'next/navigation';
 import {
   ArrowLeft, Calendar, Clock, MapPin, CheckCircle2,
   XCircle, SkipForward, RefreshCw, AlertTriangle,
-  Loader2, ChevronRight, Info, Shield,
+  Loader2, ChevronLeft, ChevronRight, Info, Shield,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { useAuth } from '@/lib/auth-context';
 import { cn } from '@/lib/utils';
 import { fixedScheduleApi } from '@/lib/api';
 
@@ -50,6 +49,15 @@ interface ScheduleDetail {
     branch: { name: string };
   };
   occurrences: OccurrenceDetail[];
+  adjustments?: AdjustmentNotice[];
+}
+
+interface AdjustmentNotice {
+  id: string;
+  occurrenceId?: string | null;
+  type: string;
+  note?: string | null;
+  createdAt?: string;
 }
 
 interface CourtOption {
@@ -72,6 +80,77 @@ const OCC_STATUS_MAP: Record<string, { label: string; canAdjust: boolean; class:
   cancelled:   { label: 'Đã hủy',     canAdjust: false, class: 'bg-red-50 text-red-500 border-red-100' },
 };
 
+const ADJUST_PENDING_MARKER = '[CUSTOMER_ADJUST_REQUEST_PENDING]';
+const ADJUST_REJECTED_MARKER = '[CUSTOMER_ADJUST_REQUEST_REJECTED]';
+const WEEKDAY_LABELS = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
+
+const monthFormatter = new Intl.DateTimeFormat('vi-VN', {
+  month: 'long',
+  year: 'numeric',
+});
+
+const compactDateFormatter = new Intl.DateTimeFormat('vi-VN', {
+  day: '2-digit',
+  month: '2-digit',
+});
+
+function extractAdjustmentMessage(note?: string | null, marker = ADJUST_REJECTED_MARKER) {
+  return (note || '').replace(marker, '').trim();
+}
+
+function parseDateKey(value: string) {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function formatDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getMonthStartKey(value: string) {
+  const date = parseDateKey(value);
+  return formatDateKey(new Date(date.getFullYear(), date.getMonth(), 1));
+}
+
+function shiftMonthKey(value: string, offset: number) {
+  const date = parseDateKey(value);
+  return formatDateKey(new Date(date.getFullYear(), date.getMonth() + offset, 1));
+}
+
+function buildCalendarDays(monthKey: string) {
+  const firstDay = parseDateKey(monthKey);
+  const calendarStart = new Date(firstDay);
+  const mondayOffset = (firstDay.getDay() + 6) % 7;
+  calendarStart.setDate(firstDay.getDate() - mondayOffset);
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const day = new Date(calendarStart);
+    day.setDate(calendarStart.getDate() + index);
+    return day;
+  });
+}
+
+function isSameMonth(date: Date, monthKey: string) {
+  const anchor = parseDateKey(monthKey);
+  return date.getMonth() === anchor.getMonth() && date.getFullYear() === anchor.getFullYear();
+}
+
+function canRequestBefore3Days(occurrence: OccurrenceDetail) {
+  const startAt = new Date(`${occurrence.date}T${occurrence.timeStart}:00+07:00`);
+  return startAt.getTime() - Date.now() >= 3 * 24 * 60 * 60 * 1000;
+}
+
+function canAdjustOccurrence(occurrence: OccurrenceDetail, adjustmentLeft: number) {
+  return (
+    OCC_STATUS_MAP[occurrence.status]?.canAdjust &&
+    adjustmentLeft > 0 &&
+    canRequestBefore3Days(occurrence)
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════
 // PAGE
 // ═══════════════════════════════════════════════════════════════
@@ -79,8 +158,9 @@ const OCC_STATUS_MAP: Record<string, { label: string; canAdjust: boolean; class:
 export default function AdjustSchedulePage() {
   const router = useRouter();
   const params = useParams();
-  const scheduleId = params.id as string;
-  const { user } = useAuth();
+  const searchParams = useSearchParams();
+  const scheduleId = (searchParams.get('scheduleId') || params.id) as string;
+  const initialOccurrenceId = searchParams.get('occurrenceId');
 
   const [schedule, setSchedule] = useState<ScheduleDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -92,6 +172,7 @@ export default function AdjustSchedulePage() {
 
   // Form state cho reschedule/change_court
   const [newDate, setNewDate] = useState('');
+  const [calendarMonth, setCalendarMonth] = useState('');
   const [newTimeStart, setNewTimeStart] = useState('');
   const [newTimeEnd, setNewTimeEnd] = useState('');
   const [newCourtId, setNewCourtId] = useState<number | null>(null);
@@ -102,10 +183,32 @@ export default function AdjustSchedulePage() {
 
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [handledInitialOccurrenceId, setHandledInitialOccurrenceId] = useState('');
 
   useEffect(() => {
     if (scheduleId) fetchSchedule();
   }, [scheduleId]);
+
+  useEffect(() => {
+    if (!schedule || !initialOccurrenceId || selectedOcc || handledInitialOccurrenceId === initialOccurrenceId) return;
+    setHandledInitialOccurrenceId(initialOccurrenceId);
+    const occ = schedule.occurrences.find((item) => item.id === initialOccurrenceId);
+    if (!occ) return;
+    const adjustmentLeft = schedule.adjustmentLimit - schedule.adjustmentUsed;
+    if (!canAdjustOccurrence(occ, adjustmentLeft)) {
+      toast.error('Buổi này đã quá hạn 3 ngày hoặc không còn đủ điều kiện điều chỉnh');
+      return;
+    }
+    setSelectedOcc(occ);
+    setAdjustType(null);
+    setNewDate(occ.date);
+    setCalendarMonth(getMonthStartKey(occ.date));
+    setNewTimeStart(occ.timeStart);
+    setNewTimeEnd(occ.timeEnd);
+    setNewCourtId(null);
+    setSlotAvailable(null);
+    setReason('');
+  }, [schedule, initialOccurrenceId, selectedOcc, handledInitialOccurrenceId]);
 
   // Khi chọn change_court → load danh sách sân cùng type
   useEffect(() => {
@@ -152,9 +255,14 @@ export default function AdjustSchedulePage() {
   };
 
   const handleSelectOccurrence = (occ: OccurrenceDetail) => {
+    if (schedule && !canAdjustOccurrence(occ, schedule.adjustmentLimit - schedule.adjustmentUsed)) {
+      toast.error('Buổi này phải được điều chỉnh trước giờ chơi ít nhất 3 ngày');
+      return;
+    }
     setSelectedOcc(occ);
     setAdjustType(null);
     setNewDate(occ.date);
+    setCalendarMonth(getMonthStartKey(occ.date));
     setNewTimeStart(occ.timeStart);
     setNewTimeEnd(occ.timeEnd);
     setNewCourtId(null);
@@ -162,40 +270,115 @@ export default function AdjustSchedulePage() {
     setReason('');
   };
 
-  const handleCheckSlot = async () => {
+  const handleNewDateChange = (value: string) => {
+    setNewDate(value);
+    if (value) {
+      setCalendarMonth(getMonthStartKey(value));
+    }
+    setSlotAvailable(null);
+  };
+
+  const handleCheckSlot = async (showToast = true) => {
     if (!selectedOcc || !newTimeStart || !newTimeEnd) return;
-    const targetCourtId = newCourtId ?? selectedOcc.courtId;
+    const targetCourtId = adjustType === 'change_court'
+      ? (newCourtId ?? selectedOcc.courtId)
+      : selectedOcc.courtId;
+    const targetDate = newDate || selectedOcc.date;
+    const hasChosenTargetCourt = adjustType !== 'change_court' || Boolean(newCourtId);
+
+    if (
+      hasChosenTargetCourt &&
+      targetCourtId === selectedOcc.courtId &&
+      targetDate === selectedOcc.date &&
+      newTimeStart === selectedOcc.timeStart &&
+      newTimeEnd === selectedOcc.timeEnd
+    ) {
+      setSlotAvailable(true);
+      return;
+    }
 
     try {
       setCheckingSlot(true);
       setSlotAvailable(null);
-      const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
-      const res = await fetch(`${API}/bookings/fixed/check-slot`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          courtId: targetCourtId,
-          date: newDate || selectedOcc.date,
-          timeStart: newTimeStart,
-          timeEnd: newTimeEnd,
-        }),
+      const data = await fixedScheduleApi.checkSlot({
+        courtId: targetCourtId,
+        date: targetDate,
+        timeStart: newTimeStart,
+        timeEnd: newTimeEnd,
       });
-      const data = await res.json();
-      setSlotAvailable(data.available);
-      if (data.available) {
+      if (adjustType === 'change_court' && Array.isArray(data.courts)) {
+        setCourtOptions((prev) =>
+          prev.map((court) => {
+            const checked = data.courts.find((item: any) => item.id === court.id);
+            return checked
+              ? { ...court, available: Boolean(checked.available) }
+              : court;
+          }),
+        );
+      }
+
+      if (!hasChosenTargetCourt) {
+        setSlotAvailable(null);
+        return;
+      }
+
+      const selectedCourt = data.courts?.find((court: any) => court.id === targetCourtId);
+      const available = Boolean(selectedCourt?.available);
+      data.conflicts ??= [{ time: 'Khung gio nay da bi dat' }];
+      setSlotAvailable(available);
+      if (showToast && available) {
         toast.success('Khung giờ này còn trống!');
-      } else {
+      } else if (showToast) {
         toast.error(`Đã có người đặt: ${data.conflicts.map((c: any) => c.time).join(', ')}`);
       }
     } catch {
-      toast.error('Không thể kiểm tra slot');
+      setSlotAvailable(false);
+      if (showToast) toast.error('Không thể kiểm tra slot');
     } finally {
       setCheckingSlot(false);
     }
   };
 
+  useEffect(() => {
+    if (!selectedOcc || !adjustType || adjustType === 'skip') {
+      setSlotAvailable(null);
+      setCheckingSlot(false);
+      return;
+    }
+
+    if (schedule && !canAdjustOccurrence(selectedOcc, schedule.adjustmentLimit - schedule.adjustmentUsed)) {
+      setSlotAvailable(null);
+      setCheckingSlot(false);
+      return;
+    }
+
+    if (!newDate || !newTimeStart || !newTimeEnd) {
+      setSlotAvailable(null);
+      setCheckingSlot(false);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void handleCheckSlot(false);
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    selectedOcc?.id,
+    adjustType,
+    newDate,
+    newTimeStart,
+    newTimeEnd,
+    newCourtId,
+    courtOptions.length,
+  ]);
+
   const handleSubmit = async () => {
     if (!selectedOcc || !adjustType || !schedule) return;
+    if (!canRequestBefore3Days(selectedOcc)) {
+      toast.error('Yêu cầu đổi/hủy lịch cố định phải gửi trước buổi chơi ít nhất 3 ngày');
+      return;
+    }
 
     // Validate
     if (adjustType !== 'skip') {
@@ -208,11 +391,11 @@ export default function AdjustSchedulePage() {
         return;
       }
       if (slotAvailable === false) {
-        toast.error('Khung giờ này đã bị đặt, vui lòng kiểm tra lại');
+        toast.error('Khung giờ này đã bị đặt, vui lòng chọn ngày/giờ hoặc sân khác');
         return;
       }
       if (slotAvailable === null) {
-        toast.error('Vui lòng kiểm tra khả dụng trước khi xác nhận');
+        toast.error('Vui lòng chờ hệ thống tự kiểm tra lịch trùng trước khi xác nhận');
         return;
       }
     }
@@ -222,7 +405,7 @@ export default function AdjustSchedulePage() {
       const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
       const token = localStorage.getItem('bh_token');
       const res = await fetch(
-        `${API}/bookings/fixed/${scheduleId}/occurrences/${selectedOcc.id}/adjust`,
+        `${API}/bookings/fixed/${scheduleId}/occurrences/${selectedOcc.id}/adjust-request`,
         {
           method: 'PATCH',
           headers: {
@@ -254,7 +437,7 @@ export default function AdjustSchedulePage() {
       }[adjustType];
 
       toast.success(
-        `${typeLabel} thành công! Còn ${data.adjustmentLeft}/${schedule.adjustmentLimit} lần điều chỉnh.`,
+        `Đã gửi yêu cầu ${typeLabel.toLowerCase()}. Nhân viên sẽ kiểm tra và xác nhận trước khi áp dụng.`,
       );
 
       // Reload + reset
@@ -284,7 +467,7 @@ export default function AdjustSchedulePage() {
           <AlertTriangle className="h-10 w-10 text-red-400 mx-auto mb-3" />
           <p className="text-sm text-gray-600 mb-4">{error || 'Không tìm thấy gói'}</p>
           <button
-            onClick={() => router.push('/my-booking')}
+            onClick={() => router.push('/my-bookings')}
             className="text-sm text-green-600 font-medium hover:underline"
           >
             ← Quay về danh sách
@@ -295,9 +478,27 @@ export default function AdjustSchedulePage() {
   }
 
   const adjustmentLeft = schedule.adjustmentLimit - schedule.adjustmentUsed;
+  const selectedOccCanAdjust = selectedOcc
+    ? canAdjustOccurrence(selectedOcc, adjustmentLeft)
+    : false;
   const adjustableOccs = schedule.occurrences.filter(
-    (o) => OCC_STATUS_MAP[o.status]?.canAdjust,
+    (o) => canAdjustOccurrence(o, adjustmentLeft),
   );
+  const rejectedAdjustments = (schedule.adjustments || []).filter((item) =>
+    item.note?.startsWith(ADJUST_REJECTED_MARKER),
+  );
+  const pendingAdjustments = (schedule.adjustments || []).filter((item) =>
+    item.note?.startsWith(ADJUST_PENDING_MARKER),
+  );
+  const minRescheduleDate = formatDateKey(new Date());
+  const activeCalendarMonth = calendarMonth || getMonthStartKey(newDate || selectedOcc?.date || schedule.startDate);
+  const calendarDays = buildCalendarDays(activeCalendarMonth);
+  const occurrencesByDate = schedule.occurrences.reduce((map, occurrence) => {
+    const current = map.get(occurrence.date) || [];
+    current.push(occurrence);
+    map.set(occurrence.date, current);
+    return map;
+  }, new Map<string, OccurrenceDetail[]>());
 
   return (
     <div className="min-h-screen bg-gray-50/50">
@@ -305,8 +506,9 @@ export default function AdjustSchedulePage() {
       <div className="bg-white border-b border-gray-100 sticky top-0 z-20">
         <div className="max-w-3xl mx-auto px-4 h-14 flex items-center gap-3">
           <button
-            onClick={() => router.push(`/my-booking/${scheduleId}`)}
+            onClick={() => router.push('/my-bookings')}
             className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors"
+            aria-label="Về trang lịch đặt"
           >
             <ArrowLeft className="h-4 w-4 text-gray-500" />
           </button>
@@ -325,6 +527,14 @@ export default function AdjustSchedulePage() {
               ? `Còn ${adjustmentLeft}/${schedule.adjustmentLimit} lần`
               : 'Hết lượt điều chỉnh'}
           </div>
+          <button
+            type="button"
+            onClick={() => router.push('/my-bookings')}
+            className="hidden sm:inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 transition-colors hover:bg-gray-50"
+          >
+            <Calendar className="h-3.5 w-3.5" />
+            Về trang lịch đặt
+          </button>
         </div>
       </div>
 
@@ -343,7 +553,7 @@ export default function AdjustSchedulePage() {
                 <p className="font-semibold">Bạn còn {adjustmentLeft} lần điều chỉnh</p>
                 <p className="text-xs mt-0.5 opacity-80">
                   Mỗi lần điều chỉnh (báo nghỉ, đổi ngày, đổi sân) tính 1 lượt.
-                  Phải thực hiện trước buổi chơi ít nhất 24 giờ.
+                  Phải gửi yêu cầu trước buổi chơi ít nhất 3 ngày để nhân viên có thời gian xác nhận.
                 </p>
               </>
             ) : (
@@ -357,6 +567,44 @@ export default function AdjustSchedulePage() {
             )}
           </div>
         </div>
+
+        {rejectedAdjustments.length > 0 && (
+          <div className="rounded-2xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">
+            <div className="flex items-start gap-3">
+              <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="space-y-2">
+                <p className="font-semibold">Yêu cầu đổi lịch của bạn đã bị từ chối</p>
+                {rejectedAdjustments.slice(0, 3).map((item) => (
+                  <div key={item.id} className="rounded-xl bg-white/70 p-3 text-xs">
+                    <p>
+                      <span className="font-semibold">Lý do: </span>
+                      {extractAdjustmentMessage(item.note) || 'Nhân viên chưa nhập lý do cụ thể.'}
+                    </p>
+                    {item.createdAt && (
+                      <p className="mt-1 text-red-500/80">
+                        {new Date(item.createdAt).toLocaleString('vi-VN')}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {pendingAdjustments.length > 0 && (
+          <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4 text-sm text-amber-700">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                <p className="font-semibold">Bạn có {pendingAdjustments.length} yêu cầu đang chờ nhân viên duyệt</p>
+                <p className="mt-0.5 text-xs opacity-80">
+                  Khi nhân viên duyệt hoặc từ chối, trạng thái và lý do sẽ hiển thị tại đây.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
           {/* ── LEFT: Danh sách buổi ── */}
@@ -376,16 +624,18 @@ export default function AdjustSchedulePage() {
                 {schedule.occurrences.map((occ) => {
                   const cfg = OCC_STATUS_MAP[occ.status] || OCC_STATUS_MAP.scheduled;
                   const isSelected = selectedOcc?.id === occ.id;
+                  const noticeOk = canRequestBefore3Days(occ);
+                  const canAdjustOcc = canAdjustOccurrence(occ, adjustmentLeft);
                   return (
                     <button
                       key={occ.id}
-                      disabled={!cfg.canAdjust || adjustmentLeft === 0}
-                      onClick={() => cfg.canAdjust && handleSelectOccurrence(occ)}
+                      disabled={!canAdjustOcc}
+                      onClick={() => canAdjustOcc && handleSelectOccurrence(occ)}
                       className={cn(
                         'w-full flex items-center gap-4 px-5 py-3.5 text-left transition-all',
                         isSelected
                           ? 'bg-green-50 border-l-2 border-green-500'
-                          : cfg.canAdjust && adjustmentLeft > 0
+                          : canAdjustOcc
                           ? 'hover:bg-gray-50 cursor-pointer'
                           : 'opacity-50 cursor-not-allowed',
                       )}
@@ -414,10 +664,11 @@ export default function AdjustSchedulePage() {
                         </div>
                         <p className="text-xs text-gray-400 mt-0.5">
                           {occ.courtName} · {occ.timeStart}–{occ.timeEnd}
+                          {!noticeOk ? ' · Không thể đổi/hủy vì còn dưới 3 ngày' : ''}
                         </p>
                       </div>
 
-                      {cfg.canAdjust && adjustmentLeft > 0 && (
+                      {canAdjustOcc && (
                         <ChevronRight className={cn(
                           'h-4 w-4 shrink-0 transition-colors',
                           isSelected ? 'text-green-500' : 'text-gray-300',
@@ -455,6 +706,17 @@ export default function AdjustSchedulePage() {
                 </div>
 
                 <div className="p-5 space-y-4">
+                  {!selectedOccCanAdjust && (
+                    <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      <div>
+                        <p className="font-semibold">Buổi này đã bị khóa điều chỉnh</p>
+                        <p className="mt-0.5">
+                          Yêu cầu đổi/hủy lịch cố định phải gửi trước giờ chơi ít nhất 3 ngày.
+                        </p>
+                      </div>
+                    </div>
+                  )}
                   {/* Chọn loại điều chỉnh */}
                   <div className="space-y-2">
                     <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
@@ -489,13 +751,17 @@ export default function AdjustSchedulePage() {
                       ].map((opt) => (
                         <button
                           key={opt.type}
+                          disabled={!selectedOccCanAdjust}
                           onClick={() => {
+                            if (!selectedOccCanAdjust) return;
                             setAdjustType(opt.type);
                             setSlotAvailable(null);
                           }}
                           className={cn(
                             'w-full flex items-start gap-3 p-3 rounded-xl border-2 text-left transition-all',
-                            adjustType === opt.type ? opt.activeColor : 'border-gray-100 hover:border-gray-200',
+                            !selectedOccCanAdjust
+                              ? 'cursor-not-allowed border-gray-100 bg-gray-50 opacity-60'
+                              : adjustType === opt.type ? opt.activeColor : 'border-gray-100 hover:border-gray-200',
                           )}
                         >
                           <span className={cn(
@@ -524,14 +790,125 @@ export default function AdjustSchedulePage() {
                       <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
                         Ngày & giờ mới
                       </p>
-                      <div className="space-y-2">
-                        <input
-                          type="date"
-                          value={newDate}
-                          min={new Date().toISOString().split('T')[0]}
-                          onChange={(e) => { setNewDate(e.target.value); setSlotAvailable(null); }}
-                          className="w-full h-10 px-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-500"
-                        />
+                      <div className="space-y-3">
+                        <div className="rounded-2xl border border-gray-200 bg-white p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setCalendarMonth(shiftMonthKey(activeCalendarMonth, -1))}
+                              className="h-8 w-8 rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-50 flex items-center justify-center"
+                              aria-label="Tháng trước"
+                            >
+                              <ChevronLeft className="h-4 w-4" />
+                            </button>
+                            <div className="text-center">
+                              <p className="text-sm font-bold text-gray-900 capitalize">
+                                {monthFormatter.format(parseDateKey(activeCalendarMonth))}
+                              </p>
+                              <p className="text-[11px] text-gray-400">Chọn ngày mới trên lịch</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setCalendarMonth(shiftMonthKey(activeCalendarMonth, 1))}
+                              className="h-8 w-8 rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-50 flex items-center justify-center"
+                              aria-label="Tháng sau"
+                            >
+                              <ChevronRight className="h-4 w-4" />
+                            </button>
+                          </div>
+
+                          <div className="mt-3 grid grid-cols-7 gap-1 text-center text-[11px] font-semibold text-gray-400">
+                            {WEEKDAY_LABELS.map((label) => (
+                              <div key={label} className="py-1">{label}</div>
+                            ))}
+                          </div>
+
+                          <div className="grid grid-cols-7 gap-1">
+                            {calendarDays.map((day) => {
+                              const dateKey = formatDateKey(day);
+                              const dayOccurrences = occurrencesByDate.get(dateKey) || [];
+                              const isCurrentMonth = isSameMonth(day, activeCalendarMonth);
+                              const isSelectedDate = dateKey === newDate;
+                              const isOriginalDate = dateKey === selectedOcc?.date;
+                              const isPast = dateKey < minRescheduleDate;
+                              const firstOccurrence = dayOccurrences[0];
+
+                              return (
+                                <button
+                                  key={dateKey}
+                                  type="button"
+                                  disabled={isPast}
+                                  onClick={() => handleNewDateChange(dateKey)}
+                                  className={cn(
+                                    'relative min-h-[58px] rounded-xl border p-1.5 text-left transition-colors',
+                                    isSelectedDate && isOriginalDate
+                                      ? 'border-green-500 bg-blue-50 text-blue-700 ring-2 ring-blue-200'
+                                      : isSelectedDate
+                                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                      : isOriginalDate
+                                      ? 'border-green-500 bg-green-50 text-green-700'
+                                      : dayOccurrences.length > 0
+                                      ? 'border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300'
+                                      : 'border-gray-100 bg-white text-gray-700 hover:border-gray-200 hover:bg-gray-50',
+                                    !isCurrentMonth && 'opacity-45',
+                                    isPast && 'cursor-not-allowed opacity-35 hover:bg-white',
+                                  )}
+                                >
+                                  <span className="text-xs font-bold">{day.getDate()}</span>
+                                  {dayOccurrences.length > 0 && (
+                                    <span className="mt-1 flex items-center gap-1 text-[10px] font-semibold">
+                                      <Clock className="h-2.5 w-2.5" />
+                                      {firstOccurrence.timeStart}
+                                    </span>
+                                  )}
+                                  {isOriginalDate && (
+                                    <span className="mt-1 block text-[9px] font-bold uppercase tracking-wide">
+                                      Lịch gốc
+                                    </span>
+                                  )}
+                                  {isSelectedDate && !isOriginalDate && (
+                                    <span className="mt-1 block text-[9px] font-bold uppercase tracking-wide">
+                                      Ngày mới
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-gray-500">
+                            <span className="inline-flex items-center gap-1">
+                              <span className="h-2 w-2 rounded-full bg-green-500" /> Lịch gốc
+                            </span>
+                            <span className="inline-flex items-center gap-1">
+                              <span className="h-2 w-2 rounded-full bg-blue-500" /> Ngày mới
+                            </span>
+                            <span className="inline-flex items-center gap-1">
+                              <span className="h-2 w-2 rounded-full bg-amber-400" /> Có lịch cố định
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
+                          <label className="space-y-1">
+                            <span className="text-xs font-semibold text-gray-500">Ngày mới</span>
+                            <input
+                              type="date"
+                              value={newDate}
+                              min={minRescheduleDate}
+                              onChange={(e) => handleNewDateChange(e.target.value)}
+                              className="w-full h-10 px-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-500"
+                            />
+                          </label>
+                          {newDate && (
+                            <div className="rounded-xl bg-gray-50 px-3 py-2 text-xs text-gray-500">
+                              <p className="font-semibold text-gray-700">
+                                {compactDateFormatter.format(parseDateKey(newDate))}
+                              </p>
+                              <p>Ngày đang chọn</p>
+                            </div>
+                          )}
+                        </div>
                         <div className="flex gap-2">
                           <input
                             type="time"
@@ -548,16 +925,12 @@ export default function AdjustSchedulePage() {
                           />
                         </div>
                       </div>
-                      <button
-                        onClick={handleCheckSlot}
-                        disabled={checkingSlot}
-                        className="w-full h-9 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
-                      >
-                        {checkingSlot
-                          ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang kiểm tra...</>
-                          : 'Kiểm tra khả dụng'
-                        }
-                      </button>
+                      {checkingSlot && (
+                        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-blue-50 text-blue-700 text-xs font-medium">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Đang tự kiểm tra lịch trùng...
+                        </div>
+                      )}
                       {slotAvailable !== null && (
                         <div className={cn(
                           'flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium',
@@ -655,17 +1028,11 @@ export default function AdjustSchedulePage() {
                         </div>
                       )}
 
-                      {newCourtId && (
-                        <button
-                          onClick={handleCheckSlot}
-                          disabled={checkingSlot}
-                          className="w-full h-9 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
-                        >
-                          {checkingSlot
-                            ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang kiểm tra...</>
-                            : 'Kiểm tra khả dụng'
-                          }
-                        </button>
+                      {newCourtId && checkingSlot && (
+                        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-blue-50 text-blue-700 text-xs font-medium">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Đang tự kiểm tra sân và giờ...
+                        </div>
                       )}
 
                       {slotAvailable !== null && (
@@ -713,11 +1080,12 @@ export default function AdjustSchedulePage() {
                       onClick={handleSubmit}
                       disabled={
                         submitting ||
+                        !selectedOccCanAdjust ||
                         (adjustType !== 'skip' && slotAvailable !== true)
                       }
                       className={cn(
                         'w-full h-11 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2',
-                        submitting || (adjustType !== 'skip' && slotAvailable !== true)
+                        submitting || !selectedOccCanAdjust || (adjustType !== 'skip' && slotAvailable !== true)
                           ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
                           : adjustType === 'skip'
                           ? 'bg-gray-600 hover:bg-gray-700 text-white shadow-sm'

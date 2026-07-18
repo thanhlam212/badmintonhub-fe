@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useMemo, useEffect } from "react"
+import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -13,7 +14,7 @@ import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogClose } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
 import { StockLevelIndicator } from "@/components/shared"
-import { formatVND, formatTransferReference } from "@/lib/utils"
+import { formatVND, formatTransferReference, formatPNKReference, formatPXKReference, formatPOReference } from "@/lib/utils"
 import { printTransferSlip, printWarehouseSlip } from "@/lib/print-utils"
 import { purchaseOrderApi } from "@/lib/api"
 import { useInventory, type TransferRequest } from "@/lib/inventory-context"
@@ -41,7 +42,31 @@ function buildWarehouseSlipCode(prefix: "PNK" | "PXK", seed?: string) {
   return `${prefix}-${new Date().getFullYear()}-${source.slice(-6)}`
 }
 
+function formatWarehouseSlipReference(slip: { id?: string; type: "import" | "export"; date?: string }) {
+  return slip.type === "import"
+    ? formatPNKReference(slip.id, slip.date)
+    : formatPXKReference(slip.id, slip.date)
+}
+
+function formatInventoryTransactionReference(tx: { id: string; type: string; date?: string }) {
+  if (tx.type === "import") return formatPNKReference(tx.id, tx.date)
+  if (tx.type === "export") return formatPXKReference(tx.id, tx.date)
+  return formatTransferReference(tx.id, tx.date)
+}
+
+function formatAdminSlipPOReference(slip: { poId?: string; poRawId?: string; poCreatedAt?: string; date?: string }) {
+  const poValue = slip.poId || slip.poRawId
+  return poValue ? formatPOReference(poValue, slip.poCreatedAt || slip.date) : ""
+}
+
+function describeAdminSlipNote(slip: { type?: string; note?: string; poId?: string; poRawId?: string; poCreatedAt?: string; date?: string }) {
+  const poCode = formatAdminSlipPOReference(slip)
+  if (poCode && slip.type === "import") return `Nhập kho theo PO ${poCode}`
+  return slip.note || ""
+}
+
 export default function AdminInventory() {
+  const searchParams = useSearchParams()
   const ctx = useInventory()
   const { inventory, transactions, transferRequests, adminSlips } = ctx
 
@@ -92,6 +117,42 @@ export default function AdminInventory() {
 
   const categories = [...new Set(inventory.map(i => i.category))]
   const warehouses = [...new Set(inventory.map(i => i.warehouse))]
+
+  useEffect(() => {
+    const tab = searchParams.get("tab")
+    if (tab && ["overview", "grn", "export", "slips", "transfers", "history"].includes(tab)) {
+      setActiveTab(tab)
+    }
+
+    const sku = searchParams.get("sku")
+    if (sku) {
+      setActiveTab("overview")
+      setSearch(sku)
+    }
+
+    const warehouseId = searchParams.get("warehouseId")
+    if (warehouseId) {
+      const warehouseName = inventory.find((item) => String(item.warehouseId) === warehouseId)?.warehouse
+      if (warehouseName) setWarehouseFilter(warehouseName)
+    }
+
+    if (searchParams.get("txId")) {
+      setActiveTab("history")
+    }
+
+    const transferId = searchParams.get("transferId")
+    if (transferId) {
+      setActiveTab("transfers")
+      setTransferFilter("all")
+      const transfer = transferRequests.find(
+        (item) => item.id === transferId || item.reference === transferId,
+      )
+      if (transfer) {
+        setSelectedTransfer(transfer)
+        setTransferDetailOpen(true)
+      }
+    }
+  }, [inventory, searchParams, transferRequests])
 
   // Công thức tổng hợp:
   // totalValue  = Σ(onHand × unitCost)               — tổng giá trị hàng vật lý trong kho
@@ -161,13 +222,13 @@ export default function AdminInventory() {
     items: { sku: string; name: string; qty: number; unitCost?: number }[]
   }) => {
     printWarehouseSlip({
-      id: slip.id || buildWarehouseSlipCode(slip.type === "import" ? "PNK" : "PXK"),
+      id: slip.id ? formatWarehouseSlipReference(slip) : buildWarehouseSlipCode(slip.type === "import" ? "PNK" : "PXK"),
       type: slip.type,
       date: slip.date,
       warehouse: slip.warehouse,
       supplier: slip.supplier,
-      poId: slip.poId,
-      note: slip.note,
+      poId: formatAdminSlipPOReference(slip),
+      note: describeAdminSlipNote(slip),
       createdBy: "Admin",
       assignedTo: slip.assignedTo || slip.warehouse,
       processedBy: slip.processedBy || "Admin",
@@ -273,14 +334,15 @@ export default function AdminInventory() {
     setTimeout(() => setExportSuccess(false), 3000)
   }
 
-  const handleCreateSlip = () => {
+  const handleCreateSlip = async () => {
     const validItems = slipItems.filter(i => i.sku && i.qty > 0)
     if (validItems.length === 0 || !slipWarehouse) return
 
-    const slipId = ctx.createAdminSlip({
+    const slipId = await ctx.createAdminSlip({
       type: slipType,
       source: "admin",
       poId: slipPo || undefined,
+      supplierId: slipType === "import" && slipSupplier ? parseInt(slipSupplier) : undefined,
       supplier: slipType === "import" ? suppliers.find(s => s.id.toString() === slipSupplier)?.name : undefined,
       date: new Date().toISOString().split("T")[0],
       warehouse: slipWarehouse,
@@ -295,6 +357,7 @@ export default function AdminInventory() {
       createdBy: "Admin",
       assignedTo: "Nhân viên kho",
     })
+    await ctx.refreshInventory()
 
     printAdminWarehouseSlip({
       id: slipId,
@@ -320,8 +383,8 @@ export default function AdminInventory() {
     setTimeout(() => setSlipSuccess(false), 3000)
   }
 
-  const handleAdminTransferAction = (id: string, action: "rejected") => {
-    ctx.updateTransferStatus(id, action)
+  const handleAdminTransferAction = async (id: string, action: "rejected") => {
+    await ctx.updateTransferStatus(id, action)
     setTransferDetailOpen(false)
     setSelectedTransfer(null)
   }
@@ -992,7 +1055,7 @@ export default function AdminInventory() {
                         slip.status === "processed" && "border-green-200 bg-green-50/30"
                       )}>
                         <div className="flex items-center justify-between mb-1.5">
-                          <span className="font-mono text-xs font-bold text-blue-600">{slip.id}</span>
+                          <span className="font-mono text-xs font-bold text-blue-600">{formatWarehouseSlipReference(slip)}</span>
                           <div className="flex items-center gap-1.5">
                             <Badge className={cn("text-[10px]",
                               slip.type === "import" ? "bg-green-100 text-green-700" : "bg-orange-100 text-orange-700"
@@ -1011,7 +1074,7 @@ export default function AdminInventory() {
                         <div className="flex items-center gap-3 mt-1.5 text-[10px] text-muted-foreground">
                           <span className="flex items-center gap-0.5"><Clock className="h-2.5 w-2.5" /> {slip.date}</span>
                           {slip.supplier && <span>NCC: {slip.supplier}</span>}
-                          {slip.poId && <span>PO: {slip.poId}</span>}
+                          {formatAdminSlipPOReference(slip) && <span>PO: {formatAdminSlipPOReference(slip)}</span>}
                         </div>
                         <div className="mt-2">
                           <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => printAdminWarehouseSlip(slip)}>
@@ -1261,7 +1324,7 @@ export default function AdminInventory() {
                   <TableBody>
                     {transactions.map(tx => (
                       <TableRow key={tx.id}>
-                        <TableCell className="font-mono text-xs">{tx.id.slice(0, 15)}</TableCell>
+                        <TableCell className="font-mono text-xs">{formatInventoryTransactionReference(tx)}</TableCell>
                         <TableCell>
                           <Badge variant="secondary" className={cn("text-xs",
                             tx.type === "import" ? "bg-green-100 text-green-700" :

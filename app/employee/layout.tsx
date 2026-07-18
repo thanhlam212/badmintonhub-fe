@@ -10,7 +10,8 @@ import {
   ChevronLeft, ChevronRight, Menu, LogOut,
   ArrowDownToLine, ArrowUpFromLine, ClipboardList,
   ClipboardCheck, Repeat, Building2,
-  QrCode, CalendarCheck, Wrench, FolderSearch, ShieldCheck
+  QrCode, CalendarCheck, Wrench, FolderSearch, ShieldCheck,
+  BarChart3
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { RouteGuard } from "@/components/route-guard"
@@ -22,12 +23,14 @@ const navGroups = [
     label: "Tổng quan",
     items: [
       { href: "/employee", icon: <LayoutDashboard className="h-5 w-5" />, label: "Dashboard" },
+      { href: "/employee/reports", icon: <BarChart3 className="h-5 w-5" />, label: "Báo cáo" },
     ],
   },
   {
     label: "Đặt sân",
     items: [
       { href: "/employee/bookings", icon: <CalendarCheck className="h-5 w-5" />, label: "Quản lý đặt sân" },
+      { href: "/employee/bookings/fixed-schedules", icon: <Repeat className="h-5 w-5" />, label: "Lịch cố định" },
       { href: "/employee/checkin", icon: <QrCode className="h-5 w-5" />, label: "Check-in QR" },
       { href: "/employee/courts", icon: <Building2 className="h-5 w-5" />, label: "Quản lý sân" },
       { href: "/employee/court-services", icon: <Wrench className="h-5 w-5" />, label: "Dịch vụ sân" },
@@ -55,6 +58,11 @@ function EmployeeSidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: { c
   const pathname = usePathname()
   const router = useRouter()
   const { user, logout } = useAuth()
+  const activeHref = navGroups
+    .flatMap(group => group.items)
+    .map(item => item.href)
+    .sort((a, b) => b.length - a.length)
+    .find(href => pathname === href || (href !== "/employee" && pathname.startsWith(`${href}/`)))
 
   return (
     <>
@@ -105,7 +113,7 @@ function EmployeeSidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: { c
             {!collapsed && <p className="px-3 mb-2 text-xs font-semibold text-[#7F95B3] uppercase tracking-wider">{group.label}</p>}
             <div className="flex flex-col gap-0.5">
               {group.items.map(item => {
-                const isActive = pathname === item.href || (item.href !== '/employee' && pathname.startsWith(item.href))
+                const isActive = activeHref === item.href
                 return (
                   <Link key={item.href} href={item.href}
                     onClick={onMobileClose}
@@ -152,7 +160,9 @@ function EmployeeTopbar({ collapsed, onMobileMenu }: { collapsed: boolean; onMob
 
   const breadcrumbMap: Record<string, string> = {
     '/employee': 'Dashboard',
+    '/employee/reports': 'Báo cáo',
     '/employee/bookings': 'Quản lý đặt sân',
+    '/employee/bookings/fixed-schedules': 'Lịch cố định',
     '/employee/checkin': 'Check-in QR',
     '/employee/courts': 'Quản lý sân',
     '/employee/court-services': 'Dịch vụ sân',

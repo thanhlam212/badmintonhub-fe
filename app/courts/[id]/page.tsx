@@ -10,7 +10,7 @@ import { Star, MapPin, Clock, ChevronLeft, ChevronRight, Check, Wifi, Wind, Lamp
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useState, useMemo, use, useCallback, useEffect, useRef } from "react"
-import { formatVND, generateTimeSlots, getWeekDays, isSlotPast, WEATHER_API_KEY } from "@/lib/utils"
+import { formatVND, formatSlotRange, generateTimeSlots, getWeekDays, isSlotPast, WEATHER_API_KEY } from "@/lib/utils"
 import { courtApi, type ApiCourt } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { AddressInput } from "@/components/address-input"
@@ -689,7 +689,7 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
                   <div className="overflow-x-auto">
                     <div className="min-w-[600px]">
                       {/* Day headers */}
-                      <div className="grid grid-cols-[60px_repeat(7,1fr)] gap-1 mb-1">
+                      <div className="grid grid-cols-[90px_repeat(7,1fr)] gap-1 mb-1">
                         <div />
                         {weekDays.map(d => (
                           <div
@@ -710,8 +710,8 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
                       </div>
                       {/* Time grid */}
                       {timeSlots.map(time => (
-                        <div key={time} className="grid grid-cols-[60px_repeat(7,1fr)] gap-1 mb-1">
-                          <div className="text-xs text-muted-foreground flex items-center justify-end pr-2">{time}</div>
+                        <div key={time} className="grid grid-cols-[90px_repeat(7,1fr)] gap-1 mb-1">
+                          <div className="text-[10px] text-muted-foreground flex items-center justify-end pr-2 font-mono">{formatSlotRange(time)}</div>
                           {weekDays.map(d => {
                             const status = availability[d.label]?.[time] || 'available'
                             const slotKey = `${d.label}-${time}`
@@ -1030,7 +1030,7 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
                     >
                       {isClosed ? "Sân đang tạm đóng" : "Tiếp tục đặt sân"}
                     </Button>
-                    <Link href={`/booking/fixed?courtId=${court.id}`}>
+                    <Link href={`/booking/fixed-schedule?courtId=${court.id}`}>
                       <Button variant="outline" className="w-full mt-2 font-semibold" disabled={isClosed}>
                         Đặt lịch cố định
                       </Button>

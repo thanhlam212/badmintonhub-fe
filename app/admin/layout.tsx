@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import {
   LayoutDashboard, CalendarCheck, Package, FileText, BarChart3,
   ChevronLeft, ChevronRight, Menu, Truck, Settings, LogOut, User, FlaskConical,
-  Building2, ClipboardList, Users, QrCode, FolderSearch, PackagePlus
+  Building2, ClipboardList, Users, QrCode, FolderSearch, PackagePlus, Repeat
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { RouteGuard } from "@/components/route-guard"
@@ -27,6 +27,7 @@ const navGroups = [
     label: "Đặt sân",
     items: [
       { href: "/admin/bookings", icon: <CalendarCheck className="h-5 w-5" />, label: "Đặt sân" },
+      { href: "/admin/bookings/fixed-schedules", icon: <Repeat className="h-5 w-5" />, label: "Lịch cố định" },
       { href: "/admin/checkin", icon: <QrCode className="h-5 w-5" />, label: "QR Check-in" },
     ],
   },
@@ -152,6 +153,7 @@ function AdminTopbar({ collapsed, onMobileMenu }: { collapsed: boolean; onMobile
   const breadcrumbMap: Record<string, string> = {
     '/admin': 'Dashboard',
     '/admin/bookings': 'Đặt sân',
+    '/admin/bookings/fixed-schedules': 'Lịch cố định',
     '/admin/checkin': 'QR Check-in',
     '/admin/courts': 'Quản lý sân',
     '/admin/accounts': 'Tài khoản',

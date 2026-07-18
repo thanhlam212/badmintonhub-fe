@@ -3,11 +3,10 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import {
-  ArrowLeft, Calendar, Clock, MapPin, CheckCircle2,
-  XCircle, SkipForward, RefreshCw, Receipt, BadgeCheck,
+  ArrowLeft, Clock, MapPin, CheckCircle2,
+  XCircle, SkipForward, RefreshCw, Receipt,
   AlertCircle, Loader2, Home, Settings2,
 } from 'lucide-react';
-import { useAuth } from '@/lib/auth-context';
 import { cn } from '@/lib/utils';
 
 // ═══════════════════════════════════════════════════════════════
@@ -54,6 +53,7 @@ interface ScheduleDetail {
     branch: { name: string; address: string };
   };
   occurrences: OccurrenceDetail[];
+  adjustments?: AdjustmentNotice[];
   invoice: {
     id: string;
     code: string;
@@ -61,6 +61,14 @@ interface ScheduleDetail {
     status: string;
     paymentMethod: string;
   } | null;
+}
+
+interface AdjustmentNotice {
+  id: string;
+  occurrenceId?: string | null;
+  type: string;
+  note?: string | null;
+  createdAt?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -105,15 +113,33 @@ const OCC_STATUS: Record<string, {
   },
 };
 
+const ADJUST_REJECTED_MARKER = '[CUSTOMER_ADJUST_REQUEST_REJECTED]';
+
+function extractRejectedReason(note?: string | null) {
+  return (note || '').replace(ADJUST_REJECTED_MARKER, '').trim();
+}
+
 // ═══════════════════════════════════════════════════════════════
 // PAGE
 // ═══════════════════════════════════════════════════════════════
+
+function canRequestBefore3Days(occurrence: { date: string; timeStart: string }) {
+  const startAt = new Date(`${occurrence.date}T${occurrence.timeStart}:00+07:00`);
+  return startAt.getTime() - Date.now() >= 3 * 24 * 60 * 60 * 1000;
+}
+
+function canAdjustOccurrence(occurrence: OccurrenceDetail, adjustmentLeft: number) {
+  return (
+    ['scheduled', 'rescheduled'].includes(occurrence.status) &&
+    adjustmentLeft > 0 &&
+    canRequestBefore3Days(occurrence)
+  );
+}
 
 export default function ScheduleDetailPage() {
   const router = useRouter();
   const params = useParams();
   const scheduleId = params.scheduleId as string;
-  const { user } = useAuth();
 
   const [schedule, setSchedule] = useState<ScheduleDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -172,6 +198,12 @@ export default function ScheduleDetailPage() {
     : schedule.occurrences.filter((o) => o.status === filter);
 
   const adjustmentLeft = schedule.adjustmentLimit - schedule.adjustmentUsed;
+  const hasAdjustableOccurrences = schedule.occurrences.some((occ) =>
+    canAdjustOccurrence(occ, adjustmentLeft),
+  );
+  const rejectedAdjustments = (schedule.adjustments || []).filter((item) =>
+    item.note?.startsWith(ADJUST_REJECTED_MARKER),
+  );
 
   return (
     <div className="min-h-screen bg-gray-50/50">
@@ -227,6 +259,30 @@ export default function ScheduleDetailPage() {
             />
           </div>
         </div>
+
+        {rejectedAdjustments.length > 0 && (
+          <div className="rounded-2xl border border-red-100 bg-red-50 p-5 text-sm text-red-700">
+            <div className="flex items-start gap-3">
+              <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="space-y-2">
+                <p className="font-semibold">Yêu cầu đổi lịch của bạn đã bị từ chối</p>
+                {rejectedAdjustments.slice(0, 3).map((item) => (
+                  <div key={item.id} className="rounded-xl bg-white/70 p-3 text-xs">
+                    <p>
+                      <span className="font-semibold">Lý do: </span>
+                      {extractRejectedReason(item.note) || 'Nhân viên chưa nhập lý do cụ thể.'}
+                    </p>
+                    {item.createdAt && (
+                      <p className="mt-1 text-red-500/80">
+                        {new Date(item.createdAt).toLocaleString('vi-VN')}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── Invoice ── */}
         {schedule.invoice && (
@@ -340,9 +396,16 @@ export default function ScheduleDetailPage() {
 
           {/* ✨ Nút điều chỉnh - chỉ hiện khi gói còn active và còn quota */}
           {['pending', 'deposited', 'confirmed'].includes(schedule.status) &&
-           schedule.adjustmentUsed < schedule.adjustmentLimit && (
+           adjustmentLeft > 0 && !hasAdjustableOccurrences && (
+            <div className="flex-1 min-h-11 flex items-center justify-center rounded-xl border border-amber-200 bg-amber-50 px-3 text-center text-xs font-medium text-amber-700">
+              Không còn buổi nào đủ điều kiện điều chỉnh trước 3 ngày
+            </div>
+          )}
+
+          {['pending', 'deposited', 'confirmed'].includes(schedule.status) &&
+           hasAdjustableOccurrences && (
             <button
-              onClick={() => router.push(`/my-booking/${scheduleId}/adjust`)}
+              onClick={() => router.push(`/my-bookings/adjust?scheduleId=${scheduleId}`)}
               className="flex-1 h-11 flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-semibold transition-colors shadow-sm shadow-green-600/20"
             >
               <Settings2 className="h-4 w-4" />

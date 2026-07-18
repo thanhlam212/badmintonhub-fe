@@ -16,6 +16,7 @@ import {
   Store, Warehouse, Navigation, Printer, Award
 } from "lucide-react"
 import { useState, useEffect } from "react"
+import { useSearchParams } from "next/navigation"
 import { formatVND, formatHDReference } from "@/lib/utils"
 import { orderApi } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -582,6 +583,7 @@ function OrderDetailDialog({ order, onApprove, onStartDelivery, onDeliver, onCan
 }
 
 export default function HubOrdersPage() {
+  const searchParams = useSearchParams()
   const { user } = useAuth()
   const { inventory, refreshInventory } = useInventory()
   const [orders, setOrders] = useState<Order[]>([])
@@ -589,6 +591,7 @@ export default function HubOrdersPage() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [warehouseFilter, setWarehouseFilter] = useState("all")
+  const [activeTab, setActiveTab] = useState("pending")
 
   const loadOrders = async () => {
     try {
@@ -621,6 +624,27 @@ export default function HubOrdersPage() {
     const interval = setInterval(loadOrders, 5000)
     return () => clearInterval(interval)
   }, [])
+
+  useEffect(() => {
+    const orderId = searchParams.get("orderId")
+    if (!orderId) return
+
+    setSearch(orderId)
+    const order = orders.find((item) => item.id === orderId || item.rawId === orderId)
+    if (!order) return
+
+    setSelectedOrder(order)
+    setDialogOpen(true)
+    setActiveTab(
+      order.status === "processing"
+        ? "processing"
+        : order.status === "shipping"
+          ? "shipping"
+          : order.status === "delivered" || order.status === "cancelled"
+            ? "completed"
+            : "pending",
+    )
+  }, [orders, searchParams])
 
   const updateOrderStatus = async (orderId: string, updates: Partial<Order>) => {
     const order = orders.find(o => o.id === orderId)
@@ -693,6 +717,7 @@ export default function HubOrdersPage() {
     if (search.trim()) {
       const q = search.toLowerCase()
       const matchSearch = o.id.toLowerCase().includes(q) ||
+        String(o.rawId || "").toLowerCase().includes(q) ||
         o.customer.name.toLowerCase().includes(q) ||
         o.customer.phone.includes(q)
       if (!matchSearch) return false
@@ -856,7 +881,7 @@ export default function HubOrdersPage() {
       </div>
 
       {/* Orders tabs */}
-      <Tabs defaultValue="pending">
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="pending" className="gap-1">
             Chờ duyệt {stats.pending > 0 && <Badge className="bg-amber-500 text-white h-5 min-w-5 text-[10px]">{stats.pending}</Badge>}

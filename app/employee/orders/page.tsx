@@ -549,13 +549,13 @@ export default function EmployeeOrdersPage() {
         if (order?.status === "pending" && updates.status === "processing") {
           const confirmRes = await orderApi.updateStatus(apiId, "confirmed")
           if (!confirmRes.success) {
-            console.error("Lỗi xác nhận đơn:", confirmRes.error)
+            console.warn("Lỗi xác nhận đơn:", confirmRes.error)
             return
           }
         }
         const res = await orderApi.updateStatus(apiId, updates.status)
         if (!res.success) {
-          console.error("Lỗi cập nhật trạng thái:", res.error)
+          console.warn("Lỗi cập nhật trạng thái:", res.error)
           return
         }
         if (updates.status === "processing" || updates.status === "cancelled" || updates.status === "refunded") {
@@ -563,12 +563,13 @@ export default function EmployeeOrdersPage() {
         }
       }
     } catch (err) {
-      console.error("Lỗi cập nhật đơn hàng:", err)
+      console.warn("Lỗi cập nhật đơn hàng:", err)
       return
     }
     const updated = orders.map(o => o.id === orderId ? { ...o, ...updates } : o)
     setOrders(updated)
     setSelectedOrder(updated.find(o => o.id === orderId) || null)
+    loadOrders().catch(() => {})
   }
 
   const handleProcess = (orderId: string, warehouse?: string) => {

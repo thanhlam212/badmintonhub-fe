@@ -28,7 +28,8 @@ export interface TransferRequest {
 }
 export interface AdminWarehouseSlip {
   id: string; type: "import" | "export"; source: "admin"; poId?: string; poRawId?: string
-  supplier?: string; date: string; warehouse: string
+  poCreatedAt?: string
+  supplierId?: number; supplier?: string; date: string; warehouse: string
   items: { sku: string; name: string; qty: number; unitCost: number }[]
   note: string; status: "pending" | "processed"; createdBy: string
   assignedTo: string; processedAt?: string; processedBy?: string
@@ -50,8 +51,8 @@ interface InventoryContextType {
   updateTransferStatus: (id: string, status: TransferRequest["status"]) => Promise<void>
   exportTransferItems: (p: { transferId: string; qtys: Record<string, number>; date: string; note: string; operator: string }) => Promise<void>
   receiveTransferItems: (transferId: string, operator: string) => Promise<void>
-  createAdminSlip: (s: Omit<AdminWarehouseSlip, "id">) => string
-  processAdminSlip: (id: string, processedBy: string) => void
+  createAdminSlip: (s: Omit<AdminWarehouseSlip, "id">) => Promise<string>
+  processAdminSlip: (id: string, processedBy: string) => Promise<void>
   updatePOStatus: (id: string, status: string) => Promise<void>
   resetAll: () => void
 }
@@ -88,7 +89,9 @@ function txItem(r: any): InventoryItem {
   }
 }
 function txTxn(r: any): InventoryTransaction {
-  return { id: String(r.id), type: r.type, date: r.date?new Date(r.date).toISOString().split("T")[0]:"", sku: textValue(r.sku), productName: textValue(r.product_name||r.productName||r.name), qty: r.qty||r.quantity||0, cost: r.cost||0, note: textValue(r.note), warehouse: textValue(r.warehouse_name||r.warehouse), operator: textValue(r.operator) }
+  const rawType = textValue(r.type)
+  const type = rawType === "transfer_out" ? "transfer-out" : rawType === "transfer_in" ? "transfer-in" : rawType
+  return { id: String(r.id), type: type as InventoryTransaction["type"], date: r.date?new Date(r.date).toISOString().split("T")[0]:"", sku: textValue(r.sku), productName: textValue(r.product_name||r.productName||r.name), qty: r.qty||r.quantity||0, cost: r.cost||0, note: textValue(r.note), warehouse: textValue(r.warehouse_name||r.warehouse), operator: textValue(r.operator) }
 }
 function normalizeTransferStatus(s: string): TransferRequest["status"] {
   // BE trả về "in_transit" (underscore), FE dùng "in-transit" (hyphen)
@@ -124,7 +127,50 @@ function txTfr(r: any): TransferRequest {
   }
 }
 function txPO(r: any): PurchaseOrder {
-  return { id: String(r.id), supplier: textValue(r.supplier_name||r.supplier), status: r.status||"", createdDate: r.created_at?new Date(r.created_at).toISOString().split("T")[0]:r.createdDate||"", totalValue: r.total_value??r.totalValue??0, items: r.item_count??r.items??0, warehouse: textValue(r.warehouse_name||r.warehouse), poItems: (r.po_items||r.poItems||[]).map((i:any)=>({sku:textValue(i.sku),name:textValue(i.name||i.product_name||i.productName||i.product),qty:i.qty||i.quantity||0,unitCost:i.unit_cost||i.unitCost||i.price||0})) }
+  const itemsArr = Array.isArray(r.items) ? r.items : Array.isArray(r.po_items) ? r.po_items : Array.isArray(r.poItems) ? r.poItems : []
+  return {
+    id: String(r.id),
+    supplier: textValue(r.supplierName||r.supplier_name||r.supplier),
+    status: r.status||"",
+    createdDate: (r.createdAt||r.created_at) ? new Date(r.createdAt||r.created_at).toISOString().split("T")[0] : r.createdDate||"",
+    totalValue: r.totalValue??r.total_value??0,
+    items: itemsArr.length || r.item_count || 0,
+    warehouse: textValue(r.warehouseName||r.warehouse_name||r.warehouse),
+    poItems: itemsArr.map((i:any)=>({
+      sku: textValue(i.sku),
+      name: textValue(i.name||i.product_name||i.productName||i.product),
+      qty: i.qty||i.quantity||0,
+      unitCost: Number(i.unitCost??i.unit_cost??i.price??0),
+    })),
+  }
+}
+
+
+function txSlip(r: any): AdminWarehouseSlip {
+  return {
+    id: String(r.id),
+    type: r.type === "export" ? "export" : "import",
+    source: "admin",
+    poId: r.poId ?? r.po_id ?? undefined,
+    poRawId: r.poRawId ?? r.po_raw_id ?? r.poId ?? r.po_id ?? undefined,
+    poCreatedAt: r.poCreatedAt ?? r.po_created_at ?? r.purchaseOrder?.createdAt ?? undefined,
+    supplierId: r.supplierId ?? r.supplier_id ?? undefined,
+    supplier: textValue(r.supplier || r.supplierName || r.supplier_name),
+    date: r.date ? new Date(r.date).toISOString().split("T")[0] : (r.createdAt || r.created_at ? new Date(r.createdAt || r.created_at).toISOString().split("T")[0] : ""),
+    warehouse: textValue(r.warehouse || r.warehouseName || r.warehouse_name),
+    items: (r.items || []).map((i: any) => ({
+      sku: textValue(i.sku),
+      name: textValue(i.name || i.productName || i.product_name || i.sku),
+      qty: i.qty || i.quantity || 0,
+      unitCost: Number(i.unitCost ?? i.unit_cost ?? i.price ?? 0),
+    })),
+    note: textValue(r.note),
+    status: r.status === "processed" ? "processed" : "pending",
+    createdBy: textValue(r.createdBy || r.created_by || r.creator),
+    assignedTo: textValue(r.assignedTo || r.assigned_to || r.assignee),
+    processedAt: r.processedAt || r.processed_at,
+    processedBy: textValue(r.processedBy || r.processed_by || r.processor),
+  }
 }
 
 const SLIP_KEY = "bh_admin_slips"
@@ -148,10 +194,11 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
   const fetchTxn = useCallback(async()=>{if(!canAccess)return;try{const r=await inventoryApi.getTransactions();if(r.success&&r.data)setTransactions(r.data.map(txTxn))}catch{}}, [canAccess])
   const fetchTfr = useCallback(async()=>{if(!canAccess)return;try{const r=await transferApi.getAll();if(r.success&&r.data)setTransferRequests(r.data.map(txTfr))}catch{}}, [canAccess])
   const fetchPOs = useCallback(async()=>{if(!canAccess)return;try{const r=await purchaseOrderApi.getAll();if(r.success&&r.data)setPurchaseOrders(r.data.map(txPO))}catch{}}, [canAccess])
+  const fetchSlips = useCallback(async()=>{if(!canAccess)return;try{const r=await inventoryApi.getAdminSlips();if(r.success&&r.data){const apiSlips=r.data.map(txSlip);setAdminSlips(apiSlips.length?apiSlips:loadSlips())}}catch{setAdminSlips(loadSlips())}}, [canAccess])
 
-  const refreshInventory = useCallback(async()=>{if(!canAccess){setLoading(false);return};await Promise.all([fetchInv(),fetchTxn(),fetchTfr(),fetchPOs()])}, [canAccess,fetchInv,fetchTxn,fetchTfr,fetchPOs])
+  const refreshInventory = useCallback(async()=>{if(!canAccess){setLoading(false);return};await Promise.all([fetchInv(),fetchTxn(),fetchTfr(),fetchPOs(),fetchSlips()])}, [canAccess,fetchInv,fetchTxn,fetchTfr,fetchPOs,fetchSlips])
 
-  useEffect(()=>{const init=async()=>{setLoading(true);if(canAccess){await ensureWhMap();await refreshInventory()}setAdminSlips(loadSlips());setLoading(false)};init()}, [canAccess,refreshInventory])
+  useEffect(()=>{const init=async()=>{setLoading(true);if(canAccess){await ensureWhMap();await refreshInventory()}else{setAdminSlips(loadSlips())}setLoading(false)};init()}, [canAccess,refreshInventory])
 
   const importItems = useCallback(async({items,warehouse,note,date,operator}:{items:{sku:string;name:string;qty:number;cost:number}[];warehouse:string;note:string;date:string;operator:string})=>{
     await ensureWhMap(); const wid=whMap[warehouse]; if(!wid)throw new Error("Kho not found: "+warehouse)
@@ -169,30 +216,52 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     await ensureWhMap(); const fid=whMap[request.fromWarehouse]||request.fromWarehouseId; const tid=whMap[request.toWarehouse]||request.toWarehouseId
     if(!fid||!tid)throw new Error("Kho not found")
     const r=await transferApi.create({from_warehouse_id:fid,to_warehouse_id:tid,note:`${request.reason||""} | ${request.note||""}`.trim(),items:request.items.map(i=>({sku:i.sku,quantity:i.qty}))})
+    if(!r.success) throw new Error(r.error || "Khong the tao phieu dieu chuyen")
     await fetchTfr(); return r.data?.id ? String(r.data.id) : (r.data as any)?.data?.id ? String((r.data as any).data.id) : ""
   }, [fetchTfr])
 
-  const updateTransferStatus = useCallback(async(id:string,status:TransferRequest["status"])=>{await transferApi.updateStatus(id,status);await fetchTfr()}, [fetchTfr])
+  const updateTransferStatus = useCallback(async(id:string,status:TransferRequest["status"])=>{const r=await transferApi.updateStatus(id,status);if(!r.success)throw new Error(r.error||"Khong the cap nhat phieu dieu chuyen");await fetchTfr()}, [fetchTfr])
 
   const exportTransferItems = useCallback(async({transferId,qtys,date,note,operator}:{transferId:string;qtys:Record<string,number>;date:string;note:string;operator:string})=>{
     const tf=transferRequests.find(t=>t.id===transferId)
-    if(!tf||tf.status==="pending"){await transferApi.updateStatus(transferId,"approved")}
-    await transferApi.updateStatus(transferId,"in-transit");await Promise.all([fetchInv(),fetchTxn(),fetchTfr()])
+    if(!tf||tf.status==="pending"){const approve=await transferApi.updateStatus(transferId,"approved");if(!approve.success)throw new Error(approve.error||"Khong the duyet phieu dieu chuyen")}
+    const exported=await transferApi.updateStatus(transferId,"in-transit");if(!exported.success)throw new Error(exported.error||"Khong the xuat phieu dieu chuyen")
+    await Promise.all([fetchInv(),fetchTxn(),fetchTfr()])
   }, [transferRequests,fetchInv,fetchTxn,fetchTfr])
 
   const receiveTransferItems = useCallback(async(transferId:string,operator:string)=>{
-    await transferApi.updateStatus(transferId,"completed");await Promise.all([fetchInv(),fetchTxn(),fetchTfr()])
+    const r=await transferApi.updateStatus(transferId,"completed");if(!r.success)throw new Error(r.error||"Khong the nhan phieu dieu chuyen");await Promise.all([fetchInv(),fetchTxn(),fetchTfr()])
   }, [fetchInv,fetchTxn,fetchTfr])
 
-  const createAdminSlip = useCallback((slip: Omit<AdminWarehouseSlip,"id">)=>{
-    const pfx=slip.type==="import"?"PNK":"PXK";const num=String(Math.floor(Math.random()*999)+1).padStart(3,"0")
-    const id=`${pfx}-${new Date().getFullYear()}-${num}`
-    setAdminSlips(prev=>{const u=[{...slip,id},...prev];saveSlips(u);return u});return id
+  const createAdminSlip = useCallback(async(slip: Omit<AdminWarehouseSlip,"id">)=>{
+    await ensureWhMap()
+    const warehouseId = whMap[slip.warehouse]
+    if (!warehouseId) throw new Error("Kho not found: "+slip.warehouse)
+    const res = await inventoryApi.createAdminSlip({
+      type: slip.type,
+      poId: slip.poRawId,
+      supplierId: slip.supplierId,
+      warehouseId,
+      note: slip.note,
+      items: slip.items.map(item => ({
+        sku: item.sku,
+        name: item.name,
+        qty: item.qty,
+        unitCost: item.unitCost,
+      })),
+    })
+    if (!res.success) throw new Error(res.error || "Khong the tao phieu kho")
+    const created = txSlip(res.data)
+    setAdminSlips(prev=>{const u=[created,...prev.filter(s=>s.id!==created.id)];saveSlips(u);return u})
+    return created.id
   }, [])
 
-  const processAdminSlip = useCallback((id:string,processedBy:string)=>{
+  const processAdminSlip = useCallback(async(id:string,processedBy:string)=>{
+    const res = await inventoryApi.processAdminSlip(id)
+    if (!res.success) throw new Error(res.error || "Khong the xu ly phieu kho")
     setAdminSlips(prev=>{const u=prev.map(s=>s.id===id?{...s,status:"processed" as const,processedAt:new Date().toISOString(),processedBy}:s);saveSlips(u);return u})
-  }, [])
+    await fetchSlips()
+  }, [fetchSlips])
 
   const updatePOStatus = useCallback(async(id:string,status:string)=>{await purchaseOrderApi.updateStatus(id,status);await fetchPOs()}, [fetchPOs])
 

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useCallback, useEffect, useMemo, Fragment, useRef } from "react"
+import { useSearchParams } from "next/navigation"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -37,6 +38,7 @@ interface BookingHistoryEntry {
   time: string; people: number; amount: number; status: string
   paymentMethod: string; customer: { name: string; phone: string; email: string }
   createdAt: string; courtId?: number; note?: string; placedBy?: string; placedByRole?: 'admin' | 'employee' | ''
+  fixedScheduleId?: string | null; fixedOccurrenceId?: string | null
 }
 
 interface CourtBookingEntry {
@@ -74,6 +76,8 @@ interface CompletionNotice {
 
 /* ─── Helpers ─── */
 
+type BookingDateFilterMode = "today" | "date" | "week" | "month" | "all"
+
 function apiToBooking(b: ApiBooking): BookingHistoryEntry {
   const customerName = b.customerName?.trim() || "Khách"
   const customerPhone = b.customerPhone?.trim() || ""
@@ -86,6 +90,7 @@ function apiToBooking(b: ApiBooking): BookingHistoryEntry {
     paymentMethod: b.paymentMethod || "Cash",
     customer: { name: customerName, phone: customerPhone, email: "" },
     createdAt: b.createdAt, courtId: b.courtId, note: b.note || "", placedBy: b.placedBy || "", placedByRole: (b.placedByRole || "") as "admin" | "employee" | "",
+    fixedScheduleId: b.fixedScheduleId || null, fixedOccurrenceId: b.fixedOccurrenceId || null,
   }
 }
 
@@ -121,6 +126,55 @@ function formatDate(dateStr: string) {
     const d = new Date(dateStr)
     return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
   } catch { return dateStr }
+}
+
+function formatDateKey(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
+}
+
+function formatShortDate(date: Date) {
+  return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}`
+}
+
+function formatMonthKey(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`
+}
+
+function parseMonthKey(value: string) {
+  const [year, month] = value.split("-").map(Number)
+  return new Date(year, (month || 1) - 1, 1)
+}
+
+function getWeekRange(date: Date) {
+  const start = new Date(date)
+  const mondayOffset = (start.getDay() + 6) % 7
+  start.setHours(0, 0, 0, 0)
+  start.setDate(start.getDate() - mondayOffset)
+
+  const end = new Date(start)
+  end.setDate(start.getDate() + 6)
+  end.setHours(23, 59, 59, 999)
+
+  return { start, end }
+}
+
+function formatMonthLabel(date: Date) {
+  return `Tháng ${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`
+}
+
+function isFixedScheduleBooking(booking: BookingHistoryEntry) {
+  return Boolean(booking.fixedScheduleId || booking.fixedOccurrenceId || booking.bookingCode.startsWith("FS-"))
+}
+
+function formatBookingDayLabel(dateStr: string) {
+  const date = new Date(`${dateStr}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return dateStr
+  return date.toLocaleDateString("vi-VN", {
+    weekday: "long",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  })
 }
 
 const CHECKIN_EARLY_MINUTES = 15
@@ -242,6 +296,7 @@ function BookingDetailSheet({
   const step = getTimelineStep(booking.status)
   const timing = getBookingTimingState(booking, now)
   const displayStatus = isMissedCheckinBooking(booking, timing) ? MISSED_CHECKIN_STATUS : booking.status
+  const isFixedSchedule = isFixedScheduleBooking(booking)
   const showEarlyCheckinWarning =
     booking.status === "confirmed" &&
     timing &&
@@ -262,8 +317,28 @@ function BookingDetailSheet({
             <p className="text-xs text-muted-foreground">Mã booking</p>
             <p className="font-mono text-lg font-bold text-primary">{booking.bookingCode}</p>
           </div>
-          <BookingStatusBadge status={displayStatus} />
+          {isFixedSchedule && booking.status === "confirmed" && displayStatus === "confirmed" ? (
+            <Badge className="bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-50">
+              Buổi cố định
+            </Badge>
+          ) : (
+            <BookingStatusBadge status={displayStatus} />
+          )}
         </div>
+
+        {isFixedSchedule && (
+          <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+            <div className="flex items-start gap-3">
+              <Repeat className="mt-0.5 h-4 w-4 text-blue-600" />
+              <div>
+                <h4 className="text-sm font-semibold text-blue-900">Buổi thuộc lịch cố định</h4>
+                <p className="mt-1 text-xs text-blue-700">
+                  Đây là một buổi riêng trong gói lịch cố định của khách. Nhân viên chỉ check-in/hoàn thành buổi này, không thao tác hàng loạt cả gói.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Timeline */}
         <div className="flex items-center gap-1">
@@ -414,6 +489,12 @@ function BookingDetailSheet({
             {booking.status === "pending" && <><CheckCircle2 className="h-4 w-4 mr-2" /> Xác nhận booking</>}
             {booking.status === "confirmed" && <><Play className="h-4 w-4 mr-2" /> Check-in</>}
             {booking.status === "playing" && <><CheckCircle2 className="h-4 w-4 mr-2" /> Hoàn thành</>}
+          </Button>
+        )}
+
+        {displayStatus === MISSED_CHECKIN_STATUS && (
+          <Button className="w-full" onClick={() => onStatusChange(booking, "completed")}>
+            <CheckCircle2 className="h-4 w-4 mr-2" /> Hoàn thành quên check-in
           </Button>
         )}
 
@@ -1402,6 +1483,7 @@ function ScheduleView({
    ═══════════════════════════════════════════════════════════ */
 
 export default function EmployeeBookings() {
+  const searchParams = useSearchParams()
   const { user } = useAuth()
 
   // Data
@@ -1416,10 +1498,14 @@ export default function EmployeeBookings() {
   const [activeTab, setActiveTab] = useState("all")
   const [viewMode, setViewMode] = useState<"list" | "schedule">("list")
   const [search, setSearch] = useState("")
+  const [dateFilterMode, setDateFilterMode] = useState<BookingDateFilterMode>("today")
   const [dateFilter, setDateFilter] = useState<Date | undefined>(undefined)
+  const [monthFilter, setMonthFilter] = useState<Date>(() => new Date())
   const [expandedRow, setExpandedRow] = useState<string | null>(null)
-  const [sortField, setSortField] = useState<"date" | "amount" | "createdAt">("createdAt")
+  const [sortField, setSortField] = useState<"date" | "amount" | "createdAt">("date")
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc")
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
 
   // Dialog state
   const [formOpen, setFormOpen] = useState(false)
@@ -1449,7 +1535,7 @@ export default function EmployeeBookings() {
   useEffect(() => {
     const init = async () => {
       try {
-        const [brRes, cRes] = await Promise.all([branchApi.getAll(), courtApi.getAll()])
+        const [brRes, cRes] = await Promise.all([branchApi.getAll(), courtApi.getAll({ includeUnavailable: true })])
         const branchList: BranchItem[] = brRes.map((b: any) => ({ id: b.id, name: b.name, address: b.address }))
         const courtList: CourtItem[] = cRes.map((c: any) => ({ id: c.id, name: c.name, branch: c.branchName || c.branch, branchId: c.branchId, type: c.type, price: c.price, indoor: c.indoor }))
 
@@ -1620,30 +1706,34 @@ export default function EmployeeBookings() {
   /* ─── Computed ─── */
 
   const kpis = useMemo(() => {
-    const today = new Date().toISOString().split("T")[0]
+    const today = formatDateKey(now)
     const todayBookings = bookings.filter(b => b.date === today || b.createdAt?.startsWith(today))
     const totalRevenue = bookings.filter(b => b.status !== "cancelled").reduce((sum, b) => sum + b.amount, 0)
     const pendingCount = bookings.filter(b => b.status === "pending").length
     const playingCount = bookings.filter(b => b.status === "playing").length
     return { total: bookings.length, totalRevenue, todayCount: todayBookings.length, pendingCount, playingCount }
-  }, [bookings])
+  }, [bookings, now])
 
-  const statusTabs = useMemo(() => [
-    { value: "all", label: "Tất cả", count: bookings.length },
-    { value: "hold", label: "Giữ chỗ", count: bookings.filter(b => b.status === "hold").length },
-    { value: "pending", label: "Chờ xác nhận", count: bookings.filter(b => b.status === "pending").length },
-    { value: "confirmed", label: "Đã xác nhận", count: bookings.filter(b => getBookingDisplayStatus(b, now) === "confirmed").length },
-    { value: MISSED_CHECKIN_STATUS, label: "Chưa check-in", count: bookings.filter(b => getBookingDisplayStatus(b, now) === MISSED_CHECKIN_STATUS).length },
-    { value: "playing", label: "Đang chơi", count: bookings.filter(b => b.status === "playing").length },
-    { value: "completed", label: "Hoàn thành", count: bookings.filter(b => b.status === "completed").length },
-    { value: "cancelled", label: "Đã huỷ", count: bookings.filter(b => b.status === "cancelled").length },
-  ], [bookings, now])
-
-  const filtered = useMemo(() => {
+  // Base filtered: áp dụng lọc ngày, search, dateFilter — KHÔNG lọc theo tab status
+  // Dùng chung cho cả tab counts và danh sách hiển thị
+  const baseFiltered = useMemo(() => {
     let result = [...bookings]
+    const focusedDate = dateFilter ? formatDateKey(dateFilter) : formatDateKey(now)
+    const todayDate = formatDateKey(now)
+    const selectedMonth = formatMonthKey(monthFilter)
+    const weekRange = getWeekRange(now)
+    const weekStart = formatDateKey(weekRange.start)
+    const weekEnd = formatDateKey(weekRange.end)
 
-    if (activeTab !== "all") {
-      result = result.filter(b => getBookingDisplayStatus(b, now) === activeTab)
+    // Lịch cố định chỉ hiện/tính khi đúng ngày đang xem để không làm rối các tab trạng thái.
+    if (dateFilterMode === "today") {
+      result = result.filter(b => b.date === todayDate)
+    } else if (dateFilterMode === "date") {
+      result = result.filter(b => b.date === focusedDate)
+    } else if (dateFilterMode === "week") {
+      result = result.filter(b => b.date >= weekStart && b.date <= weekEnd)
+    } else if (dateFilterMode === "month") {
+      result = result.filter(b => b.date.startsWith(`${selectedMonth}-`))
     }
 
     if (search) {
@@ -1657,9 +1747,33 @@ export default function EmployeeBookings() {
       )
     }
 
-    if (dateFilter) {
-      const filterStr = `${dateFilter.getFullYear()}-${(dateFilter.getMonth() + 1).toString().padStart(2, '0')}-${dateFilter.getDate().toString().padStart(2, '0')}`
-      result = result.filter(b => b.date === filterStr || b.date.includes(`${String(dateFilter.getDate()).padStart(2,'0')}/${String(dateFilter.getMonth()+1).padStart(2,'0')}`))
+    return result
+  }, [bookings, search, dateFilter, dateFilterMode, monthFilter, now])
+
+  const statusTabs = useMemo(() => [
+    { value: "all", label: "Tất cả", count: baseFiltered.length },
+    { value: "hold", label: "Giữ chỗ", count: baseFiltered.filter(b => b.status === "hold").length },
+    { value: "pending", label: "Chờ xác nhận", count: baseFiltered.filter(b => b.status === "pending").length },
+    { value: "confirmed", label: "Đã xác nhận", count: baseFiltered.filter(b => getBookingDisplayStatus(b, now) === "confirmed").length },
+    { value: MISSED_CHECKIN_STATUS, label: "Chưa check-in", count: baseFiltered.filter(b => getBookingDisplayStatus(b, now) === MISSED_CHECKIN_STATUS).length },
+    { value: "playing", label: "Đang chơi", count: baseFiltered.filter(b => b.status === "playing").length },
+    { value: "completed", label: "Hoàn thành", count: baseFiltered.filter(b => b.status === "completed").length },
+    { value: "cancelled", label: "Đã huỷ", count: baseFiltered.filter(b => b.status === "cancelled").length },
+  ], [baseFiltered, now])
+
+  useEffect(() => {
+    const bookingId = searchParams.get("bookingId")
+    if (!bookingId) return
+
+    setActiveTab("all")
+    setSearch(bookingId)
+  }, [searchParams])
+
+  const filtered = useMemo(() => {
+    let result = [...baseFiltered]
+
+    if (activeTab !== "all") {
+      result = result.filter(b => getBookingDisplayStatus(b, now) === activeTab)
     }
 
     result.sort((a, b) => {
@@ -1673,7 +1787,68 @@ export default function EmployeeBookings() {
     })
 
     return result
-  }, [bookings, activeTab, search, dateFilter, sortField, sortDir, now])
+  }, [baseFiltered, activeTab, sortField, sortDir, now])
+
+  useEffect(() => {
+    setPage(1)
+  }, [activeTab, dateFilter, dateFilterMode, monthFilter, search, sortDir, sortField, viewMode])
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
+  const pageStart = (page - 1) * pageSize
+  const pageEnd = Math.min(pageStart + pageSize, filtered.length)
+
+  useEffect(() => {
+    setPage(current => Math.min(current, totalPages))
+  }, [totalPages])
+
+  const paginatedBookings = useMemo(
+    () => filtered.slice(pageStart, pageEnd),
+    [filtered, pageEnd, pageStart],
+  )
+
+  const tableRows = useMemo(() => {
+    const sorted = [...paginatedBookings].sort((a, b) => {
+      const dateCmp = a.date.localeCompare(b.date)
+      if (dateCmp !== 0) return sortField === "date" && sortDir === "asc" ? dateCmp : -dateCmp
+      return a.time.localeCompare(b.time)
+    })
+
+    const rows: Array<
+      | { type: "day"; date: string; total: number; fixedTotal: number }
+      | { type: "booking"; booking: BookingHistoryEntry; index: number }
+    > = []
+    let currentDate = ""
+    let index = 0
+
+    sorted.forEach((booking) => {
+      if (booking.date !== currentDate) {
+        currentDate = booking.date
+        const sameDay = sorted.filter(item => item.date === currentDate)
+        rows.push({
+          type: "day",
+          date: currentDate,
+          total: sameDay.length,
+          fixedTotal: sameDay.filter(isFixedScheduleBooking).length,
+        })
+      }
+      rows.push({ type: "booking", booking, index })
+      index += 1
+    })
+
+    return rows
+  }, [paginatedBookings, sortDir, sortField])
+
+  const bookingListDate = dateFilter ?? now
+  const dateFilterButtonLabel =
+    dateFilterMode === "all"
+      ? "Tất cả"
+      : dateFilterMode === "week"
+        ? "Tuần này"
+        : dateFilterMode === "month"
+          ? formatMonthLabel(monthFilter)
+          : dateFilterMode === "date"
+            ? `Ngày ${formatShortDate(bookingListDate)}`
+            : `Hôm nay ${formatShortDate(now)}`
 
   const toggleSort = (field: typeof sortField) => {
     if (sortField === field) setSortDir(d => d === "asc" ? "desc" : "asc")
@@ -1806,20 +1981,109 @@ export default function EmployeeBookings() {
 
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="outline" size="sm" className={cn("h-9 gap-1.5", dateFilter && "bg-primary/10 text-primary border-primary/30")}>
+                <Button variant="outline" size="sm" className={cn("h-9 gap-1.5", dateFilterMode !== "today" && "bg-primary/10 text-primary border-primary/30")}>
                   <CalendarIcon className="h-3.5 w-3.5" />
-                  {dateFilter ? `${String(dateFilter.getDate()).padStart(2,'0')}/${String(dateFilter.getMonth()+1).padStart(2,'0')}` : "Lọc ngày"}
+                  {dateFilterButtonLabel}
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-auto p-0" align="start">
-                <Calendar mode="single" selected={dateFilter} onSelect={setDateFilter} />
-                {dateFilter && (
+                <div className="w-[280px] space-y-3 border-b p-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold text-muted-foreground">Phạm vi</Label>
+                    <Select
+                      value={dateFilterMode}
+                      onValueChange={(value) => setDateFilterMode(value as BookingDateFilterMode)}
+                    >
+                      <SelectTrigger className="h-9">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="today">Hôm nay</SelectItem>
+                        <SelectItem value="date">Chọn ngày</SelectItem>
+                        <SelectItem value="week">Tuần này</SelectItem>
+                        <SelectItem value="month">Theo tháng</SelectItem>
+                        <SelectItem value="all">Tất cả</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {dateFilterMode === "month" && (
+                    <div className="space-y-1.5">
+                      <Label htmlFor="employee-booking-month" className="text-xs font-semibold text-muted-foreground">
+                        Chọn tháng
+                      </Label>
+                      <Input
+                        id="employee-booking-month"
+                        type="month"
+                        value={formatMonthKey(monthFilter)}
+                        onChange={(event) => {
+                          if (event.target.value) setMonthFilter(parseMonthKey(event.target.value))
+                        }}
+                        className="h-9"
+                      />
+                    </div>
+                  )}
+
+                  {dateFilterMode === "week" && (
+                    <p className="rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
+                      {formatShortDate(getWeekRange(now).start)} - {formatShortDate(getWeekRange(now).end)}
+                    </p>
+                  )}
+                </div>
+
+                {dateFilterMode === "date" && (
+                  <Calendar
+                    mode="single"
+                    selected={bookingListDate}
+                    onSelect={(date) => {
+                      if (!date) return
+                      setDateFilter(date)
+                      setDateFilterMode("date")
+                    }}
+                  />
+                )}
+
+                {dateFilterMode !== "today" && (
                   <div className="p-2 border-t">
-                    <Button variant="ghost" size="sm" className="w-full text-xs" onClick={() => setDateFilter(undefined)}>Bỏ lọc ngày</Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full text-xs"
+                      onClick={() => {
+                        setDateFilter(undefined)
+                        setDateFilterMode("today")
+                        setMonthFilter(new Date())
+                      }}
+                    >
+                      Về hôm nay
+                    </Button>
                   </div>
                 )}
               </PopoverContent>
             </Popover>
+
+            <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="whitespace-nowrap">
+                {filtered.length === 0 ? "0" : `${pageStart + 1}-${pageEnd}`} / {filtered.length}
+              </span>
+              <Select
+                value={String(pageSize)}
+                onValueChange={(value) => {
+                  setPageSize(Number(value))
+                  setPage(1)
+                }}
+              >
+                <SelectTrigger className="h-9 w-[118px] text-xs">
+                  <SelectValue placeholder="Dòng/trang" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="10">10 dòng</SelectItem>
+                  <SelectItem value="20">20 dòng</SelectItem>
+                  <SelectItem value="50">50 dòng</SelectItem>
+                  <SelectItem value="100">100 dòng</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           {/* Empty state */}
@@ -1866,10 +2130,33 @@ export default function EmployeeBookings() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filtered.map((booking, idx) => {
+                    {tableRows.map((row) => {
+                      if (row.type === "day") {
+                        return (
+                          <TableRow key={`day-${row.date}`} className="bg-muted/50 hover:bg-muted/50">
+                            <TableCell colSpan={10} className="py-2">
+                              <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                                <CalendarDays className="h-3.5 w-3.5" />
+                                <span>{formatBookingDayLabel(row.date)}</span>
+                                <Badge variant="secondary" className="h-5 text-[10px]">{row.total} buổi</Badge>
+                                {row.fixedTotal > 0 && (
+                                  <Badge className="h-5 bg-blue-50 text-blue-700 border border-blue-200 text-[10px] hover:bg-blue-50">
+                                    {row.fixedTotal} buổi lịch cố định
+                                  </Badge>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      }
+
+                      const booking = row.booking
+                      const idx = row.index
                       const timing = getBookingTimingState(booking, now)
                       const isMissedCheckin = isMissedCheckinBooking(booking, timing)
                       const displayStatus = isMissedCheckin ? MISSED_CHECKIN_STATUS : booking.status
+                      const nextStatus = isMissedCheckin ? "completed" : statusFlow[booking.status]
+                      const isFixedSchedule = isFixedScheduleBooking(booking)
                       const isCheckinBlocked =
                         booking.status === "confirmed" &&
                         !!timing &&
@@ -1885,7 +2172,17 @@ export default function EmployeeBookings() {
                           )}
                           onClick={() => setExpandedRow(expandedRow === booking.id ? null : booking.id)}
                         >
-                          <TableCell className="font-mono text-xs text-primary font-semibold">{booking.bookingCode}</TableCell>
+                          <TableCell>
+                            <div className="space-y-1">
+                              <p className="font-mono text-xs text-primary font-semibold">{booking.bookingCode}</p>
+                              {isFixedSchedule && (
+                                <Badge className="h-5 bg-blue-50 text-blue-700 border border-blue-200 text-[10px] hover:bg-blue-50">
+                                  <Repeat className="mr-1 h-3 w-3" />
+                                  Lịch cố định
+                                </Badge>
+                              )}
+                            </div>
+                          </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <div className="h-7 w-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold shrink-0">
@@ -1905,7 +2202,14 @@ export default function EmployeeBookings() {
                             )}>{booking.placedBy || ""}</span>
                           </TableCell>
                           <TableCell>
-                            <p className="text-sm">{booking.court}</p>
+                            <div>
+                              <p className="text-sm">{booking.court}</p>
+                              {isFixedSchedule && (
+                                <p className="mt-0.5 text-[11px] font-medium text-blue-600">
+                                  Buổi riêng của lịch cố định
+                                </p>
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell className="text-sm">{booking.date}</TableCell>
                           <TableCell className="text-sm">{booking.time}</TableCell>
@@ -1913,7 +2217,13 @@ export default function EmployeeBookings() {
                           <TableCell><PaymentBadge method={booking.paymentMethod} /></TableCell>
                           <TableCell>
                             <div className="space-y-1">
-                              <BookingStatusBadge status={displayStatus} />
+                              {isFixedSchedule && booking.status === "confirmed" && displayStatus === "confirmed" ? (
+                                <Badge className="bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-50">
+                                  Buổi cố định
+                                </Badge>
+                              ) : (
+                                <BookingStatusBadge status={displayStatus} />
+                              )}
                               {isMissedCheckin && timing && (
                                 <p className="text-[11px] font-semibold text-red-600">
                                   Đã qua giờ chơi, khách chưa check-in
@@ -1922,6 +2232,11 @@ export default function EmployeeBookings() {
                               {booking.status === "confirmed" && isCheckinBlocked && timing && (
                                 <p className="text-[11px] font-medium text-amber-600">
                                   Check-in sau {timing.minutesUntilCheckin} phút
+                                </p>
+                              )}
+                              {isFixedSchedule && booking.status === "confirmed" && !isMissedCheckin && (
+                                <p className="text-[11px] font-medium text-blue-600">
+                                  Check-in riêng cho buổi này
                                 </p>
                               )}
                               {booking.status === "playing" && timing && (
@@ -1937,7 +2252,7 @@ export default function EmployeeBookings() {
                           <TableCell>
                             <div className="flex items-center gap-0.5" onClick={e => e.stopPropagation()}>
                               {/* Quick status action */}
-                              {statusFlow[booking.status] && !isMissedCheckin && (
+                              {nextStatus && (
                                 <TooltipProvider>
                                   <Tooltip>
                                     <TooltipTrigger asChild>
@@ -1948,17 +2263,19 @@ export default function EmployeeBookings() {
                                           "h-7 w-7 hover:bg-green-50",
                                           isCheckinBlocked ? "text-amber-600" : "text-green-600"
                                         )}
-                                        onClick={() => handleBookingAction(booking, statusFlow[booking.status])}
+                                        onClick={() => handleBookingAction(booking, nextStatus)}
                                       >
                                         {booking.status === "hold" && <CheckCircle2 className="h-3.5 w-3.5" />}
                                         {booking.status === "pending" && <CheckCircle2 className="h-3.5 w-3.5" />}
-                                        {booking.status === "confirmed" && (isCheckinBlocked ? <Lock className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />)}
+                                        {booking.status === "confirmed" && (isMissedCheckin ? <CheckCircle2 className="h-3.5 w-3.5" /> : isCheckinBlocked ? <Lock className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />)}
                                         {booking.status === "playing" && <CheckCircle2 className="h-3.5 w-3.5" />}
                                       </Button>
                                     </TooltipTrigger>
                                     <TooltipContent>
                                       {booking.status === "confirmed" && isCheckinBlocked && timing
                                         ? `Chi duoc check-in som ${CHECKIN_EARLY_MINUTES} phut`
+                                        : isFixedSchedule && booking.status === "confirmed"
+                                          ? "Check-in buổi cố định này"
                                         : statusActionLabel[booking.status]}
                                     </TooltipContent>
                                   </Tooltip>
@@ -2013,6 +2330,33 @@ export default function EmployeeBookings() {
                     )})}
                   </TableBody>
                 </Table>
+                <div className="flex flex-col gap-3 border-t px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    Trang {page} / {totalPages} · đang xem {filtered.length === 0 ? 0 : `${pageStart + 1}-${pageEnd}`} trong {filtered.length} booking
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1"
+                      disabled={page <= 1}
+                      onClick={() => setPage(current => Math.max(1, current - 1))}
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                      Trước
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1"
+                      disabled={page >= totalPages}
+                      onClick={() => setPage(current => Math.min(totalPages, current + 1))}
+                    >
+                      Sau
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
               </CardContent>
             </Card>
           )}
