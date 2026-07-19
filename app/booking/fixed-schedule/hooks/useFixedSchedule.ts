@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { toast } from "sonner";
-import { fixedScheduleApi } from "@/lib/api";
+import { apiFetch, fixedScheduleApi } from "@/lib/api";
 import type {
   FixedSchedulePreviewRequest,
   FixedSchedulePreviewResponse,
@@ -71,10 +71,8 @@ export function useFixedSchedule(): UseFixedScheduleReturn {
 
         const payload: FixedSchedulePreviewRequest = { ...data };
 
-        console.log("📤 Preview Request payload:", payload);
         const response: FixedSchedulePreviewResponse =
           await fixedScheduleApi.preview(payload);
-        console.log("📥 Preview Response:", response);
 
         // FIX: BE trả về response.occurrences (không phải weeklySlots/numberOfWeeks)
         // Guard an toàn nếu BE trả về cấu trúc không đúng
@@ -93,7 +91,7 @@ export function useFixedSchedule(): UseFixedScheduleReturn {
         // Map PreviewOccurrence → OccurrenceUIState
         // - Không conflict → action: 'keep'
         // - Có conflict + tìm được sân bù → action: 'replace', selectedReplacement = suggestion
-        // - Có conflict + không tìm được → action: 'skip'
+        // - Có conflict + không tìm được → chờ khách đổi lịch hoặc chủ động bỏ
         const uiOccurrences: OccurrenceUIState[] = response.occurrences.map(
           (occ) => {
             if (!occ.hasConflict) {
@@ -112,10 +110,10 @@ export function useFixedSchedule(): UseFixedScheduleReturn {
               };
             }
 
-            // Conflict nhưng không có sân bù → bỏ qua
+            // Không tự bỏ qua: khách phải chọn đổi giờ/ngày hoặc bỏ.
             return {
               ...occ,
-              action: "skip" as OccurrenceAction,
+              action: "pending" as const,
               selectedReplacement: null,
             };
           },
@@ -128,7 +126,7 @@ export function useFixedSchedule(): UseFixedScheduleReturn {
         const { summary } = response;
         if (summary.unresolvableCount > 0) {
           toast.warning(
-            `Có ${summary.unresolvableCount} buổi không tìm được sân bù, đã tự động bỏ qua.`,
+            `Có ${summary.unresolvableCount} buổi chưa có sân thay thế. Vui lòng đổi lịch hoặc chọn bỏ qua.`,
           );
         } else if (summary.replaceableCount > 0) {
           toast.warning(
@@ -142,8 +140,6 @@ export function useFixedSchedule(): UseFixedScheduleReturn {
 
         return true;
       } catch (error: any) {
-        console.error("❌ Preview error:", error);
-
         // FIX: parse lỗi từ BE rõ ràng hơn
         const beMessage =
           error?.response?.data?.message || // NestJS trả { message: '...' }
@@ -227,15 +223,17 @@ export function useFixedSchedule(): UseFixedScheduleReturn {
   const checkSlot = useCallback(
     async (req: CheckSlotRequest): Promise<CheckSlotResponse | null> => {
       try {
-        const API =
-          process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api";
-        const res = await fetch(`${API}/bookings/fixed/check-slot`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(req),
-        });
-        if (!res.ok) throw new Error("Không thể kiểm tra slot");
-        return await res.json();
+        const res = await apiFetch<CheckSlotResponse>(
+          "/bookings/fixed/check-slot",
+          {
+            method: "POST",
+            body: JSON.stringify(req),
+          },
+        );
+        if (!res.success || !res.data) {
+          throw new Error(res.message || "Không thể kiểm tra lịch trống");
+        }
+        return res.data;
       } catch (err: any) {
         toast.error(err.message || "Lỗi kiểm tra slot");
         return null;
@@ -255,10 +253,8 @@ export function useFixedSchedule(): UseFixedScheduleReturn {
       try {
         setLoadingConfirm(true);
 
-        console.log("📤 Confirm Request:", data);
         const response: FixedScheduleConfirmResponse =
           await fixedScheduleApi.confirm(data);
-        console.log("📥 Confirm Response:", response);
 
         setConfirmResult(response);
         toast.success(
@@ -266,8 +262,6 @@ export function useFixedSchedule(): UseFixedScheduleReturn {
         );
         return response;
       } catch (error: any) {
-        console.error("❌ Confirm error:", error);
-
         const msg =
           error?.response?.data?.message ||
           error?.message ||

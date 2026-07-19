@@ -7,6 +7,7 @@ export type FixedScheduleCycle = "weekly" | "monthly";
 export type FixedScheduleBookingMode = "occurrence_count" | "date_range";
 export type PaymentMethod = "cash" | "bank_transfer" | "momo" | "vnpay";
 export type OccurrenceAction = "keep" | "replace" | "custom" | "skip";
+export type OccurrenceUIAction = OccurrenceAction | "pending";
 
 export interface Court {
   id: number;
@@ -96,7 +97,7 @@ export interface FixedSchedulePreviewResponse {
 // ─── OccurrenceUIState ────────────────────────────────────────
 
 export interface OccurrenceUIState extends PreviewOccurrence {
-  action: OccurrenceAction;
+  action: OccurrenceUIAction;
   selectedReplacement: SuggestedReplacement | null;
   customCourtId?: number;
   customCourtName?: string;

@@ -39,6 +39,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-context";
+import { courtApi } from "@/lib/api";
 import { useFixedSchedule } from "./hooks/useFixedSchedule";
 import type {
   FixedScheduleCycle,
@@ -239,11 +240,17 @@ export default function FixedSchedulePage() {
     const load = async () => {
       try {
         setLoadingCourts(true);
-        const API =
-          process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api";
-        const res = await fetch(`${API}/courts`);
-        const data = await res.json();
-        setCourts(Array.isArray(data) ? data : data.data || []);
+        const data = await courtApi.getAll();
+        setCourts(
+          data.map((court) => ({
+            id: court.id,
+            name: court.name,
+            type: court.type,
+            price: court.price,
+            branchId: court.branchId,
+            available: court.available,
+          })),
+        );
       } catch {
         setCourts([]);
       } finally {
@@ -319,6 +326,9 @@ export default function FixedSchedulePage() {
     (o) =>
       o.action === "keep" || o.action === "replace" || o.action === "custom",
   );
+  const unresolvedOccurrences = occurrences.filter(
+    (occurrence) => occurrence.action === "pending",
+  );
 
   // ── Handlers ──
   const updateScheduleRule = (id: string, patch: Partial<ScheduleRuleForm>) => {
@@ -375,10 +385,16 @@ export default function FixedSchedulePage() {
       toast.error("Phải có ít nhất 1 buổi được giữ!");
       return;
     }
+    if (unresolvedOccurrences.length > 0) {
+      toast.error(
+        `Còn ${unresolvedOccurrences.length} buổi trùng lịch cần đổi lịch hoặc chọn bỏ qua.`,
+      );
+      return;
+    }
 
     const decisions = occurrences.map((occ) => ({
       date: occ.date,
-      action: occ.action,
+      action: occ.action as OccurrenceAction,
       ...(occ.action === "replace" && occ.selectedReplacement
         ? { replaceWithCourtId: occ.selectedReplacement.courtId }
         : {}),
@@ -1240,7 +1256,10 @@ export default function FixedSchedulePage() {
                 <Button
                   onClick={handleConfirm}
                   disabled={
-                    !isStep2Valid || !hasBillableOccurrences || loadingConfirm
+                    !isStep2Valid ||
+                    !hasBillableOccurrences ||
+                    unresolvedOccurrences.length > 0 ||
+                    loadingConfirm
                   }
                   className="w-full h-12 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-xl shadow-lg shadow-green-600/25 transition-all hover:-translate-y-0.5 disabled:opacity-50"
                 >
@@ -1752,14 +1771,14 @@ function OccurrenceRow({
               </ActionBtn>
             </>
           ) : (
-            // Không có sân bù: BẮT BUỘC đổi giờ hoặc bỏ
+            // Không có sân bù: BẮT BUỘC đổi ngày/giờ hoặc chủ động bỏ
             <>
               <ActionBtn
                 active={occ.action === "custom"}
                 color="purple"
                 onClick={() => setModalOpen(true)}
               >
-                Đổi giờ
+                Đổi lịch
               </ActionBtn>
               <ActionBtn
                 active={occ.action === "skip"}

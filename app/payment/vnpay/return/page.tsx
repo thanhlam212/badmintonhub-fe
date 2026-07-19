@@ -1,1307 +1,171 @@
-"use client"
+"use client";
 
-import { Navbar } from "@/components/navbar"
-import { Footer } from "@/components/footer"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Badge } from "@/components/ui/badge"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Separator } from "@/components/ui/separator"
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
-import { Textarea } from "@/components/ui/textarea"
-import { BookingStatusBadge } from "@/components/shared"
-import { RouteGuard } from "@/components/route-guard"
-import { AddressInput } from "@/components/address-input"
-import {
-  Calendar, Clock, MapPin, QrCode, Star, ChevronDown, Settings, Heart,
-  Gift, ShoppingBag, Award, User as UserIcon, Save, CheckCircle2,
-  AlertCircle, Mail, Phone, Package, Truck, Receipt, Printer, Download,
-  Copy, CalendarDays, CreditCard, Users, FileText,
-  RefreshCw, SkipForward, XCircle, ChevronRight, Loader2,
-} from "lucide-react"
-import { useState, useEffect } from "react"
-import { formatVND, formatBookingReference } from "@/lib/utils"
-import { bookingApi, orderApi, fixedScheduleApi, type ApiBooking, type ApiOrder } from "@/lib/api"
-import { cn } from "@/lib/utils"
-import { useAuth } from "@/lib/auth-context"
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { CheckCircle2, XCircle, Loader2, ArrowLeft, Home } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import Link from "next/link";
 
-type SidebarPage = "bookings" | "orders" | "favorites" | "rewards" | "settings"
+function VNPayReturnContent() {
+  const searchParams = useSearchParams();
+  const [status, setStatus] = useState<"loading" | "success" | "failed">(
+    "loading",
+  );
+  const [message, setMessage] = useState("");
+  const [orderInfo, setOrderInfo] = useState("");
+  const [amount, setAmount] = useState<number | null>(null);
 
-const sidebarNavItems = [
-  { icon: <Calendar className="h-4 w-4" />, label: "Lịch đặt", page: "bookings" as SidebarPage },
-  { icon: <ShoppingBag className="h-4 w-4" />, label: "Đơn hàng", page: "orders" as SidebarPage },
-  { icon: <Heart className="h-4 w-4" />, label: "Yêu thích", page: "favorites" as SidebarPage },
-  { icon: <Gift className="h-4 w-4" />, label: "Điểm thưởng", page: "rewards" as SidebarPage },
-  { icon: <Settings className="h-4 w-4" />, label: "Cài đặt", page: "settings" as SidebarPage },
-]
+  useEffect(() => {
+    const responseCode = searchParams.get("vnp_ResponseCode");
+    const amountRaw = searchParams.get("vnp_Amount");
+    const info = searchParams.get("vnp_OrderInfo");
 
-function AccountSidebar({ activePage, onPageChange }: { activePage: SidebarPage; onPageChange: (p: SidebarPage) => void }) {
-  const { user } = useAuth()
-  return (
-    <aside className="w-64 shrink-0 hidden lg:block">
-      <Card>
-        <CardContent className="p-6">
-          <div className="flex flex-col items-center text-center">
-            <div className="h-16 w-16 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xl font-bold font-serif">
-              {user?.fullName?.charAt(0)?.toUpperCase() || "U"}
-            </div>
-            <h3 className="font-serif font-bold mt-3">{user?.fullName || "Người dùng"}</h3>
-            <Badge className="mt-1 bg-amber-100 text-amber-800 border-amber-200">
-              <Award className="h-3 w-3 mr-1" /> Thành viên Vàng
-            </Badge>
-          </div>
-          <nav className="mt-6 flex flex-col gap-1">
-            {sidebarNavItems.map(item => (
-              <button
-                key={item.label}
-                onClick={() => onPageChange(item.page)}
-                className={cn(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors text-left",
-                  item.page === activePage
-                    ? "bg-primary/10 text-primary font-semibold"
-                    : "text-muted-foreground hover:bg-muted"
-                )}
-              >
-                {item.icon}
-                {item.label}
-              </button>
-            ))}
-          </nav>
-        </CardContent>
-      </Card>
-    </aside>
-  )
-}
+    if (amountRaw) setAmount(Number.parseInt(amountRaw, 10) / 100);
+    if (info) setOrderInfo(decodeURIComponent(info));
 
-// ─── Booking Detail Dialog ────────────────────────────────────
-function BookingDetailDialog({ booking }: { booking: ApiBooking }) {
-  const dateObj = new Date(booking.bookingDate)
-  const dateStr = dateObj.toLocaleDateString("vi-VN", { weekday: "long", day: "2-digit", month: "2-digit", year: "numeric" })
+    if (responseCode === "00") {
+      setStatus("success");
+      setMessage("Thanh toán thành công!");
+      return;
+    }
 
-  const paymentLabels: Record<string, string> = {
-    cash: "Tiền mặt", momo: "MoMo", vnpay: "VNPay",
-    bank: "Chuyển khoản", wallet: "Ví BadmintonHub",
+    if (!responseCode) {
+      setStatus("failed");
+      setMessage("Không thể xác nhận kết quả thanh toán.");
+      return;
+    }
+
+    const errorMessages: Record<string, string> = {
+      "07": "Trừ tiền thành công. Giao dịch bị nghi ngờ.",
+      "09": "Thẻ/Tài khoản chưa đăng ký dịch vụ Internet Banking.",
+      "10": "Xác thực thông tin thẻ/tài khoản không đúng quá 3 lần.",
+      "11": "Đã hết hạn chờ thanh toán.",
+      "12": "Thẻ/Tài khoản bị khóa.",
+      "13": "Sai OTP. Vui lòng thử lại.",
+      "24": "Khách hàng hủy giao dịch.",
+      "51": "Tài khoản không đủ số dư.",
+      "65": "Tài khoản vượt quá hạn mức giao dịch trong ngày.",
+      "75": "Ngân hàng thanh toán đang bảo trì.",
+      "79": "Nhập sai mật khẩu thanh toán quá số lần quy định.",
+      "99": "Giao dịch thất bại hoặc lỗi không xác định.",
+    };
+    setStatus("failed");
+    setMessage(
+      errorMessages[responseCode] ||
+        `Thanh toán thất bại (mã lỗi: ${responseCode})`,
+    );
+  }, [searchParams]);
+
+  const formatVND = (value: number) =>
+    new Intl.NumberFormat("vi-VN", {
+      style: "currency",
+      currency: "VND",
+    }).format(value);
+
+  if (status === "loading") {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center space-y-3">
+          <Loader2 className="h-10 w-10 animate-spin text-primary mx-auto" />
+          <p className="text-muted-foreground">
+            Đang xử lý kết quả thanh toán...
+          </p>
+        </div>
+      </div>
+    );
   }
 
-  const statusSteps = [
-    { key: "pending",   label: "Chờ xác nhận" },
-    { key: "deposited", label: "Đã đặt cọc" },
-    { key: "confirmed", label: "Đã xác nhận" },
-    { key: "playing",   label: "Đang chơi" },
-    { key: "completed", label: "Hoàn thành" },
-  ]
-  const currentStep = statusSteps.findIndex(s => s.key === booking.status)
-
   return (
-    <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
-      <DialogHeader>
-        <DialogTitle className="font-serif text-lg flex items-center gap-2">
-          <FileText className="h-5 w-5 text-primary" /> Chi tiết đặt sân
-        </DialogTitle>
-      </DialogHeader>
-
-      <div className="space-y-4 mt-2">
-        <div className="flex items-center justify-between">
-          <span className="font-mono text-sm text-primary font-semibold bg-primary/5 px-2 py-1 rounded">
-            {booking.bookingCode || formatBookingReference(booking.id, booking.createdAt)}
-          </span>
-          <BookingStatusBadge status={booking.status} />
-        </div>
-
-        {booking.status !== "cancelled" && (
-          <div className="flex items-center gap-1 mt-2">
-            {statusSteps.map((step, i) => (
-              <div key={step.key} className="flex items-center flex-1">
-                <div className={cn(
-                  "flex items-center justify-center h-6 w-6 rounded-full text-xs font-bold shrink-0",
-                  i <= currentStep ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
-                )}>
-                  {i < currentStep ? <CheckCircle2 className="h-3.5 w-3.5" /> : i + 1}
-                </div>
-                {i < statusSteps.length - 1 && (
-                  <div className={cn("h-0.5 flex-1 mx-1", i < currentStep ? "bg-primary" : "bg-muted")} />
-                )}
+    <div className="min-h-screen flex items-center justify-center p-4 bg-muted/30">
+      <Card className="w-full max-w-md">
+        <CardContent className="pt-8 pb-6 px-6 space-y-6">
+          <div className="text-center">
+            {status === "success" ? (
+              <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-green-100">
+                <CheckCircle2 className="h-10 w-10 text-green-600" />
               </div>
-            ))}
-          </div>
-        )}
-        {booking.status !== "cancelled" && (
-          <div className="flex justify-between">
-            {statusSteps.map((step, i) => (
-              <span key={step.key} className={cn(
-                "text-[10px] text-center flex-1",
-                i <= currentStep ? "text-primary font-medium" : "text-muted-foreground"
-              )}>
-                {step.label}
-              </span>
-            ))}
-          </div>
-        )}
-
-        <Separator />
-
-        <div>
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Thông tin sân</p>
-          <div className="rounded-lg border p-3 space-y-2">
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" /> Sân</span>
-              <span className="font-semibold">{booking.courtName}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" /> Chi nhánh</span>
-              <span className="font-medium">{booking.branchName}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground flex items-center gap-1.5"><Calendar className="h-3.5 w-3.5" /> Ngày</span>
-              <span className="font-medium">{dateStr}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" /> Giờ chơi</span>
-              <span className="font-semibold text-primary">{booking.timeStart} – {booking.timeEnd}</span>
-            </div>
-          </div>
-        </div>
-
-        <div>
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Thanh toán</p>
-          <div className="rounded-lg border p-3 space-y-2">
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground flex items-center gap-1.5"><CreditCard className="h-3.5 w-3.5" /> Phương thức</span>
-              <span className="font-medium">{paymentLabels[booking.paymentMethod || ""] || booking.paymentMethod || "—"}</span>
-            </div>
-            <Separator />
-            <div className="flex justify-between">
-              <span className="font-semibold">Tổng tiền</span>
-              <span className="font-serif font-bold text-lg text-primary">{formatVND(booking.amount)}</span>
-            </div>
-            {booking.pricePerHour > 0 && (
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span>Giá tại thời điểm đặt</span>
-                <span>{formatVND(booking.pricePerHour)}/giờ</span>
+            ) : (
+              <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-red-100">
+                <XCircle className="h-10 w-10 text-red-600" />
               </div>
             )}
           </div>
-        </div>
 
-        {(booking.status === "confirmed" || booking.status === "playing") && (
-          <div>
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">QR Check-in</p>
-            <div className="flex items-center gap-4 rounded-lg bg-muted p-3">
-              <div className="h-20 w-20 bg-card rounded border-2 border-dashed border-border flex items-center justify-center shrink-0">
-                <QrCode className="h-10 w-10 text-muted-foreground" />
-              </div>
-              <div className="text-sm">
-                <p className="font-semibold">Xuất trình khi đến sân</p>
-                <p className="text-muted-foreground text-xs mt-1">Nhân viên sẽ quét mã này để xác nhận lịch chơi</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <p className="text-xs text-muted-foreground">
-          Đặt lúc: {booking.createdAt ? new Date(booking.createdAt).toLocaleString("vi-VN") : "—"}
-        </p>
-      </div>
-    </DialogContent>
-  )
-}
-
-// ─── Booking Card ─────────────────────────────────────────────
-function BookingCard({ booking, onCancel }: { booking: ApiBooking; onCancel?: (id: string) => void }) {
-  const [rating, setRating] = useState(0)
-  const [hoverRating, setHoverRating] = useState(0)
-  const [reviewContent, setReviewContent] = useState("")
-
-  const dateObj = new Date(booking.bookingDate)
-  const dayNum = dateObj.getDate()
-  const month = `Th${dateObj.getMonth() + 1}`
-  const dayNames = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"]
-  const dayName = dayNames[dateObj.getDay()]
-
-  return (
-    <Card className="hover:-translate-y-0.5 transition-all duration-200 hover:shadow-md">
-      <CardContent className="p-4">
-        <div className="flex gap-4">
-          <div className="flex flex-col items-center justify-center rounded-lg bg-primary px-3 py-2 text-primary-foreground shrink-0 min-w-[60px]">
-            <span className="text-xs font-medium">{dayName}</span>
-            <span className="font-serif text-2xl font-extrabold leading-none">{dayNum}</span>
-            <span className="text-xs">{month}</span>
+          <div className="text-center space-y-1">
+            <h1 className="font-serif text-xl font-bold">
+              {status === "success"
+                ? "Thanh toán thành công"
+                : "Thanh toán thất bại"}
+            </h1>
+            <p className="text-sm text-muted-foreground">{message}</p>
           </div>
 
-          <div className="flex-1 min-w-0">
-            <h3 className="font-semibold text-foreground">{booking.courtName}</h3>
-            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1 text-sm text-muted-foreground">
-              <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {booking.timeStart} - {booking.timeEnd}</span>
-              <span className="flex items-center gap-1"><MapPin className="h-3 w-3" /> {booking.branchName}</span>
-            </div>
-            <div className="flex items-center gap-2 mt-2">
-              <span className="text-xs font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded">
-                {booking.bookingCode || formatBookingReference(booking.id, booking.createdAt)}
-              </span>
-              <span className="text-sm font-semibold text-primary">{formatVND(booking.amount)}</span>
-            </div>
-          </div>
-
-          <div className="flex flex-col items-end gap-2 shrink-0">
-            <BookingStatusBadge status={booking.status} />
-            <div className="flex gap-1.5 flex-wrap justify-end">
-              <Dialog>
-                <DialogTrigger asChild>
-                  <Button variant="outline" size="sm" className="text-xs h-7">Chi tiết</Button>
-                </DialogTrigger>
-                <BookingDetailDialog booking={booking} />
-              </Dialog>
-
-              {(booking.status === "pending" || booking.status === "confirmed") && (
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button variant="outline" size="sm" className="text-xs h-7 text-red-600 hover:text-red-700 border-red-200">Huỷ</Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle className="font-serif">Xác nhận huỷ đặt sân?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        Chính sách hoàn tiền: Huỷ trước 24h được hoàn 100%. Huỷ trước 2h được hoàn 50%. Huỷ trong vòng 2h không được hoàn tiền.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Quay lại</AlertDialogCancel>
-                      <AlertDialogAction className="bg-red-600 text-white hover:bg-red-700" onClick={() => onCancel?.(booking.id)}>
-                        Xác nhận huỷ
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              )}
-
-              {booking.status === "completed" && (
-                <Dialog>
-                  <DialogTrigger asChild>
-                    <Button size="sm" className="text-xs h-7 bg-primary text-primary-foreground hover:bg-primary/90">Đánh giá</Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle className="font-serif">Đánh giá trải nghiệm</DialogTitle>
-                    </DialogHeader>
-                    <div className="py-4 space-y-4">
-                      <p className="text-sm text-muted-foreground text-center">{booking.courtName}</p>
-                      <div className="flex justify-center gap-2">
-                        {[1, 2, 3, 4, 5].map(s => (
-                          <button key={s} onMouseEnter={() => setHoverRating(s)} onMouseLeave={() => setHoverRating(0)} onClick={() => setRating(s)}>
-                            <Star className={cn("h-8 w-8 transition-colors", (hoverRating || rating) >= s ? "fill-amber-400 text-amber-400" : "text-muted")} />
-                          </button>
-                        ))}
-                      </div>
-                      <p className="text-center text-sm text-muted-foreground">
-                        {rating === 0 ? "Chọn số sao" : `Bạn đánh giá ${rating} sao`}
-                      </p>
-                      <Textarea placeholder="Chia sẻ trải nghiệm của bạn về sân..." value={reviewContent} onChange={e => setReviewContent(e.target.value)} rows={3} />
-                      <Button className="w-full bg-primary text-primary-foreground hover:bg-primary/90 font-semibold" disabled={rating === 0}>
-                        Gửi đánh giá
-                      </Button>
-                    </div>
-                  </DialogContent>
-                </Dialog>
-              )}
-            </div>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-// ═══════════════════════════════════════════════════════════════
-// ─── ✨ MỚI: Fixed Schedule Types ─────────────────────────────
-// ═══════════════════════════════════════════════════════════════
-
-interface FixedScheduleSummary {
-  id: string
-  status: string
-  cycle: "weekly" | "monthly"
-  startDate: string
-  endDate: string
-  timeStart: string
-  timeEnd: string
-  occurrenceCount: number
-  adjustmentLimit: number
-  adjustmentUsed: number
-  totalAmountSnapshot: number
-  court: {
-    id: number
-    name: string
-    type: string
-    branch: { name: string; address: string }
-  }
-  occurrenceSummary: {
-    total: number
-    scheduled: number
-    completed: number
-    skipped: number
-    upcoming: {
-      id: string
-      date: string
-      dayLabel: string
-      timeStart: string
-      timeEnd: string
-    }[]
-  }
-  invoice: { id: string; code: string; status: string } | null
-}
-
-interface FixedScheduleDetail extends FixedScheduleSummary {
-  occurrences: {
-    id: string
-    date: string
-    dayLabel: string
-    timeStart: string
-    timeEnd: string
-    status: string
-    courtName: string
-    courtId: number
-    amountSnapshot: number
-  }[]
-}
-
-const FIXED_STATUS_CONFIG: Record<string, { label: string; color: string }> = {
-  pending:   { label: "Chờ thanh toán", color: "bg-amber-100 text-amber-800 border-amber-200" },
-  deposited: { label: "Đã cọc",         color: "bg-blue-100 text-blue-800 border-blue-200" },
-  confirmed: { label: "Đã xác nhận",    color: "bg-green-100 text-green-800 border-green-200" },
-  completed: { label: "Hoàn thành",     color: "bg-gray-100 text-gray-600 border-gray-200" },
-  cancelled: { label: "Đã hủy",         color: "bg-red-100 text-red-600 border-red-200" },
-}
-
-const OCC_STATUS_CONFIG: Record<string, { label: string; icon: React.ReactNode; rowClass: string; badgeClass: string }> = {
-  scheduled:  { label: "Sắp tới",    icon: <Clock className="h-3 w-3" />,        rowClass: "bg-white",         badgeClass: "bg-green-50 text-green-700 border-green-100" },
-  completed:  { label: "Hoàn thành", icon: <CheckCircle2 className="h-3 w-3" />, rowClass: "bg-muted/30",      badgeClass: "bg-blue-50 text-blue-600 border-blue-100" },
-  skipped:    { label: "Bỏ qua",     icon: <SkipForward className="h-3 w-3" />,  rowClass: "bg-muted/30",      badgeClass: "bg-gray-100 text-gray-500 border-gray-200" },
-  rescheduled:{ label: "Đổi lịch",   icon: <RefreshCw className="h-3 w-3" />,    rowClass: "bg-blue-50/30",    badgeClass: "bg-blue-50 text-blue-600 border-blue-100" },
-  cancelled:  { label: "Đã hủy",     icon: <XCircle className="h-3 w-3" />,      rowClass: "bg-red-50/20",     badgeClass: "bg-red-50 text-red-500 border-red-100" },
-}
-
-// ─── Fixed Schedule Card ──────────────────────────────────────
-function FixedScheduleCard({
-  schedule,
-  onViewDetail,
-}: {
-  schedule: FixedScheduleSummary
-  onViewDetail: (id: string) => void
-}) {
-  const statusCfg = FIXED_STATUS_CONFIG[schedule.status] || FIXED_STATUS_CONFIG.pending
-  const adjustmentLeft = schedule.adjustmentLimit - schedule.adjustmentUsed
-
-  return (
-    <Card
-      className="hover:-translate-y-0.5 transition-all duration-200 hover:shadow-md cursor-pointer group"
-      onClick={() => onViewDetail(schedule.id)}
-    >
-      <CardContent className="p-4">
-        <div className="flex flex-col gap-3">
-          {/* Row 1: Tên sân + status + arrow */}
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="font-semibold text-foreground">{schedule.court.name}</h3>
-                <span className="text-xs px-1.5 py-0.5 bg-muted rounded text-muted-foreground">
-                  {schedule.court.type}
-                </span>
-              </div>
-              <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
-                <MapPin className="h-3 w-3" />
-                {schedule.court.branch.name}
-              </p>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <Badge variant="outline" className={cn("text-xs", statusCfg.color)}>
-                {statusCfg.label}
-              </Badge>
-              <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
-            </div>
-          </div>
-
-          {/* Row 2: Thông tin gói */}
-          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1">
-              <RefreshCw className="h-3 w-3" />
-              {schedule.cycle === "weekly" ? "Hàng tuần" : "Hàng tháng"}
-            </span>
-            <span className="flex items-center gap-1">
-              <Clock className="h-3 w-3" />
-              {schedule.timeStart} – {schedule.timeEnd}
-            </span>
-            <span className="flex items-center gap-1">
-              <Calendar className="h-3 w-3" />
-              {schedule.startDate} → {schedule.endDate}
-            </span>
-          </div>
-
-          {/* Row 3: Stats */}
-          <div className="grid grid-cols-4 gap-2">
-            {[
-              { label: "Tổng",    value: schedule.occurrenceSummary.total,     color: "text-foreground" },
-              { label: "Còn lại", value: schedule.occurrenceSummary.scheduled, color: "text-green-600" },
-              { label: "Xong",    value: schedule.occurrenceSummary.completed, color: "text-blue-600" },
-              { label: "Bỏ",      value: schedule.occurrenceSummary.skipped,   color: "text-muted-foreground" },
-            ].map(stat => (
-              <div key={stat.label} className="bg-muted/60 rounded-lg p-2 text-center">
-                <p className={cn("text-base font-bold", stat.color)}>{stat.value}</p>
-                <p className="text-[10px] text-muted-foreground">{stat.label}</p>
-              </div>
-            ))}
-          </div>
-
-          {/* Row 4: Buổi sắp tới */}
-          {schedule.occurrenceSummary.upcoming.length > 0 && (
-            <div>
-              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">
-                Buổi sắp tới
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {schedule.occurrenceSummary.upcoming.map(occ => (
-                  <span
-                    key={occ.id}
-                    className="inline-flex items-center gap-1 px-2 py-1 bg-primary/5 border border-primary/20 rounded-lg text-xs text-primary"
-                  >
-                    <Calendar className="h-3 w-3" />
-                    <span className="font-medium">{occ.dayLabel} {occ.date}</span>
-                    <span className="text-primary/70">{occ.timeStart}</span>
+          {(amount !== null || orderInfo) && (
+            <div className="rounded-lg border p-4 space-y-2 bg-muted/30">
+              {orderInfo && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Nội dung</span>
+                  <span className="font-medium text-right max-w-[60%]">
+                    {orderInfo}
                   </span>
-                ))}
+                </div>
+              )}
+              {amount !== null && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Số tiền</span>
+                  <span className="font-bold text-primary">
+                    {formatVND(amount)}
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Phương thức</span>
+                <span className="font-medium">VNPay</span>
               </div>
             </div>
           )}
 
-<<<<<<< HEAD
-          {/* Row 5: Footer */}
-          <div className="flex items-center justify-between pt-1 border-t border-border/50">
-            <div className="flex items-center gap-2">
-              {schedule.invoice && (
-                <span className={cn(
-                  "text-xs px-2 py-0.5 rounded-full border",
-                  schedule.invoice.status === "paid"      ? "bg-green-50 text-green-600 border-green-200" :
-                  schedule.invoice.status === "deposited" ? "bg-blue-50 text-blue-600 border-blue-200" :
-                  "bg-amber-50 text-amber-600 border-amber-200"
-                )}>
-                  {schedule.invoice.status === "paid" ? "Đã thanh toán" :
-                   schedule.invoice.status === "deposited" ? "Đã cọc" : "Chưa thanh toán"}
-                </span>
-              )}
-              {adjustmentLeft > 0 && (
-                <span className="text-xs text-muted-foreground">
-                  Còn {adjustmentLeft} lần điều chỉnh
-                </span>
-              )}
-            </div>
-            <p className="font-serif font-bold text-primary">
-              {formatVND(schedule.totalAmountSnapshot)}
-            </p>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-// ─── Fixed Schedule Detail Dialog ────────────────────────────
-function FixedScheduleDetailDialog({
-  schedule,
-  open,
-  onClose,
-}: {
-  schedule: FixedScheduleDetail | null
-  open: boolean
-  onClose: () => void
-}) {
-  const [filter, setFilter] = useState<"all" | "scheduled" | "completed" | "skipped">("all")
-
-  if (!schedule) return null
-
-  const filtered = filter === "all"
-    ? schedule.occurrences
-    : schedule.occurrences.filter(o => o.status === filter)
-
-  return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="font-serif text-lg flex items-center gap-2">
-            <Calendar className="h-5 w-5 text-primary" />
-            Chi tiết gói đặt lịch cố định
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="space-y-4">
-          {/* Thông tin gói */}
-          <div className="grid grid-cols-2 gap-3 p-4 bg-muted/30 rounded-xl text-sm">
-            <div>
-              <p className="text-xs text-muted-foreground mb-0.5">Sân</p>
-              <p className="font-semibold">{schedule.court.name}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-0.5">Chi nhánh</p>
-              <p className="font-medium">{schedule.court.branch.name}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-0.5">Chu kỳ</p>
-              <p className="font-medium">{schedule.cycle === "weekly" ? "Hàng tuần" : "Hàng tháng"}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-0.5">Khung giờ</p>
-              <p className="font-semibold text-primary">{schedule.timeStart} – {schedule.timeEnd}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-0.5">Thời gian</p>
-              <p className="font-medium">{schedule.startDate} → {schedule.endDate}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-0.5">Tổng tiền</p>
-              <p className="font-serif font-bold text-primary text-base">
-                {formatVND(schedule.totalAmountSnapshot)}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-0.5">Điều chỉnh</p>
-              <p className="font-medium">
-                {schedule.adjustmentUsed}/{schedule.adjustmentLimit} lần đã dùng
-              </p>
-            </div>
-            {schedule.invoice && (
-              <div>
-                <p className="text-xs text-muted-foreground mb-0.5">Hóa đơn</p>
-                <p className="font-mono text-xs font-medium text-primary">{schedule.invoice.code}</p>
-              </div>
-=======
           <div className="space-y-2">
-            {status === "success" ? (
-              <>
-                <Button asChild className="w-full">
-                  <Link href="/my-bookings">
-                    <CheckCircle2 className="h-4 w-4 mr-2" /> Xem lịch đặt sân
-                  </Link>
-                </Button>
-                <Button asChild variant="outline" className="w-full">
-                  <Link href="/">
-                    <Home className="h-4 w-4 mr-2" /> Về trang chủ
-                  </Link>
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button asChild className="w-full">
-                  <Link href="/my-bookings">
-                    <ArrowLeft className="h-4 w-4 mr-2" /> Xem đơn đặt sân & thử lại
-                  </Link>
-                </Button>
-                <Button asChild variant="outline" className="w-full">
-                  <Link href="/">
-                    <Home className="h-4 w-4 mr-2" /> Về trang chủ
-                  </Link>
-                </Button>
-              </>
->>>>>>> 3324be58fa0217cdeebf0c78e3df813cb7720999
-            )}
+            <Button asChild className="w-full">
+              <Link href="/my-bookings">
+                {status === "success" ? (
+                  <CheckCircle2 className="h-4 w-4 mr-2" />
+                ) : (
+                  <ArrowLeft className="h-4 w-4 mr-2" />
+                )}
+                {status === "success"
+                  ? "Xem lịch đặt sân"
+                  : "Xem đơn đặt sân và thử lại"}
+              </Link>
+            </Button>
+            <Button asChild variant="outline" className="w-full">
+              <Link href="/">
+                <Home className="h-4 w-4 mr-2" /> Về trang chủ
+              </Link>
+            </Button>
           </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
 
-          {/* Filter tabs */}
-          <div>
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-              Danh sách buổi ({schedule.occurrences.length} buổi)
+export default function VNPayReturnPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center">
+          <div className="text-center space-y-3">
+            <Loader2 className="h-10 w-10 animate-spin text-primary mx-auto" />
+            <p className="text-muted-foreground">
+              Đang xử lý kết quả thanh toán...
             </p>
-            <div className="flex gap-2 flex-wrap">
-              {(["all", "scheduled", "completed", "skipped"] as const).map(f => (
-                <button
-                  key={f}
-                  onClick={() => setFilter(f)}
-                  className={cn(
-                    "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
-                    filter === f
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted text-muted-foreground hover:bg-muted/80"
-                  )}
-                >
-                  {f === "all"       ? `Tất cả (${schedule.occurrences.length})` :
-                   f === "scheduled" ? `Sắp tới (${schedule.occurrences.filter(o => o.status === "scheduled").length})` :
-                   f === "completed" ? `Xong (${schedule.occurrences.filter(o => o.status === "completed").length})` :
-                   `Bỏ qua (${schedule.occurrences.filter(o => o.status === "skipped").length})`}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Occurrences list */}
-          <div className="border rounded-xl overflow-hidden divide-y divide-border max-h-64 overflow-y-auto">
-            {filtered.length === 0 ? (
-              <div className="py-8 text-center text-sm text-muted-foreground">Không có buổi nào</div>
-            ) : (
-              filtered.map((occ, idx) => {
-                const cfg = OCC_STATUS_CONFIG[occ.status] || OCC_STATUS_CONFIG.scheduled
-                const isOriginalCourt = occ.courtId === schedule.court.id
-                return (
-                  <div key={occ.id} className={cn("flex items-center gap-3 px-4 py-3", cfg.rowClass)}>
-                    <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-xs font-bold text-muted-foreground shrink-0">
-                      {idx + 1}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-sm font-semibold">{occ.dayLabel}</span>
-                        <span className="text-xs text-muted-foreground">{occ.date}</span>
-                        {!isOriginalCourt && (
-                          <span className="text-xs px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded border border-blue-100">
-                            {occ.courtName}
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {occ.timeStart} – {occ.timeEnd}
-                        {occ.amountSnapshot > 0 && (
-                          <span className="ml-2">{formatVND(occ.amountSnapshot)}</span>
-                        )}
-                      </p>
-                    </div>
-                    <span className={cn("inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium border shrink-0", cfg.badgeClass)}>
-                      {cfg.icon}
-                      {cfg.label}
-                    </span>
-                  </div>
-                )
-              })
-            )}
           </div>
         </div>
-      </DialogContent>
-    </Dialog>
-  )
+      }
+    >
+      <VNPayReturnContent />
+    </Suspense>
+  );
 }
-
-// ─── Fixed Schedule View ──────────────────────────────────────
-function FixedScheduleView() {
-  const { user } = useAuth()
-  const [schedules, setSchedules] = useState<FixedScheduleSummary[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState("")
-  const [selectedSchedule, setSelectedSchedule] = useState<FixedScheduleDetail | null>(null)
-  const [loadingDetail, setLoadingDetail] = useState(false)
-  const [dialogOpen, setDialogOpen] = useState(false)
-
-  useEffect(() => {
-    fetchSchedules()
-  }, [])
-
-  const fetchSchedules = async () => {
-    try {
-      setLoading(true)
-      setError("")
-      // ✅ Dùng fixedScheduleApi (đã có token qua apiFetch/getToken)
-      const data = await fixedScheduleApi.getMySchedules()
-      setSchedules(data)
-    } catch (err: any) {
-      setError(err.message || "Có lỗi xảy ra")
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleViewDetail = async (id: string) => {
-    try {
-      setLoadingDetail(true)
-      setDialogOpen(true)
-      // ✅ Dùng fixedScheduleApi
-      const detail = await fixedScheduleApi.getScheduleDetail(id)
-      setSelectedSchedule(detail)
-    } catch {
-      setDialogOpen(false)
-    } finally {
-      setLoadingDetail(false)
-    }
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-16">
-        <Loader2 className="h-8 w-8 text-primary animate-spin" />
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <Card>
-        <CardContent className="p-8 text-center">
-          <AlertCircle className="h-12 w-12 text-red-400 mx-auto mb-3" />
-          <p className="text-sm text-muted-foreground mb-4">{error}</p>
-          <Button variant="outline" size="sm" onClick={fetchSchedules}>Thử lại</Button>
-        </CardContent>
-      </Card>
-    )
-  }
-
-  if (schedules.length === 0) {
-    return (
-      <Card>
-        <CardContent className="p-12 text-center">
-          <CalendarDays className="h-12 w-12 text-muted-foreground/20 mx-auto mb-4" />
-          <h3 className="font-serif font-bold text-lg text-muted-foreground">Chưa có lịch cố định nào</h3>
-          <p className="text-sm text-muted-foreground mt-1">Đặt gói sân cố định để không lo hết chỗ!</p>
-          <a href="/booking/fixed-schedule">
-            <Button className="mt-4 bg-primary text-primary-foreground hover:bg-primary/90 gap-2">
-              <CalendarDays className="h-4 w-4" /> Đặt lịch ngay
-            </Button>
-          </a>
-        </CardContent>
-      </Card>
-    )
-  }
-
-  return (
-    <>
-      <div className="flex flex-col gap-4">
-        {schedules.map(s => (
-          <FixedScheduleCard key={s.id} schedule={s} onViewDetail={handleViewDetail} />
-        ))}
-      </div>
-
-      {/* Detail dialog */}
-      {loadingDetail && dialogOpen && (
-        <Dialog open onOpenChange={() => setDialogOpen(false)}>
-          <DialogContent className="max-w-sm">
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 text-primary animate-spin" />
-            </div>
-          </DialogContent>
-        </Dialog>
-      )}
-
-      <FixedScheduleDetailDialog
-        schedule={selectedSchedule}
-        open={dialogOpen && !loadingDetail}
-        onClose={() => { setDialogOpen(false); setSelectedSchedule(null) }}
-      />
-    </>
-  )
-}
-
-/* ───────────────────── Profile Settings ───────────────────── */
-function ProfileSettingsForm() {
-  const { user, updateProfile } = useAuth()
-  const [fullName, setFullName] = useState(user?.fullName || "")
-  const [email, setEmail] = useState(user?.email || "")
-  const [phone, setPhone] = useState(user?.phone || "")
-  const [address, setAddress] = useState(user?.address || "")
-  const [gender, setGender] = useState<"nam" | "nữ" | "">(user?.gender || "")
-  const [dateOfBirth, setDateOfBirth] = useState(user?.dateOfBirth || "")
-  const [errors, setErrors] = useState<Record<string, string>>({})
-  const [saving, setSaving] = useState(false)
-  const [successMsg, setSuccessMsg] = useState("")
-
-  const validate = () => {
-    const newErrors: Record<string, string> = {}
-    if (!fullName.trim()) newErrors.fullName = "Vui lòng nhập họ tên"
-    if (!email.trim()) newErrors.email = "Vui lòng nhập email"
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) newErrors.email = "Email không hợp lệ"
-    if (!phone.trim()) newErrors.phone = "Vui lòng nhập số điện thoại"
-    else if (!/^0\d{9}$/.test(phone)) newErrors.phone = "Số điện thoại không hợp lệ"
-    if (!address.trim()) newErrors.address = "Vui lòng nhập địa chỉ"
-    setErrors(newErrors)
-    return Object.keys(newErrors).length === 0
-  }
-
-  const handleSave = async () => {
-    if (!validate()) return
-    setSaving(true)
-    const result = await updateProfile({ fullName, email, phone, address, gender: gender || undefined, dateOfBirth: dateOfBirth || undefined })
-    setSaving(false)
-    if (result.success) {
-      setSuccessMsg("Cập nhật thành công!")
-      setTimeout(() => setSuccessMsg(""), 3000)
-    } else {
-      setErrors({ general: result.error || "Có lỗi xảy ra" })
-    }
-  }
-
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="font-serif text-2xl font-extrabold">Thông tin tài khoản</h1>
-        <p className="text-muted-foreground mt-1">Quản lý thông tin cá nhân</p>
-      </div>
-
-      {successMsg && (
-        <Card className="border-green-200 bg-green-50">
-          <CardContent className="p-4 flex items-center gap-3">
-            <CheckCircle2 className="h-5 w-5 text-green-600" />
-            <p className="text-sm font-semibold text-green-800">{successMsg}</p>
-          </CardContent>
-        </Card>
-      )}
-      {errors.general && (
-        <Card className="border-red-200 bg-red-50">
-          <CardContent className="p-4 flex items-center gap-3">
-            <AlertCircle className="h-5 w-5 text-red-600" />
-            <p className="text-sm font-semibold text-red-800">{errors.general}</p>
-          </CardContent>
-        </Card>
-      )}
-
-      <Card>
-        <CardHeader><CardTitle className="font-serif text-lg flex items-center gap-2"><UserIcon className="h-5 w-5 text-primary" /> Tài khoản</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label className="text-sm text-muted-foreground">Tên đăng nhập</Label>
-              <Input value={user?.username || ""} disabled className="mt-1.5 bg-muted" />
-            </div>
-            <div>
-              <Label className="text-sm text-muted-foreground">Vai trò</Label>
-              <Input value={user?.role === "admin" ? "Quản trị viên" : user?.role === "employee" ? "Nhân viên" : "Người dùng"} disabled className="mt-1.5 bg-muted" />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle className="font-serif text-lg flex items-center gap-2"><Settings className="h-5 w-5 text-primary" /> Thông tin cá nhân</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label className="text-sm">Họ tên <span className="text-red-500">*</span></Label>
-              <Input value={fullName} onChange={e => { setFullName(e.target.value); setErrors(p => ({ ...p, fullName: "" })) }} className={cn("mt-1.5", errors.fullName && "border-red-500")} />
-              {errors.fullName && <p className="text-xs text-red-500 mt-1">{errors.fullName}</p>}
-            </div>
-            <div>
-              <Label className="text-sm">Số điện thoại <span className="text-red-500">*</span></Label>
-              <Input value={phone} onChange={e => { setPhone(e.target.value); setErrors(p => ({ ...p, phone: "" })) }} className={cn("mt-1.5", errors.phone && "border-red-500")} placeholder="0901234567" />
-              {errors.phone && <p className="text-xs text-red-500 mt-1">{errors.phone}</p>}
-            </div>
-          </div>
-          <div>
-            <Label className="text-sm">Email <span className="text-red-500">*</span></Label>
-            <Input value={email} onChange={e => { setEmail(e.target.value); setErrors(p => ({ ...p, email: "" })) }} className={cn("mt-1.5", errors.email && "border-red-500")} />
-            {errors.email && <p className="text-xs text-red-500 mt-1">{errors.email}</p>}
-          </div>
-          <div>
-            <Label className="text-sm">Địa chỉ <span className="text-red-500">*</span></Label>
-            <AddressInput value={address} onChange={val => { setAddress(val); setErrors(p => ({ ...p, address: "" })) }} placeholder="Tìm kiếm địa chỉ..." error={errors.address} className="mt-1.5" />
-            {errors.address && <p className="text-xs text-red-500 mt-1">{errors.address}</p>}
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label className="text-sm">Giới tính</Label>
-              <div className="flex gap-3 mt-1.5">
-                {(["nam", "nữ"] as const).map(g => (
-                  <button key={g} type="button" onClick={() => setGender(g)} className={cn(
-                    "flex-1 h-10 rounded-lg border-2 text-sm font-medium transition-all",
-                    gender === g ? "border-primary bg-primary/5 text-primary" : "border-border hover:border-muted-foreground/50"
-                  )}>
-                    {g === "nam" ? "♂ Nam" : "♀ Nữ"}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <Label className="text-sm">Ngày sinh</Label>
-              <div className="relative mt-1.5">
-                <CalendarDays className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input type="date" value={dateOfBirth} onChange={e => setDateOfBirth(e.target.value)} className="pl-10" />
-              </div>
-            </div>
-          </div>
-          <div className="flex justify-end pt-2">
-            <Button onClick={handleSave} disabled={saving} className="bg-primary text-primary-foreground hover:bg-primary/90 font-semibold gap-2 min-w-[160px]">
-              {saving ? <><div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Đang lưu...</> : <><Save className="h-4 w-4" /> Lưu thông tin</>}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  )
-}
-
-/* ─── Order History ─────────────────────────────────────────── */
-const paymentLabels: Record<string, string> = { cod: "COD", momo: "MoMo", vnpay: "VNPay", bank: "Chuyển khoản" }
-const orderStatusConfig: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
-  pending:    { label: "Chờ xử lý",  color: "bg-amber-100 text-amber-800 border-amber-200",    icon: <Clock className="h-3.5 w-3.5" /> },
-  processing: { label: "Đang xử lý", color: "bg-blue-100 text-blue-800 border-blue-200",       icon: <Package className="h-3.5 w-3.5" /> },
-  shipping:   { label: "Đang giao",  color: "bg-purple-100 text-purple-800 border-purple-200", icon: <Truck className="h-3.5 w-3.5" /> },
-  delivered:  { label: "Đã giao",    color: "bg-green-100 text-green-800 border-green-200",    icon: <CheckCircle2 className="h-3.5 w-3.5" /> },
-  cancelled:  { label: "Đã hủy",     color: "bg-red-100 text-red-800 border-red-200",          icon: <AlertCircle className="h-3.5 w-3.5" /> },
-}
-
-function OrderStatusBadge({ status }: { status: string }) {
-  const cfg = orderStatusConfig[status] || orderStatusConfig.pending
-  return <Badge variant="outline" className={cn("gap-1", cfg.color)}>{cfg.icon} {cfg.label}</Badge>
-}
-
-function OrderHistoryView() {
-  const { user } = useAuth()
-  const [orders, setOrders] = useState<ApiOrder[]>([])
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    setLoading(true)
-    orderApi.getMyOrders().then(data => { setOrders(data); setLoading(false) })
-  }, [user])
-
-  const paymentLabels: Record<string, string> = { cod: "COD (Thanh toán khi nhận)", momo: "MoMo", vnpay: "VNPay", bank: "Chuyển khoản", cash: "Tiền mặt" }
-  const deliveryLabels: Record<string, string> = { delivery: "Giao hàng tận nơi", pickup: "Nhận tại cửa hàng" }
-
-  const orderStatusSteps: { key: string; label: string }[] = [
-    { key: "pending",    label: "Chờ xử lý" },
-    { key: "confirmed",  label: "Đã xác nhận" },
-    { key: "processing", label: "Đang xử lý" },
-    { key: "shipping",   label: "Đang giao" },
-    { key: "delivered",  label: "Đã giao" },
-  ]
-
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="font-serif text-2xl font-extrabold">Đơn hàng của tôi</h1>
-        <p className="text-muted-foreground mt-1">Theo dõi tình trạng đơn hàng và xem lại lịch sử mua hàng</p>
-      </div>
-      {loading ? (
-        <div className="flex items-center justify-center py-16">
-          <Loader2 className="h-8 w-8 text-primary animate-spin" />
-        </div>
-      ) : orders.length === 0 ? (
-        <Card><CardContent className="p-12 text-center">
-          <ShoppingBag className="h-16 w-16 text-muted-foreground/20 mx-auto mb-4" />
-          <h3 className="font-serif font-bold text-lg text-muted-foreground">Chưa có đơn hàng nào</h3>
-          <a href="/shop"><Button className="mt-4 bg-primary text-primary-foreground hover:bg-primary/90 gap-2"><ShoppingBag className="h-4 w-4" /> Đi mua sắm</Button></a>
-        </CardContent></Card>
-      ) : (
-        <div className="space-y-3">
-          {orders.map(order => {
-            const currentStep = Math.max(0, orderStatusSteps.findIndex(s => s.key === order.status))
-
-            return (
-              <Card key={order.id} className="hover:shadow-md transition-shadow">
-                <CardContent className="p-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-mono font-bold text-primary">{order.orderCode || order.id.slice(0, 8)}</span>
-                        <OrderStatusBadge status={order.status} />
-                      </div>
-                      <p className="text-sm text-muted-foreground mt-1">{new Date(order.createdAt).toLocaleString("vi-VN")}</p>
-                      <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
-                        {order.items.map(i => `${i.productName} x${i.quantity}`).join(", ")}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      <p className="font-serif font-bold text-primary text-lg">{formatVND(order.amount)}</p>
-                      <Dialog>
-                        <DialogTrigger asChild>
-                          <Button variant="outline" size="sm" className="gap-1">
-                            <Receipt className="h-4 w-4" /> Chi tiết
-                          </Button>
-                        </DialogTrigger>
-                        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
-                          <DialogHeader>
-                            <DialogTitle className="font-serif text-lg flex items-center gap-2">
-                              <FileText className="h-5 w-5 text-primary" /> Chi tiết đơn hàng
-                            </DialogTitle>
-                          </DialogHeader>
-                          <div className="space-y-4 mt-2">
-                            {/* Order code & status */}
-                            <div className="flex items-center justify-between">
-                              <span className="font-mono text-sm text-primary font-semibold bg-primary/5 px-2 py-1 rounded">
-                                {order.orderCode || order.id.slice(0, 8)}
-                              </span>
-                              <OrderStatusBadge status={order.status} />
-                            </div>
-
-                            {/* Status steps */}
-                            {order.status !== "cancelled" && (
-                              <>
-                                <div className="flex items-center gap-1 mt-2">
-                                  {orderStatusSteps.map((step, i) => (
-                                    <div key={step.key} className="flex items-center flex-1">
-                                      <div className={cn(
-                                        "flex items-center justify-center h-6 w-6 rounded-full text-xs font-bold shrink-0",
-                                        i <= currentStep ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
-                                      )}>
-                                        {i < currentStep ? <CheckCircle2 className="h-3.5 w-3.5" /> : i + 1}
-                                      </div>
-                                      {i < orderStatusSteps.length - 1 && (
-                                        <div className={cn("h-0.5 flex-1 mx-1", i < currentStep ? "bg-primary" : "bg-muted")} />
-                                      )}
-                                    </div>
-                                  ))}
-                                </div>
-                                <div className="flex justify-between">
-                                  {orderStatusSteps.map((step, i) => (
-                                    <span key={step.key} className={cn(
-                                      "text-[10px] text-center flex-1",
-                                      i <= currentStep ? "text-primary font-medium" : "text-muted-foreground"
-                                    )}>
-                                      {step.label}
-                                    </span>
-                                  ))}
-                                </div>
-                              </>
-                            )}
-
-                            {order.status === "cancelled" && (
-                              <div className="flex items-center gap-2 p-3 bg-red-50 rounded-lg border border-red-200">
-                                <AlertCircle className="h-5 w-5 text-red-500" />
-                                <p className="text-sm text-red-700 font-medium">Đơn hàng đã bị hủy</p>
-                              </div>
-                            )}
-
-                            <Separator />
-
-                            {/* Delivery info */}
-                            <div>
-                              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Thông tin giao hàng</p>
-                              <div className="rounded-lg border p-3 space-y-2">
-                                <div className="flex justify-between text-sm">
-                                  <span className="text-muted-foreground flex items-center gap-1.5"><Truck className="h-3.5 w-3.5" /> Hình thức</span>
-                                  <span className="font-medium">{deliveryLabels[order.deliveryMethod || "delivery"] || "Giao hàng"}</span>
-                                </div>
-                                {order.shippingAddress && (
-                                  <div className="flex justify-between text-sm">
-                                    <span className="text-muted-foreground flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" /> Địa chỉ</span>
-                                    <span className="font-medium text-right max-w-[60%]">{order.shippingAddress}</span>
-                                  </div>
-                                )}
-                                <div className="flex justify-between text-sm">
-                                  <span className="text-muted-foreground flex items-center gap-1.5"><UserIcon className="h-3.5 w-3.5" /> Người nhận</span>
-                                  <span className="font-medium">{order.customerName}</span>
-                                </div>
-                                <div className="flex justify-between text-sm">
-                                  <span className="text-muted-foreground flex items-center gap-1.5"><Phone className="h-3.5 w-3.5" /> SĐT</span>
-                                  <span className="font-medium">{order.customerPhone}</span>
-                                </div>
-                                {order.customerEmail && (
-                                  <div className="flex justify-between text-sm">
-                                    <span className="text-muted-foreground flex items-center gap-1.5"><Mail className="h-3.5 w-3.5" /> Email</span>
-                                    <span className="font-medium">{order.customerEmail}</span>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-
-                            {/* Product list */}
-                            <div>
-                              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Sản phẩm ({order.items.length})</p>
-                              <div className="rounded-lg border divide-y">
-                                {order.items.map(item => (
-                                  <div key={item.productId} className="flex justify-between items-center p-3">
-                                    <div className="flex-1 min-w-0">
-                                      <p className="text-sm font-medium">{item.productName}</p>
-                                      <p className="text-xs text-muted-foreground">
-                                        {item.sku && <span className="font-mono">{item.sku} · </span>}
-                                        SL: {item.quantity} × {formatVND(item.price)}
-                                      </p>
-                                    </div>
-                                    <span className="text-sm font-semibold shrink-0 ml-3">{formatVND(item.price * item.quantity)}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-
-                            {/* Cost breakdown */}
-                            <div>
-                              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Thanh toán</p>
-                              <div className="rounded-lg border p-3 space-y-2">
-                                <div className="flex justify-between text-sm">
-                                  <span className="text-muted-foreground flex items-center gap-1.5"><CreditCard className="h-3.5 w-3.5" /> Phương thức</span>
-                                  <span className="font-medium">{paymentLabels[order.paymentMethod || ""] || order.paymentMethod || "—"}</span>
-                                </div>
-                                <Separator />
-                                <div className="flex justify-between text-sm">
-                                  <span className="text-muted-foreground">Tạm tính</span>
-                                  <span className="font-medium">{formatVND(order.subtotal || order.amount)}</span>
-                                </div>
-                                {(order.shippingFee ?? 0) > 0 && (
-                                  <div className="flex justify-between text-sm">
-                                    <span className="text-muted-foreground">Phí vận chuyển</span>
-                                    <span className="font-medium">{formatVND(order.shippingFee!)}</span>
-                                  </div>
-                                )}
-                                <Separator />
-                                <div className="flex justify-between">
-                                  <span className="font-semibold">Tổng cộng</span>
-                                  <span className="font-serif font-bold text-lg text-primary">{formatVND(order.totalAmount || order.amount)}</span>
-                                </div>
-                              </div>
-                            </div>
-
-                            {order.note && (
-                              <div className="rounded-lg bg-muted p-3">
-                                <p className="text-xs font-semibold text-muted-foreground mb-1">Ghi chú</p>
-                                <p className="text-sm">{order.note}</p>
-                              </div>
-                            )}
-
-                            <p className="text-xs text-muted-foreground">
-                              Đặt lúc: {order.createdAt ? new Date(order.createdAt).toLocaleString("vi-VN") : "—"}
-                            </p>
-                          </div>
-                        </DialogContent>
-                      </Dialog>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )
-          })}
-        </div>
-      )}
-    </div>
-  )
-}
-
-/* ─── Main Page ─────────────────────────────────────────────── */
-export default function MyBookingsPage() {
-  const { user } = useAuth()
-  const [activePage, setActivePage] = useState<SidebarPage>("bookings")
-  const [allBookings, setAllBookings] = useState<ApiBooking[]>([])
-
-  useEffect(() => {
-    if (user && user.role !== "guest") {
-      bookingApi.getMyBookings().then(setAllBookings)
-    }
-  }, [user])
-
-  const handleCancel = async (bookingId: string) => {
-    const result = await bookingApi.cancel(bookingId)
-    if (result.success) {
-      setAllBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: "cancelled" } : b))
-    }
-  }
-
-  // ✅ Chỉ lấy booking LẺ (không thuộc gói cố định)
-  const regularBookings = allBookings.filter(b => !b.fixedScheduleId)
-  const upcoming  = regularBookings.filter(b => ["confirmed", "pending", "playing", "deposited"].includes(b.status))
-  const completed = regularBookings.filter(b => b.status === "completed")
-  const cancelled = regularBookings.filter(b => b.status === "cancelled")
-
-  if (user?.role === "guest") {
-    return (
-      <div className="min-h-screen flex flex-col">
-        <Navbar />
-        <main className="flex-1 flex items-center justify-center">
-          <Card className="max-w-md w-full mx-4">
-            <CardContent className="p-8 text-center">
-              <Calendar className="h-12 w-12 text-amber-500 mx-auto mb-4" />
-              <h2 className="font-serif text-xl font-bold">Vui lòng đăng nhập</h2>
-              <p className="text-sm text-muted-foreground mt-2">Đăng nhập để xem lịch sử đặt sân của bạn</p>
-              <div className="flex gap-3 mt-6">
-                <a href="/login" className="flex-1"><Button variant="outline" className="w-full">Đăng nhập</Button></a>
-                <a href="/register" className="flex-1"><Button className="w-full bg-primary text-primary-foreground">Đăng ký</Button></a>
-              </div>
-            </CardContent>
-          </Card>
-        </main>
-        <Footer />
-      </div>
-    )
-  }
-
-  return (
-    <RouteGuard>
-      <div className="min-h-screen flex flex-col">
-        <Navbar />
-        <main className="flex-1">
-          <div className="mx-auto max-w-7xl px-4 py-6">
-            <div className="flex gap-6">
-              <AccountSidebar activePage={activePage} onPageChange={setActivePage} />
-              <div className="flex-1 min-w-0">
-                {activePage === "bookings" ? (
-                  <>
-                    <h1 className="font-serif text-2xl font-extrabold">Lịch đặt của tôi</h1>
-
-                    {/* ✨ Tabs: Booking thường + Lịch cố định */}
-                    <Tabs defaultValue="regular" className="mt-6">
-                      <TabsList>
-                        <TabsTrigger value="regular" className="gap-1.5">
-                          <Calendar className="h-3.5 w-3.5" />
-                          Đặt lẻ ({regularBookings.length})
-                        </TabsTrigger>
-                        <TabsTrigger value="fixed" className="gap-1.5">
-                          <RefreshCw className="h-3.5 w-3.5" />
-                          Lịch cố định
-                        </TabsTrigger>
-                      </TabsList>
-
-                      {/* Tab booking thường - giữ nguyên code cũ */}
-                      <TabsContent value="regular" className="mt-4">
-                        <Tabs defaultValue="upcoming">
-                          <TabsList>
-                            <TabsTrigger value="upcoming">Sắp tới ({upcoming.length})</TabsTrigger>
-                            <TabsTrigger value="completed">Hoàn thành ({completed.length})</TabsTrigger>
-                            <TabsTrigger value="cancelled">Đã huỷ ({cancelled.length})</TabsTrigger>
-                          </TabsList>
-
-                          <TabsContent value="upcoming" className="mt-4 flex flex-col gap-4">
-                            {upcoming.length === 0
-                              ? <Card><CardContent className="p-8 text-center text-muted-foreground">
-                                  <Calendar className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
-                                  <p className="font-semibold text-foreground">Chưa có lịch sắp tới</p>
-                                  <p className="text-sm mt-1">Hãy <a href="/courts" className="text-primary underline">đặt sân</a> để bắt đầu!</p>
-                                </CardContent></Card>
-                              : upcoming.map(b => <BookingCard key={b.id} booking={b} onCancel={handleCancel} />)
-                            }
-                          </TabsContent>
-
-                          <TabsContent value="completed" className="mt-4 flex flex-col gap-4">
-                            {completed.length === 0
-                              ? <Card><CardContent className="p-8 text-center text-muted-foreground">
-                                  <CheckCircle2 className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
-                                  <p className="font-semibold text-foreground">Chưa có lịch hoàn thành</p>
-                                </CardContent></Card>
-                              : completed.map(b => <BookingCard key={b.id} booking={b} />)
-                            }
-                          </TabsContent>
-
-                          <TabsContent value="cancelled" className="mt-4 flex flex-col gap-4">
-                            {cancelled.length === 0
-                              ? <Card><CardContent className="p-8 text-center text-muted-foreground">
-                                  <AlertCircle className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
-                                  <p className="font-semibold text-foreground">Chưa có lịch đã huỷ</p>
-                                </CardContent></Card>
-                              : cancelled.map(b => <BookingCard key={b.id} booking={b} />)
-                            }
-                          </TabsContent>
-                        </Tabs>
-                      </TabsContent>
-
-                      {/* ✨ Tab lịch cố định - MỚI */}
-                      <TabsContent value="fixed" className="mt-4">
-                        <FixedScheduleView />
-                      </TabsContent>
-                    </Tabs>
-                  </>
-                ) : activePage === "orders" ? <OrderHistoryView />
-                  : activePage === "favorites" ? (
-                    <div>
-                      <h1 className="font-serif text-2xl font-extrabold">Yêu thích</h1>
-                      <Card className="mt-6"><CardContent className="p-8 text-center text-muted-foreground">
-                        <Heart className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
-                        <p className="font-semibold text-foreground">Chưa có mục yêu thích</p>
-                      </CardContent></Card>
-                    </div>
-                  ) : activePage === "rewards" ? (
-                    <div>
-                      <h1 className="font-serif text-2xl font-extrabold">Điểm thưởng</h1>
-                      <Card className="mt-6"><CardContent className="p-8 text-center text-muted-foreground">
-                        <Gift className="h-12 w-12 mx-auto mb-3 text-muted-foreground/40" />
-                        <p className="font-semibold text-foreground">0 điểm</p>
-                        <p className="text-sm mt-1">Đặt sân và mua hàng để tích luỹ điểm thưởng.</p>
-                      </CardContent></Card>
-                    </div>
-                  ) : <ProfileSettingsForm />
-                }
-              </div>
-            </div>
-          </div>
-        </main>
-        <Footer />
-      </div>
-    </RouteGuard>
-  )
-} 
