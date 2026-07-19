@@ -175,6 +175,7 @@ export interface ApiBooking {
   userId: string | null;
   customerName: string;
   customerPhone: string;
+  customerEmail?: string | null;
   bookingDate: string;
   timeStart: string;
   timeEnd: string;
@@ -183,6 +184,10 @@ export interface ApiBooking {
   status: string;
   paymentMethod: string | null;
   note: string | null;
+  cancellationReason?: string | null;
+  cancelledAt?: string | null;
+  cancelledByName?: string | null;
+  cancelledByRole?: string | null;
   createdAt: string;
   pricePerHour: number;
   fixedScheduleId: string | null;
@@ -194,10 +199,6 @@ export interface ApiBooking {
   servicePaidAt?: string | null;
   invoice_id?: string | null;
   invoice_status?: string | null;
-  cancellationReason?: string | null;
-  cancelledAt?: string | null;
-  cancelledByRole?: string | null;
-  cancelledByName?: string | null;
 }
 
 export interface ApiOrder {
@@ -221,6 +222,8 @@ export interface ApiOrder {
   deliveryMethod?: "delivery" | "pickup";
   pickupBranchId?: number | null;
   fulfillingWarehouseId?: number | null;
+  fulfillingWarehouse?: string | null;
+  fulfillingWarehouseName?: string | null;
   items: ApiOrderItem[];
   createdAt: string;
 }
@@ -286,6 +289,17 @@ function extractProductMeta(description?: string | null) {
 
 function transformProduct(raw: any): ApiProduct {
   const meta = extractProductMeta(raw.description);
+  const badges = Array.from(
+    new Set<string>(
+      (raw.badges || [])
+        .map((b: any) => (typeof b === "string" ? b : b.badge))
+        .filter(
+          (badge: unknown): badge is string =>
+            typeof badge === "string" && badge.length > 0,
+        ),
+    ),
+  );
+
   return {
     id: raw.id,
     sku: raw.sku,
@@ -305,8 +319,7 @@ function transformProduct(raw: any): ApiProduct {
     features: raw.features || [],
     inStock: raw.in_stock ?? raw.inStock ?? true,
     gender: raw.gender,
-    badges:
-      raw.badges?.map((b: any) => (typeof b === "string" ? b : b.badge)) || [],
+    badges,
     supplierName: raw.supplier_name ?? meta.supplierName ?? null,
   };
 }
@@ -346,6 +359,7 @@ function transformBooking(raw: any): ApiBooking {
     userId: raw.userId ?? raw.user_id ?? null,
     customerName: raw.customerName || raw.customer_name || "",
     customerPhone: raw.customerPhone || raw.customer_phone || "",
+    customerEmail: raw.customerEmail || raw.customer_email || null,
     bookingDate: raw.bookingDate || raw.booking_date || "",
     timeStart: raw.timeStart || raw.time_start || "",
     timeEnd: raw.timeEnd || raw.time_end || "",
@@ -428,6 +442,16 @@ function transformOrder(raw: any): ApiOrder {
     pickupBranchId: raw.pickupBranchId ?? raw.pickup_branch_id ?? null,
     fulfillingWarehouseId:
       raw.fulfillingWarehouseId ?? raw.fulfilling_warehouse_id ?? null,
+    fulfillingWarehouse:
+      raw.fulfillingWarehouse ||
+      raw.fulfillingWarehouseName ||
+      raw.fulfilling_warehouse_name ||
+      null,
+    fulfillingWarehouseName:
+      raw.fulfillingWarehouseName ||
+      raw.fulfilling_warehouse_name ||
+      raw.fulfillingWarehouse ||
+      null,
     items: (raw.items || []).map((item: any) => ({
       productId: item.productId ?? item.product_id,
       productName: item.productName || item.product_name || item.name || "",
@@ -911,7 +935,10 @@ export const bookingApi = {
     const res = await apiFetch<any>(`/bookings/${id}/confirm`, {
       method: "PATCH",
     });
-    return { success: res.success, error: res.message };
+    if (res.success && res.data) {
+      return { success: true, booking: transformBooking(res.data) };
+    }
+    return { success: false, error: res.message };
   },
 
   // PATCH /api/bookings/:id/cancel
@@ -920,7 +947,10 @@ export const bookingApi = {
       method: "PATCH",
       body: JSON.stringify(payload || {}),
     });
-    return { success: res.success, error: res.message };
+    if (res.success && res.data) {
+      return { success: true, booking: transformBooking(res.data) };
+    }
+    return { success: false, error: res.message };
   },
 
   // PATCH /api/bookings/:id/status — Admin đổi trạng thái
@@ -934,26 +964,20 @@ export const bookingApi = {
       const res = await apiFetch<any>(`/bookings/${id}/confirm`, {
         method: "PATCH",
       });
-      return {
-        success: res.success,
-        booking: res.data
-          ? transformBooking(res.data.booking ?? res.data)
-          : undefined,
-        error: res.message,
-      };
+      if (res.success && res.data) {
+        return { success: true, booking: transformBooking(res.data) };
+      }
+      return { success: false, error: res.message };
     }
     if (status === "cancelled") {
       const res = await apiFetch<any>(`/bookings/${id}/cancel`, {
         method: "PATCH",
         body: JSON.stringify(payload || {}),
       });
-      return {
-        success: res.success,
-        booking: res.data
-          ? transformBooking(res.data.booking ?? res.data)
-          : undefined,
-        error: res.message,
-      };
+      if (res.success && res.data) {
+        return { success: true, booking: transformBooking(res.data) };
+      }
+      return { success: false, error: res.message };
     }
     // playing, completed → dùng /status
     const res = await apiFetch<any>(`/bookings/${id}/status`, {

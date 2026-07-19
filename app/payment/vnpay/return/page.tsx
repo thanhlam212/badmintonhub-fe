@@ -127,23 +127,34 @@ function VNPayReturnContent() {
           )}
 
           <div className="space-y-2">
-            <Button asChild className="w-full">
-              <Link href="/my-bookings">
-                {status === "success" ? (
-                  <CheckCircle2 className="h-4 w-4 mr-2" />
-                ) : (
-                  <ArrowLeft className="h-4 w-4 mr-2" />
-                )}
-                {status === "success"
-                  ? "Xem lịch đặt sân"
-                  : "Xem đơn đặt sân và thử lại"}
-              </Link>
-            </Button>
-            <Button asChild variant="outline" className="w-full">
-              <Link href="/">
-                <Home className="h-4 w-4 mr-2" /> Về trang chủ
-              </Link>
-            </Button>
+            {status === "success" ? (
+              <>
+                <Button asChild className="w-full">
+                  <Link href="/my-bookings">
+                    <CheckCircle2 className="h-4 w-4 mr-2" /> Xem lịch đặt sân
+                  </Link>
+                </Button>
+                <Button asChild variant="outline" className="w-full">
+                  <Link href="/">
+                    <Home className="h-4 w-4 mr-2" /> Về trang chủ
+                  </Link>
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button asChild className="w-full">
+                  <Link href="/my-bookings">
+                    <ArrowLeft className="h-4 w-4 mr-2" /> Xem đơn đặt sân và
+                    thử lại
+                  </Link>
+                </Button>
+                <Button asChild variant="outline" className="w-full">
+                  <Link href="/">
+                    <Home className="h-4 w-4 mr-2" /> Về trang chủ
+                  </Link>
+                </Button>
+              </>
+            )}
           </div>
         </CardContent>
       </Card>
