@@ -30,6 +30,19 @@ const levels: (CommunityLevel | 'Mọi trình')[] = [
 ]
 const slots = ['Mọi giờ', 'Sáng', 'Chiều', 'Tối'] as const
 const eligibleStatuses = new Set(['pending', 'deposited', 'confirmed', 'playing'])
+const hiddenMatchStatuses = new Set(['closed', 'cancelled', 'completed', 'expired'])
+
+function getMatchSortTime(match: CommunityMatch) {
+  const createdTime = match.createdAt ? new Date(match.createdAt).getTime() : Number.NaN
+  if (Number.isFinite(createdTime)) return createdTime
+  return 0
+}
+
+function normalizeMatches(matches: CommunityMatch[]) {
+  return matches
+    .filter((match) => !match.expired && !hiddenMatchStatuses.has(match.status || 'open'))
+    .sort((first, second) => getMatchSortTime(second) - getMatchSortTime(first))
+}
 
 function isEligibleMatchBooking(booking: ApiBooking) {
   if (!eligibleStatuses.has(booking.status)) return false
@@ -65,7 +78,7 @@ export default function MatchesPage() {
       .getMatches({ district, level, slot })
       .then((res) => {
         if (!mounted) return
-        setMatches(res.matches)
+        setMatches(normalizeMatches(res.matches))
         setLoading(false)
       })
       .catch(() => {

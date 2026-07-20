@@ -60,6 +60,7 @@ interface InventoryCatalogItem {
   category: string
   warehouse: string
   warehouse_name?: string
+  price?: number | string | null
   warehouseId?: number
   warehouse_id?: number
   available?: number
@@ -108,6 +109,22 @@ const CATEGORY_DEFAULT_PRICE: Record<ServiceCategory, number> = {
 const SERVICE_CATEGORY_ORDER: ServiceCategory[] = ["water", "racket", "apparel", "shoes"]
 const MAX_RENTAL_ITEMS_PER_CATEGORY = 2
 const RENTAL_CATEGORY_SET = new Set<ServiceCategory>(["racket", "apparel", "shoes"])
+const WATER_KEYWORDS = [
+  "nuoc",
+  "drink",
+  "do uong",
+  "beverage",
+  "chai",
+  "coca",
+  "coke",
+  "pepsi",
+  "sting",
+  "aquafina",
+  "lavie",
+  "revive",
+  "number 1",
+  "tra",
+]
 
 function getCategoryLimit(category: ServiceCategory) {
   return RENTAL_CATEGORY_SET.has(category) ? MAX_RENTAL_ITEMS_PER_CATEGORY : null
@@ -125,7 +142,7 @@ function resolveServiceCategory(category: string, name: string): ServiceCategory
   const normalizedName = normalizeText(name)
   const combined = `${normalizedCategory} ${normalizedName}`
 
-  if (combined.includes("nuoc") || combined.includes("drink") || combined.includes("chai")) return "water"
+  if (WATER_KEYWORDS.some((keyword) => combined.includes(keyword))) return "water"
   if (combined.includes("vot") || combined.includes("racket")) return "racket"
   if (combined.includes("quan ao") || combined.includes("ao") || combined.includes("quan")) return "apparel"
   if (combined.includes("giay") || combined.includes("shoe")) return "shoes"
@@ -137,7 +154,7 @@ function isServiceNameValidForCategory(category: ServiceCategory, name: string) 
   const normalized = normalizeText(name)
 
   if (category === "water") {
-    return normalized.includes("nuoc") || normalized.includes("drink") || normalized.includes("chai")
+    return WATER_KEYWORDS.some((keyword) => normalized.includes(keyword))
   }
 
   if (category === "racket") {
@@ -280,11 +297,12 @@ export default function EmployeeCourtServicesPage() {
             const warehouseId = Number(item.warehouseId ?? item.warehouse_id ?? 0) || undefined
             const itemIsHub = Boolean(item.isHub ?? item.is_hub)
             const sourceLabel = itemIsHub ? "Tong kho" : "Kho chi nhanh"
+            const salePrice = Number(item.price || 0) || CATEGORY_DEFAULT_PRICE[category]
             accumulator.push({
               key: `inventory-${item.sku}-${warehouseId || "na"}`,
               sku: item.sku,
               name: `${item.name} (${sourceLabel})`,
-              price: CATEGORY_DEFAULT_PRICE[category],
+              price: salePrice,
               category,
               sourceWarehouseId: warehouseId,
               sourceWarehouseLabel: sourceLabel,
@@ -683,26 +701,28 @@ export default function EmployeeCourtServicesPage() {
     toast.success("Da thanh toan va tru kho dich vu.")
   }, [checkoutMetaByBooking, getBookingServiceHash, resolveServiceWarehouseId, savedServicesByBooking, servicesByBooking])
 
-  const handlePrintServiceInvoice = useCallback((booking: BookingItem) => {
+  const handlePrintServiceInvoice = useCallback((booking: BookingItem, kind: "court" | "service" = "service") => {
     const lines = servicesByBooking[booking.bookingId] || []
     const serviceTotal = lines.reduce((sum, line) => sum + line.price * line.qty, 0)
     const courtFee = booking.amount || 0
+    const isCourtInvoice = kind === "court"
     printCourtServiceInvoice({
-      code: `DV-${formatBookingReference(booking.bookingCode || booking.bookingId)}`,
+      code: `${isCourtInvoice ? "SAN" : "DV"}-${formatBookingReference(booking.bookingCode || booking.bookingId)}`,
+      invoiceKind: kind,
       date: `${booking.bookingDate} ${now.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}`,
       customerName: booking.customerName || "KhÃ¡ch",
       customerPhone: booking.customerPhone || undefined,
       courtName: courtNameById[booking.courtId] || `SÃ¢n #${booking.courtId}`,
       timeSlot: `${booking.timeStart} - ${booking.timeEnd}`,
-      courtFee,
-      services: lines.map((line) => ({
+      courtFee: isCourtInvoice ? courtFee : 0,
+      services: isCourtInvoice ? [] : lines.map((line) => ({
         name: line.name,
         qty: line.qty,
         price: line.price,
         note: line.staffNote,
       })),
-      serviceTotal,
-      total: courtFee + serviceTotal,
+      serviceTotal: isCourtInvoice ? 0 : serviceTotal,
+      total: isCourtInvoice ? courtFee : serviceTotal,
       printedBy: user?.fullName || "NhÃ¢n viÃªn",
     })
   }, [servicesByBooking, now, courtNameById, user?.fullName])
@@ -1095,8 +1115,11 @@ export default function EmployeeCourtServicesPage() {
                     >
                       Thanh toan va tru kho
                     </Button>
-                    <Button variant="outline" size="sm" className="gap-1.5" onClick={() => handlePrintServiceInvoice(booking)}>
-                      <Printer className="h-3.5 w-3.5" /> Xuat hoa don dich vu
+                    <Button variant="outline" size="sm" className="gap-1.5" onClick={() => handlePrintServiceInvoice(booking, "court")}>
+                      <Printer className="h-3.5 w-3.5" /> HD san
+                    </Button>
+                    <Button variant="outline" size="sm" className="gap-1.5" onClick={() => handlePrintServiceInvoice(booking, "service")}>
+                      <Printer className="h-3.5 w-3.5" /> HD dich vu
                     </Button>
                 </div>
                 </div>

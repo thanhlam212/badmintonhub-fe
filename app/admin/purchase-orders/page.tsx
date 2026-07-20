@@ -92,7 +92,8 @@ function PODetailSheet({ po, suppliers, onUpdateStatus }: { po: PurchaseOrder; s
   const subtotal = safeItems.reduce((s, i) => s + i.qty * i.unitCost, 0)
   const vat = subtotal * 0.08
   const total = subtotal + vat
-  const { adminSlips, createAdminSlip } = useInventory()
+  const ctx = useInventory()
+  const { adminSlips, createAdminSlip } = ctx
   const poImportSlip = adminSlips.find(s => s.type === "import" && (s.poRawId === po.id || s.poId === po.code))
 
   const printPOImportSlip = (id: string, date: string, statusNote = `Nhap kho theo PO ${po.code} - ${po.supplier}`) => {
@@ -110,14 +111,15 @@ function PODetailSheet({ po, suppliers, onUpdateStatus }: { po: PurchaseOrder; s
     })
   }
 
-  const handleCreateImportSlip = () => {
+  const handleCreateImportSlip = async () => {
     if (poImportSlip) return
     const slipDate = new Date().toISOString().split("T")[0]
-    const slipId = createAdminSlip({
+    const slipId = await createAdminSlip({
       type: "import",
       source: "admin",
       poId: po.code,
       poRawId: po.id,
+      supplierId: supplier?.id,
       supplier: po.supplier,
       date: slipDate,
       warehouse: po.warehouse,
@@ -127,6 +129,7 @@ function PODetailSheet({ po, suppliers, onUpdateStatus }: { po: PurchaseOrder; s
       createdBy: "Admin",
       assignedTo: po.warehouse,
     })
+    await ctx.refreshInventory()
     printPOImportSlip(slipId || buildWarehouseSlipCode("PNK", po.id || po.code), slipDate)
   }
 

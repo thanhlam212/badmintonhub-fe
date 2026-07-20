@@ -21,6 +21,12 @@ export function generateTimeSlots(): string[] {
   return slots
 }
 
+export function formatSlotRange(startTime: string): string {
+  const h = parseInt(startTime.split(":")[0], 10)
+  const endH = h + 1
+  return `${startTime}–${endH.toString().padStart(2, "0")}:00`
+}
+
 export function getWeekDays(startDate: Date = new Date()): { date: Date; label: string; dayName: string }[] {
   const days = []
   const dayNames = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
@@ -72,9 +78,9 @@ export function isSlotPast(dateLabel: string | Date, time: string): boolean {
 
 // Document reference formatters
 
-type ProjectDocPrefix = "MB" | "BK" | "FS" | "OD" | "SO" | "PO" | "VD" | "DC"
+type ProjectDocPrefix = "MB" | "BK" | "FS" | "OD" | "SO" | "PO" | "VD" | "DC" | "PNK" | "PXK"
 
-const PROJECT_DOC_CODE_PATTERN = /^(MB|BK|FS|OD|SO|PO|VD|DC)-\d{8}-\d{4}$/i
+const PROJECT_DOC_CODE_PATTERN = /^(MB|BK|FS|OD|SO|PO|VD|DC|PNK|PXK)-\d{8}-\d{4}$/i
 
 function buildProjectReference(prefix: ProjectDocPrefix, value?: string | null, createdAt?: string | Date | null): string {
   const raw = String(value ?? "").trim()
@@ -100,6 +106,7 @@ export function formatPOReference(value?: string | null, createdAt?: string | Da
   return buildProjectReference("PO", value, createdAt)
 }
 
+
 export function formatHDReference(value?: string | null, createdAt?: string | Date | null, fallbackPrefix: "OD" | "SO" = "OD"): string {
   const raw = String(value ?? "").trim()
   if (/^(OD|SO)-\d{8}-\d{4}$/i.test(raw)) return raw.toUpperCase()
@@ -110,6 +117,12 @@ export function formatBookingReference(value?: string | null, createdAt?: string
   const raw = String(value ?? "").trim()
   if (/^(MB|BK|FS)-\d{8}-\d{4}$/i.test(raw)) return raw.toUpperCase()
   return buildProjectReference("MB", raw, createdAt)
+}
+
+export function formatFixedScheduleReference(value?: string | null, createdAt?: string | Date | null): string {
+  const raw = String(value ?? "").trim()
+  if (/^FS-\d{8}-\d{4}$/i.test(raw)) return raw.toUpperCase()
+  return buildProjectReference("FS", raw, createdAt)
 }
 
 export function formatShipmentReference(value?: string | null, createdAt?: string | Date | null): string {
@@ -137,4 +150,16 @@ export function formatSalesOrderReference(value?: string | null, createdAt?: str
   const raw = String(value ?? "").trim()
   if (/^SO-\d{8}-\d{4}$/i.test(raw)) return raw.toUpperCase()
   return buildProjectReference("SO", raw, createdAt)
+}
+
+export function formatPNKReference(value?: string | null, createdAt?: string | Date | null): string {
+  const raw = String(value ?? "").trim()
+  if (/^PNK-\d{8}-\d{4}$/i.test(raw)) return raw.toUpperCase()
+  return buildProjectReference("PNK", raw, createdAt)
+}
+
+export function formatPXKReference(value?: string | null, createdAt?: string | Date | null): string {
+  const raw = String(value ?? "").trim()
+  if (/^PXK-\d{8}-\d{4}$/i.test(raw)) return raw.toUpperCase()
+  return buildProjectReference("PXK", raw, createdAt)
 }

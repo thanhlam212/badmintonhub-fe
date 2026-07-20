@@ -15,6 +15,7 @@ export interface User {
   role: "user" | "admin" | "employee" | "guest"
   warehouse?: string
   warehouseId?: number | null
+  branchId?: number | null
   createdAt: string
 }
 
@@ -65,6 +66,7 @@ const WAREHOUSE_NAMES: Record<number, string> = {
 function apiUserToUser(apiUser: any): User {
   // Handle cả camelCase (từ transformUser) lẫn snake_case (trực tiếp từ BE mapUser)
   const warehouseId = apiUser.warehouseId ?? apiUser.warehouse_id ?? undefined
+  const branchId = apiUser.branchId ?? apiUser.branch_id ?? undefined
   return {
     id: apiUser.id,
     username: apiUser.username,
@@ -76,6 +78,7 @@ function apiUserToUser(apiUser: any): User {
     dateOfBirth: apiUser.dateOfBirth || apiUser.date_of_birth || undefined,
     role: apiUser.role || 'user',
     warehouseId: warehouseId ?? undefined,
+    branchId: branchId ?? undefined,
     warehouse: warehouseId ? WAREHOUSE_NAMES[warehouseId] || undefined : undefined,
     createdAt: (apiUser.createdAt || apiUser.created_at)?.split("T")[0] || "",
   }

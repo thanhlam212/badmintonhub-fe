@@ -10,13 +10,17 @@ import { Star, MapPin, Clock, ChevronLeft, ChevronRight, Check, Wifi, Wind, Lamp
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useState, useMemo, use, useCallback, useEffect, useRef } from "react"
-import { formatVND, generateTimeSlots, getWeekDays, isSlotPast, WEATHER_API_KEY } from "@/lib/utils"
-import { courtApi, type ApiCourt } from "@/lib/api"
+import { formatVND, formatSlotRange, generateTimeSlots, getWeekDays, isSlotPast, WEATHER_API_KEY } from "@/lib/utils"
+import { bookingApi, courtApi, type ApiCourt } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { AddressInput } from "@/components/address-input"
 import { useAuth } from "@/lib/auth-context"
 import { TOMTOM_API_KEY } from "@/lib/tomtom"
 import dynamic from "next/dynamic"
+import { TutorialProvider } from "@/components/tutorial/TutorialProvider"
+import { TutorialOverlay } from "@/components/tutorial/TutorialOverlay"
+import { TutorialTrigger } from "@/components/tutorial/TutorialTrigger"
+import { courtDetailTutorialSteps } from "@/components/tutorial/tutorial-steps"
 
 const TomTomMap = dynamic<{ lat: number; lng: number; courtLat?: number; courtLng?: number; courtName?: string; routeCoords?: [number, number][]; hideUserMarker?: boolean }>(
   () => import("@/components/tomtom-map"),
@@ -141,6 +145,8 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
   const isClosed = court ? court.available === false : false
 
   const [selectedSlots, setSelectedSlots] = useState<string[]>([])
+  const [bookingSubmitting, setBookingSubmitting] = useState(false)
+  const [bookingError, setBookingError] = useState("")
   const [nowTick, setNowTick] = useState(() => Date.now())
   const [expanded, setExpanded] = useState(false)
   const [weekOffset, setWeekOffset] = useState(0)
@@ -221,6 +227,27 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
     if (!court) return
     let cancelled = false
 
+    const wait = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms))
+
+    const applyPendingHold = (map: Record<string, Record<string, 'available' | 'booked' | 'hold'>>) => {
+      try {
+        const pendingBooking = JSON.parse(localStorage.getItem('pendingBooking') || 'null') as { courtId?: number; slots?: string[] } | null
+        const pendingSession = JSON.parse(localStorage.getItem('pendingPaymentSession') || 'null') as { bookingId?: string } | null
+        if (!pendingSession?.bookingId || pendingBooking?.courtId !== court.id || !pendingBooking.slots?.length) return
+
+        pendingBooking.slots.forEach(slot => {
+          const lastDash = slot.lastIndexOf('-')
+          const dayLabel = slot.substring(0, lastDash)
+          const time = slot.substring(lastDash + 1)
+          if (map[dayLabel]?.[time] && map[dayLabel][time] !== 'booked') {
+            map[dayLabel][time] = 'hold'
+          }
+        })
+      } catch {
+        // Ignore invalid local booking cache.
+      }
+    }
+
     const fetchSlots = async () => {
       const timeSlotsList = generateTimeSlots()
       const map: Record<string, Record<string, 'available' | 'booked' | 'hold'>> = {}
@@ -229,30 +256,49 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
         timeSlotsList.forEach(t => { dayMap[t] = 'available' })
         map[d.label] = dayMap
       })
-      const results = await Promise.all(
-        weekDays.map(d => {
+
+      const results: { dayLabel: string; slots: { time: string; status: 'booked' | 'hold' }[] }[] = []
+      try {
+        for (const d of weekDays) {
+          if (cancelled) return
           const dateStr = `${d.date.getFullYear()}-${String(d.date.getMonth() + 1).padStart(2, '0')}-${String(d.date.getDate()).padStart(2, '0')}`
-          return courtApi.getSlots(court.id, dateStr)
-        })
-      )
-      results.forEach((slots, idx) => {
-        const dayLabel = weekDays[idx].label
+          const slots = await courtApi.getSlots(court.id, dateStr)
+          results.push({ dayLabel: d.label, slots })
+          await wait(180)
+        }
+      } catch {
+        if (!cancelled) {
+          setAvailability(prev => {
+            const next = Object.fromEntries(
+              Object.entries(prev).map(([dayLabel, dayMap]) => [dayLabel, { ...dayMap }]),
+            ) as Record<string, Record<string, 'available' | 'booked' | 'hold'>>
+            applyPendingHold(next)
+            return next
+          })
+        }
+        return
+      }
+
+      results.forEach(({ dayLabel, slots }) => {
         slots.forEach((s: { time: string; status: 'booked' | 'hold' }) => {
           if (map[dayLabel] && map[dayLabel][s.time]) {
             map[dayLabel][s.time] = s.status
           }
         })
       })
+      applyPendingHold(map)
       if (!cancelled) {
         setAvailability(map)
       }
     }
 
     fetchSlots()
+    window.addEventListener('focus', fetchSlots)
     const refreshTimer = window.setInterval(fetchSlots, 60_000)
 
     return () => {
       cancelled = true
+      window.removeEventListener('focus', fetchSlots)
       window.clearInterval(refreshTimer)
     }
   }, [court?.id, weekKey])
@@ -322,12 +368,14 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
     }
   }, [selectedSlots])
 
-  const handleBooking = () => {
+  const handleBooking = async () => {
     // Yêu cầu đăng nhập để đặt sân
     if (!user) {
       router.push('/login?redirect=/booking&msg=Vui+lòng+đăng+nhập+để+đặt+sân')
       return
     }
+    if (bookingSubmitting) return
+
     const { date, timeRange, slots } = getBookingTimeRange()
     const hasPastSlot = slots.some(slot => {
       const lastDash = slot.lastIndexOf('-')
@@ -340,6 +388,15 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
       setSelectedSlots([])
       return
     }
+
+    const [dateLabel] = date.split(',')
+    const [dayStr, monthStr] = dateLabel.trim().split('/')
+    const year = new Date().getFullYear()
+    const bookingDate = `${year}-${monthStr.padStart(2, '0')}-${dayStr.padStart(2, '0')}`
+    const [timeStart, timeEnd] = timeRange.split(' - ').map(t => t.trim())
+    const bookingKey = `${court!.id}|${date}|${timeRange}|${slots.join(',')}`
+    const customerName = user.fullName && user.fullName !== 'Khách' ? user.fullName : user.username || 'Khách'
+    const customerPhone = user.phone || '0000000000'
 
     const bookingData = {
       courtId: court!.id,
@@ -356,8 +413,101 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
       slotCount: slots.length,
       totalPrice,
     }
-    localStorage.setItem('pendingBooking', JSON.stringify(bookingData))
-    router.push('/booking')
+
+    setBookingSubmitting(true)
+    setBookingError("")
+    try {
+      const previousSession = localStorage.getItem('pendingPaymentSession')
+      if (previousSession) {
+        try {
+          const parsed = JSON.parse(previousSession) as { bookingId?: string; bookingKey?: string }
+          if (parsed.bookingId && parsed.bookingKey !== bookingKey) {
+            await bookingApi.cancel(parsed.bookingId, { reason: 'Customer selected a new slot' }).catch(() => null)
+          }
+        } catch {
+          localStorage.removeItem('pendingPaymentSession')
+        }
+      }
+
+      const holdResult = await bookingApi.createHold({
+        court_id: court!.id,
+        booking_date: bookingDate,
+        time_start: timeStart,
+        time_end: timeEnd,
+        people: 2,
+        payment_method: 'sepay',
+        customer_name: customerName,
+        customer_phone: customerPhone,
+        customer_email: user.email || undefined,
+        user_id: user.role !== 'guest' ? user.id : undefined,
+      })
+
+      if (!holdResult.success || !holdResult.booking) {
+        setBookingError(holdResult.error || 'Không thể giữ chỗ. Vui lòng thử lại.')
+        return
+      }
+
+      const invoiceId = holdResult.booking.invoice_id
+      if (!invoiceId) {
+        setBookingError('Không thể tạo hóa đơn giữ chỗ. Vui lòng thử lại.')
+        return
+      }
+
+      localStorage.setItem('pendingBooking', JSON.stringify(bookingData))
+      localStorage.removeItem('bookingFormDraft')
+      localStorage.removeItem('completedBooking')
+      localStorage.setItem('pendingPaymentSession', JSON.stringify({
+        bookingId: holdResult.booking.id,
+        invoiceId,
+        bookingKey,
+        restorePaymentStep: false,
+        completedData: {
+          id: holdResult.booking.id,
+          bookingCode: holdResult.booking.bookingCode,
+          createdAt: holdResult.booking.createdAt,
+          courtName: court!.name,
+          courtType: court!.type,
+          branch: court!.branch,
+          courtAddress: court!.address,
+          courtLat: court!.lat,
+          courtLng: court!.lng,
+          date,
+          timeRange,
+          people: 2,
+          amount: totalPrice,
+          paymentMethod: 'sepay',
+          status: holdResult.booking.status,
+          contact: {
+            name: customerName,
+            phone: user.phone || '',
+            email: user.email || '',
+            address: user.address || '',
+          },
+          racketRental: false,
+          note: '',
+        },
+      }))
+      setAvailability(prev => {
+        const next = Object.fromEntries(
+          Object.entries(prev).map(([dayLabel, dayMap]) => [dayLabel, { ...dayMap }]),
+        ) as Record<string, Record<string, 'available' | 'booked' | 'hold'>>
+
+        slots.forEach(slot => {
+          const lastDash = slot.lastIndexOf('-')
+          const dayLabel = slot.substring(0, lastDash)
+          const time = slot.substring(lastDash + 1)
+          if (next[dayLabel]?.[time]) {
+            next[dayLabel][time] = 'hold'
+          }
+        })
+        return next
+      })
+      router.push('/booking')
+    } catch {
+      setBookingError('Lỗi kết nối server. Vui lòng thử lại.')
+    } finally {
+      setBookingSubmitting(false)
+    }
   }
 
   // ─── Directions: calculate route via TomTom Routing API ───
@@ -589,6 +739,11 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
   }
 
   return (
+    <TutorialProvider
+      tutorialId="court_detail"
+      storageKey="tutorial_seen_court_detail"
+      steps={courtDetailTutorialSteps}
+    >
     <div className="min-h-screen flex flex-col">
       <Navbar />
       <main className="flex-1">
@@ -659,11 +814,11 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
             {/* Left Column */}
             <div className="flex flex-col gap-6">
               {/* Availability Calendar */}
-              <Card>
+              <Card data-tutorial="court-week-calendar">
                 <CardHeader>
                   <div className="flex items-center justify-between">
                     <CardTitle className="font-serif text-lg">Lịch trống</CardTitle>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2" data-tutorial="court-week-nav">
                       <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setWeekOffset(Math.max(0, weekOffset - 1))}>
                         <ChevronLeft className="h-4 w-4" />
                       </Button>
@@ -689,7 +844,7 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
                   <div className="overflow-x-auto">
                     <div className="min-w-[600px]">
                       {/* Day headers */}
-                      <div className="grid grid-cols-[60px_repeat(7,1fr)] gap-1 mb-1">
+                      <div className="grid grid-cols-[90px_repeat(7,1fr)] gap-1 mb-1">
                         <div />
                         {weekDays.map(d => (
                           <div
@@ -710,8 +865,8 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
                       </div>
                       {/* Time grid */}
                       {timeSlots.map(time => (
-                        <div key={time} className="grid grid-cols-[60px_repeat(7,1fr)] gap-1 mb-1">
-                          <div className="text-xs text-muted-foreground flex items-center justify-end pr-2">{time}</div>
+                        <div key={time} className="grid grid-cols-[90px_repeat(7,1fr)] gap-1 mb-1">
+                          <div className="text-[10px] text-muted-foreground flex items-center justify-end pr-2 font-mono">{formatSlotRange(time)}</div>
                           {weekDays.map(d => {
                             const status = availability[d.label]?.[time] || 'available'
                             const slotKey = `${d.label}-${time}`
@@ -723,11 +878,18 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
                             return (
                               <button
                                 key={slotKey}
+                                data-tutorial={
+                                  status === 'available' && !isPastSlot
+                                    ? "court-available-slot"
+                                    : isDisabled
+                                      ? "court-unavailable-slot"
+                                      : undefined
+                                }
                                 disabled={isDisabled}
                                 onClick={() => toggleSlot(d.label, time)}
                                 title={isOtherDay && !isDisabled ? "Bấm để chọn ngày khác (sẽ xóa slot hiện tại)" : undefined}
                                 className={cn(
-                                  "h-8 rounded text-xs font-medium transition-all duration-150",
+                                  "h-8 rounded text-[10px] font-semibold transition-all duration-150 flex items-center justify-center",
                                   isSelected
                                     ? "bg-primary text-primary-foreground scale-[0.95] shadow-sm shadow-primary/40 ring-2 ring-primary/30"
                                     : isPastSlot
@@ -742,10 +904,17 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
                                         ? "bg-court-available hover:bg-green-200 hover:scale-[0.97] text-green-700 cursor-pointer active:scale-95"
                                         : status === 'booked'
                                           ? "bg-court-booked text-red-400 cursor-not-allowed opacity-60"
-                                          : "bg-court-hold text-amber-400 cursor-not-allowed opacity-70"
+                                          : "bg-court-hold text-amber-700 cursor-not-allowed opacity-90"
                                 )}
                               >
-                                {isSelected && <Check className="h-3 w-3 mx-auto" />}
+                                {isSelected ? (
+                                  <Check className="h-3 w-3" />
+                                ) : status === 'hold' && !isPastSlot ? (
+                                  <span className="inline-flex items-center gap-0.5">
+                                    <Lock className="h-2.5 w-2.5" />
+                                    Giữ
+                                  </span>
+                                ) : null}
                               </button>
                             )
                           })}
@@ -991,7 +1160,7 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
             {/* Right Sticky Widget */}
             <div className="hidden lg:block">
               <div className="sticky top-20 space-y-4">
-                <Card className="overflow-hidden">
+                <Card className="overflow-hidden" data-tutorial="court-total">
                   <CardContent className="p-6">
                     <p className="font-serif text-2xl font-extrabold text-primary">
                       {formatVND(court.price)}<span className="text-sm text-muted-foreground font-normal">/h</span>
@@ -1024,13 +1193,19 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
                       <p className="text-sm text-muted-foreground mt-2">Chọn slot trên lịch để đặt sân</p>
                     </div>
                     <Button
+                      data-tutorial="court-booking-button"
                       className="w-full mt-4 font-semibold transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
-                      disabled={selectedSlots.length === 0 || isClosed}
+                      disabled={selectedSlots.length === 0 || isClosed || bookingSubmitting}
                       onClick={handleBooking}
                     >
-                      {isClosed ? "Sân đang tạm đóng" : "Tiếp tục đặt sân"}
+                      {bookingSubmitting ? (
+                        <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Đang giữ chỗ...</>
+                      ) : isClosed ? "Sân đang tạm đóng" : "Tiếp tục đặt sân"}
                     </Button>
-                    <Link href={`/booking/fixed?courtId=${court.id}`}>
+                    {bookingError && (
+                      <p className="mt-2 text-xs font-medium text-red-600">{bookingError}</p>
+                    )}
+                    <Link href={`/booking/fixed-schedule?courtId=${court.id}`}>
                       <Button variant="outline" className="w-full mt-2 font-semibold" disabled={isClosed}>
                         Đặt lịch cố định
                       </Button>
@@ -1060,15 +1235,25 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
               <p className="font-serif font-bold text-primary text-lg">{formatVND(totalPrice)}</p>
             </div>
             <Button
+              data-tutorial="court-booking-button"
               className="font-semibold hover:scale-[1.02] transition-transform"
+              disabled={bookingSubmitting || isClosed || selectedSlots.length === 0}
               onClick={handleBooking}
             >
-              Tiếp tục đặt sân
+              {bookingSubmitting ? (
+                <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Đang giữ...</>
+              ) : "Tiếp tục đặt sân"}
             </Button>
           </div>
+          {bookingError && (
+            <p className="mt-2 text-xs font-medium text-red-600">{bookingError}</p>
+          )}
         </div>
       </main>
+      <TutorialTrigger />
+      <TutorialOverlay />
       <Footer />
     </div>
+    </TutorialProvider>
   )
 }

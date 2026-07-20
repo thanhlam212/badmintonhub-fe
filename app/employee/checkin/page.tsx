@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback } from "react"
+import { useSearchParams } from "next/navigation"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -117,6 +118,7 @@ function useQRScanner(onResult: (data: string) => void, active: boolean) {
 
 // ─── Main Page ────────────────────────────────────────────
 export default function CheckinPage() {
+  const searchParams = useSearchParams()
   const [mode, setMode] = useState<"camera" | "manual">("camera")
   const [status, setStatus] = useState<ScanStatus>("idle")
   const [result, setResult] = useState<CheckinResult | null>(null)
@@ -125,6 +127,15 @@ export default function CheckinPage() {
   const [lastScanned, setLastScanned] = useState("")
   const [scanActive, setScanActive] = useState(true)
   const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    const bookingId = searchParams.get("bookingId")
+    if (!bookingId) return
+
+    setMode("manual")
+    setManualId(bookingId)
+    setScanActive(false)
+  }, [searchParams])
 
   useEffect(() => {
     const t = setTimeout(() => setMounted(true), 60)

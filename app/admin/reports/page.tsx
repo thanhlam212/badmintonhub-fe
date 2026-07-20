@@ -18,7 +18,7 @@ import {
   ComposedChart, ResponsiveContainer, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend
 } from "recharts"
-import { apiFetch } from "@/lib/api"
+import { apiFetch, branchApi, type ApiBranch } from "@/lib/api"
 
 // ─── Types ───────────────────────────────────────
 interface DashboardStats {
@@ -36,6 +36,25 @@ interface DashboardStats {
   topProducts: { name: string; qty: number; revenue: number }[]
   hourlyDistribution: { hour: string; bookings: number }[]
   paymentMethods: { name: string; value: number; color: string }[]
+}
+
+interface BranchReport {
+  label: string
+  branch: { id: number | null; name: string }
+  period: { from: string; to: string; description?: string }
+  topCourts: { name: string; revenue: number; bookings: number }[]
+  branchRevenue: {
+    branchId: number
+    branchName: string
+    bookingRevenue: number
+    onlineRevenue: number
+    posRevenue: number
+    storeRevenue: number
+    totalRevenue: number
+    bookings: number
+    orders: number
+    courts: { name: string; revenue: number; bookings: number }[]
+  }[]
 }
 
 const datePresets = [
@@ -73,6 +92,9 @@ function KPISkeleton() {
 export default function AdminReports() {
   const [activePreset, setActivePreset] = useState("30d")
   const [stats, setStats] = useState<DashboardStats | null>(null)
+  const [branchReport, setBranchReport] = useState<BranchReport | null>(null)
+  const [branches, setBranches] = useState<ApiBranch[]>([])
+  const [selectedBranch, setSelectedBranch] = useState("all")
   const [loading, setLoading] = useState(true)
   const heatmapData = generateHeatmapData()
 
@@ -80,10 +102,19 @@ export default function AdminReports() {
     const load = async () => {
       setLoading(true)
       try {
-        const res = await apiFetch(`/stats/dashboard?range=${activePreset}`)
+        const reportRange = activePreset === "7d" ? "week" : activePreset
+        const branchParams = new URLSearchParams({ range: reportRange })
+        if (selectedBranch !== "all") branchParams.set("branchId", selectedBranch)
+        const [res, reportRes, branchList] = await Promise.all([
+          apiFetch(`/stats/dashboard?range=${activePreset}`),
+          apiFetch<BranchReport>(`/stats/employee-report?${branchParams.toString()}`),
+          branches.length ? Promise.resolve(branches) : branchApi.getAll(),
+        ])
         if (res.success && res.data) {
           setStats(res.data as DashboardStats)
         }
+        if (reportRes.success && reportRes.data) setBranchReport(reportRes.data)
+        if (!branches.length) setBranches(branchList)
       } catch (e) {
         console.error('Failed to load stats:', e)
       } finally {
@@ -91,7 +122,7 @@ export default function AdminReports() {
       }
     }
     load()
-  }, [activePreset])
+  }, [activePreset, selectedBranch])
 
   const kpis = stats ? [
     {
@@ -137,7 +168,8 @@ export default function AdminReports() {
       </div>
 
       {/* Date Presets */}
-      <div className="flex items-center gap-2 mb-6">
+      <div className="flex flex-col gap-3 mb-6 xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
         {datePresets.map(p => (
           <button
             key={p.value}
@@ -153,6 +185,26 @@ export default function AdminReports() {
           </button>
         ))}
         {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground ml-2" />}
+        </div>
+        <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center">
+          <select
+            value={selectedBranch}
+            onChange={(event) => setSelectedBranch(event.target.value)}
+            className="h-9 min-w-[220px] rounded-xl border bg-background px-3 text-sm"
+          >
+            <option value="all">Toàn hệ thống</option>
+            {branches.map((branch) => (
+              <option key={branch.id} value={String(branch.id)}>
+                {branch.name}
+              </option>
+            ))}
+          </select>
+          {branchReport && (
+            <span className="text-xs text-muted-foreground">
+              {branchReport.period.description || `${branchReport.period.from} → ${branchReport.period.to}`}
+            </span>
+          )}
+        </div>
       </div>
 
       <Tabs defaultValue="revenue">
@@ -185,6 +237,71 @@ export default function AdminReports() {
               ))}
             </div>
           )}
+
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle className="font-serif text-lg">Doanh thu theo chi nhánh</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                {loading ? <div className="p-4"><Skeleton className="h-48 w-full" /></div> : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="text-xs">Chi nhánh</TableHead>
+                        <TableHead className="text-xs text-right">Sân</TableHead>
+                        <TableHead className="text-xs text-right">Cửa hàng</TableHead>
+                        <TableHead className="text-xs text-right">Tổng</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {(branchReport?.branchRevenue || []).map((row) => (
+                        <TableRow key={row.branchId}>
+                          <TableCell className="text-sm font-medium">{row.branchName}</TableCell>
+                          <TableCell className="text-right text-sm">{formatVND(row.bookingRevenue)}</TableCell>
+                          <TableCell className="text-right text-sm">
+                            {formatVND(row.storeRevenue)}
+                            <p className="text-[11px] text-muted-foreground">
+                              Online {formatVND(row.onlineRevenue)} · Quầy {formatVND(row.posRevenue)}
+                            </p>
+                          </TableCell>
+                          <TableCell className="text-right text-sm font-bold">{formatVND(row.totalRevenue)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="font-serif text-lg">Doanh thu từng sân</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                {loading ? <div className="p-4"><Skeleton className="h-48 w-full" /></div> : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="text-xs">Sân</TableHead>
+                        <TableHead className="text-xs text-center">Lượt</TableHead>
+                        <TableHead className="text-xs text-right">Doanh thu</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {(branchReport?.topCourts || []).map((court) => (
+                        <TableRow key={court.name}>
+                          <TableCell className="text-sm font-medium">{court.name}</TableCell>
+                          <TableCell className="text-center text-sm">{court.bookings}</TableCell>
+                          <TableCell className="text-right text-sm font-bold">{formatVND(court.revenue)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          </div>
 
           {/* Weekly Revenue Chart */}
           <Card>

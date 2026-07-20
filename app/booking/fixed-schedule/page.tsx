@@ -9,7 +9,7 @@
  * 3. CheckSlotResponse type mới có price, isOriginal, hasAvailable
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -24,26 +24,35 @@ import {
   Home,
   User,
   CreditCard,
+  ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Loader2,
   BadgeCheck,
   XCircle,
   Sparkles,
   Shield,
-  Search,
   Clock,
   Plus,
-  Trash2,
+  Settings2,
+  Sun,
+  Sunset,
+  Moon,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { cn, formatSlotRange, generateTimeSlots } from "@/lib/utils";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-context";
-import { courtApi } from "@/lib/api";
+import { courtApi, paymentApi } from "@/lib/api";
 import { useFixedSchedule } from "./hooks/useFixedSchedule";
+import { FIXED_CHECKOUT_STORAGE_KEY } from "./types";
+import { TutorialProvider, useTutorial } from "@/components/tutorial/TutorialProvider";
+import { TutorialOverlay } from "@/components/tutorial/TutorialOverlay";
+import { TutorialTrigger } from "@/components/tutorial/TutorialTrigger";
+import { fixedScheduleTutorialSteps } from "@/components/tutorial/tutorial-steps";
 import type {
-  FixedScheduleCycle,
-  FixedScheduleBookingMode,
   FixedScheduleRule,
   PaymentMethod,
   OccurrenceUIState,
@@ -51,8 +60,8 @@ import type {
   Court,
   CheckSlotRequest,
   CheckSlotResponse,
-  CheckSlotCourtResult,
   FixedSchedulePreviewResponse,
+  FixedScheduleCycle,
 } from "./types";
 
 // ═══════════════════════════════════════════════════════════════
@@ -75,6 +84,12 @@ const PAYMENT_OPTIONS: {
   icon: string;
   desc: string;
 }[] = [
+  {
+    value: "sepay",
+    label: "SePay",
+    icon: "🏦",
+    desc: "Thanh toán QR / cổng SePay",
+  },
   { value: "cash", label: "Tiền mặt", icon: "💵", desc: "Thanh toán tại quầy" },
   {
     value: "bank_transfer",
@@ -86,50 +101,79 @@ const PAYMENT_OPTIONS: {
   { value: "vnpay", label: "VNPay", icon: "💳", desc: "Cổng thanh toán VNPay" },
 ];
 
-// ─── TIME SLOTS chia theo buổi ────────────────────────────────
-// Mỗi slot = { label hiển thị, value giờ bắt đầu HH:mm }
-// Hệ thống lưu theo slot 1h, nên timeEnd = timeStart + duration
+function submitPaymentForm(
+  checkoutUrl: string,
+  formFields: Record<string, unknown>,
+) {
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = checkoutUrl;
+  Object.entries(formFields).forEach(([name, value]) => {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = name;
+    input.value = String(value ?? "");
+    form.appendChild(input);
+  });
+  document.body.appendChild(form);
+  form.submit();
+}
 
-const TIME_SESSIONS = [
+// ─── TIME SLOTS chia theo buổi ────────────────────────────────
+// Hệ thống lưu theo slot 1h, nên mỗi khung chỉ cần timeStart/timeEnd.
+
+type SessionColor = "amber" | "blue" | "purple";
+type TimeSlot = { start: string; end: string; label: string };
+type TimeSession = {
+  label: string;
+  range: string;
+  color: SessionColor;
+  slots: TimeSlot[];
+};
+
+const formatHour = (hour: number) => `${String(hour).padStart(2, "0")}:00`;
+
+const buildTimeSlots = (startHour: number, endHour: number): TimeSlot[] => {
+  const slots: TimeSlot[] = [];
+
+  for (let start = startHour; start < endHour; start += 1) {
+    const timeStart = formatHour(start);
+    const timeEnd = formatHour(start + 1);
+    slots.push({
+      start: timeStart,
+      end: timeEnd,
+      label: `${timeStart} – ${timeEnd}`,
+    });
+  }
+
+  return slots;
+};
+
+const TIME_SESSIONS: TimeSession[] = [
   {
     label: "🌅 Buổi sáng",
     range: "06:00 – 11:00",
     color: "amber",
-    slots: [
-      { start: "06:00", end: "07:00", label: "06:00 – 07:00" },
-      { start: "06:00", end: "08:00", label: "06:00 – 08:00" },
-      { start: "07:00", end: "09:00", label: "07:00 – 09:00" },
-      { start: "08:00", end: "10:00", label: "08:00 – 10:00" },
-      { start: "09:00", end: "11:00", label: "09:00 – 11:00" },
-      { start: "10:00", end: "12:00", label: "10:00 – 12:00" },
-    ],
+    slots: buildTimeSlots(6, 11),
   },
   {
     label: "☀️ Buổi chiều",
     range: "11:00 – 17:00",
     color: "blue",
-    slots: [
-      { start: "11:00", end: "13:00", label: "11:00 – 13:00" },
-      { start: "13:00", end: "15:00", label: "13:00 – 15:00" },
-      { start: "14:00", end: "16:00", label: "14:00 – 16:00" },
-      { start: "15:00", end: "17:00", label: "15:00 – 17:00" },
-      { start: "16:00", end: "18:00", label: "16:00 – 18:00" },
-    ],
+    slots: buildTimeSlots(11, 17),
   },
   {
     label: "🌙 Buổi tối",
     range: "17:00 – 22:00",
     color: "purple",
-    slots: [
-      { start: "17:00", end: "19:00", label: "17:00 – 19:00" },
-      { start: "18:00", end: "20:00", label: "18:00 – 20:00" },
-      { start: "19:00", end: "21:00", label: "19:00 – 21:00" },
-      { start: "20:00", end: "22:00", label: "20:00 – 22:00" },
-    ],
+    slots: buildTimeSlots(17, 22),
   },
-] as const;
+];
 
-type SessionColor = "amber" | "blue" | "purple";
+const ALL_TIME_SLOTS = TIME_SESSIONS.flatMap((session) => session.slots);
+
+const getSlotKey = (slot: Pick<TimeSlot, "start" | "end">) =>
+  `${slot.start}-${slot.end}`;
 
 const SESSION_COLORS: Record<
   SessionColor,
@@ -152,30 +196,314 @@ const SESSION_COLORS: Record<
   },
 };
 
-const HOUR_OPTIONS = Array.from({ length: 17 }, (_, index) => {
-  const hour = index + 6;
-  return `${String(hour).padStart(2, "0")}:00`;
-});
+const FIXED_BOOKING_MODE = "occurrence_count" as const;
+const DATE_RANGE_BOOKING_MODE = "date_range" as const;
+const CONTIGUOUS_SLOT_NOTICE =
+  "Vui lòng chọn các khung giờ liền nhau, ví dụ 18:00-19:00 rồi 19:00-20:00.";
 
-const DURATION_OPTIONS = [1, 2, 3] as const;
-const OCCURRENCE_COUNT_PRESETS = [4, 8, 12, 16] as const;
+type ScheduleRuleState = Required<Pick<FixedScheduleRule, "dayOfWeek">> &
+  Pick<FixedScheduleRule, "timeStart" | "timeEnd"> & {
+    id: string;
+    repeat: boolean;
+    anchorDate?: string;
+    specificDate?: string;
+    repeatWeeks: number;
+    repeatUntil: "weeks" | "month_end";
+  };
 
-type ScheduleRuleForm = {
-  id: string;
-  dayOfWeek: number;
-  dayOfMonth: number;
-  timeStart: string;
-  durationHours: number;
+type FixedRepeatMode = "shared" | "custom";
+
+const DEFAULT_RULE_TIME = { timeStart: "18:00", timeEnd: "20:00" };
+const DEFAULT_REPEAT_WEEKS = 4;
+const UNSET_DAY_OF_WEEK = -1;
+
+const isValidDayOfWeek = (day: number | undefined): day is number =>
+  typeof day === "number" && day >= 0 && day <= 6;
+const dayOrder = (day: number) =>
+  isValidDayOfWeek(day) ? (day === 0 ? 7 : day) : 99;
+const sortScheduleRules = (rules: ScheduleRuleState[]) =>
+  [...rules].sort(
+    (a, b) =>
+      dayOrder(a.dayOfWeek) - dayOrder(b.dayOfWeek) ||
+      Number(b.repeat) - Number(a.repeat) ||
+      (a.specificDate ?? "").localeCompare(b.specificDate ?? "") ||
+      toMinutes(a.timeStart) - toMinutes(b.timeStart) ||
+      a.id.localeCompare(b.id),
+  );
+const getDayMeta = (day: number) =>
+  DAY_LABELS.find((item) => item.value === day) ?? DAY_LABELS[0];
+const getRuleDayMeta = (day: number | undefined) =>
+  isValidDayOfWeek(day)
+    ? getDayMeta(day)
+    : { value: UNSET_DAY_OF_WEEK, label: "Chưa chọn ngày", short: "--" };
+const toMinutes = (time: string) => {
+  const [hour, minute] = time.split(":").map(Number);
+  return hour * 60 + (minute || 0);
 };
 
-function addHoursToTime(time: string, hours: number) {
-  const [startHour] = time.split(":").map(Number);
-  return `${String(startHour + hours).padStart(2, "0")}:00`;
+const slotIsInsideRange = (
+  slot: Pick<TimeSlot, "start" | "end">,
+  timeStart?: string,
+  timeEnd?: string,
+) => {
+  if (!timeStart || !timeEnd) return false;
+  return toMinutes(slot.start) >= toMinutes(timeStart) && toMinutes(slot.end) <= toMinutes(timeEnd);
+};
+
+function getRuleSlotKeys(rule: Pick<ScheduleRuleState, "timeStart" | "timeEnd">) {
+  return ALL_TIME_SLOTS.filter((slot) =>
+    slotIsInsideRange(slot, rule.timeStart, rule.timeEnd),
+  ).map(getSlotKey);
+}
+
+function buildRangesFromSlotKeys(slotKeys: Set<string>) {
+  const selectedSlots = ALL_TIME_SLOTS.filter((slot) =>
+    slotKeys.has(getSlotKey(slot)),
+  ).sort((a, b) => toMinutes(a.start) - toMinutes(b.start));
+
+  return selectedSlots.reduce<Array<{ timeStart: string; timeEnd: string }>>(
+    (ranges, slot) => {
+      const lastRange = ranges[ranges.length - 1];
+      if (!lastRange || lastRange.timeEnd !== slot.start) {
+        ranges.push({ timeStart: slot.start, timeEnd: slot.end });
+        return ranges;
+      }
+
+      lastRange.timeEnd = slot.end;
+      return ranges;
+    },
+    [],
+  );
+}
+
+const rangesIntersect = (
+  timeStart: string | undefined,
+  timeEnd: string | undefined,
+  slots: TimeSlot[],
+) => {
+  if (!timeStart || !timeEnd) return false;
+  const selectedStart = toMinutes(timeStart);
+  const selectedEnd = toMinutes(timeEnd);
+  return slots.some(
+    (slot) =>
+      toMinutes(slot.start) < selectedEnd && toMinutes(slot.end) > selectedStart,
+  );
+};
+
+function resolveContiguousSlotSelection(
+  current: { start: string; end: string } | null,
+  slot: Pick<TimeSlot, "start" | "end">,
+) {
+  if (!current) return { start: slot.start, end: slot.end };
+
+  const currentStart = toMinutes(current.start);
+  const currentEnd = toMinutes(current.end);
+  const slotStart = toMinutes(slot.start);
+  const slotEnd = toMinutes(slot.end);
+
+  if (slotStart === currentStart && slotEnd === currentEnd) return current;
+  if (slotEnd === currentStart) return { start: slot.start, end: current.end };
+  if (slotStart === currentEnd) return { start: current.start, end: slot.end };
+
+  if (slotStart === currentStart && slotEnd < currentEnd) {
+    return { start: slot.end, end: current.end };
+  }
+  if (slotStart > currentStart && slotEnd === currentEnd) {
+    return { start: current.start, end: slot.start };
+  }
+  if (slotStart > currentStart && slotEnd < currentEnd) {
+    return null;
+  }
+
+  return null;
+}
+const createRuleId = () =>
+  `rule-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+
+function toUtcDate(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function formatUtcDate(date: Date) {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+function addUtcDays(date: Date, days: number) {
+  const result = new Date(date);
+  result.setUTCDate(result.getUTCDate() + days);
+  return result;
+}
+
+function getNextDateForDay(dayOfWeek: number, fromDate: string) {
+  const start = toUtcDate(fromDate);
+  const offset = (dayOfWeek - start.getUTCDay() + 7) % 7;
+  return formatUtcDate(addUtcDays(start, offset));
+}
+
+function getMonthEndDate(dateValue: string) {
+  if (!dateValue) return "";
+  const date = toUtcDate(dateValue);
+  return formatUtcDate(
+    new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)),
+  );
+}
+
+function formatDisplayDate(dateValue: string) {
+  if (!dateValue) return "";
+  const date = toUtcDate(dateValue);
+  return `${getDayMeta(date.getUTCDay()).short} ${String(date.getUTCDate()).padStart(2, "0")}/${String(date.getUTCMonth() + 1).padStart(2, "0")}/${date.getUTCFullYear()}`;
+}
+
+function countWeeklyDatesUntil(startDate: string, endDate: string) {
+  if (!startDate || !endDate) return 0;
+  const start = toUtcDate(startDate);
+  const end = toUtcDate(endDate);
+  if (end < start) return 0;
+  let count = 0;
+
+  for (let cursor = new Date(start); cursor <= end; cursor = addUtcDays(cursor, 7)) {
+    count += 1;
+  }
+
+  return count;
+}
+
+function getWeeklyDateSequence(startDate: string, weeks: number) {
+  if (!startDate || weeks <= 0) return [];
+  const start = toUtcDate(startDate);
+  return Array.from({ length: weeks }, (_, index) =>
+    formatUtcDate(addUtcDays(start, index * 7)),
+  );
+}
+
+function getDateRangeDays(startDate: string, endDate: string) {
+  if (!startDate || !endDate) return 0;
+  const start = toUtcDate(startDate);
+  const end = toUtcDate(endDate);
+  if (end < start) return 0;
+  return Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
+}
+
+function estimateWeeklyEndDate(startDate: string, rules: ScheduleRuleState[]) {
+  if (!startDate || !rules.length) return "";
+  const start = toUtcDate(startDate);
+  const normalizedRules = sortScheduleRules(rules);
+  const completedDates: string[] = [];
+
+  for (const rule of normalizedRules) {
+    if (!rule.repeat && !rule.specificDate) continue;
+    if (rule.repeat && !isValidDayOfWeek(rule.dayOfWeek)) continue;
+    const ruleStart = rule.repeat ? start : toUtcDate(rule.specificDate!);
+    let seen = 0;
+    for (let offset = 0; offset <= 7 * 104; offset += 1) {
+      const date = addUtcDays(ruleStart, offset);
+      if (date.getUTCDay() !== rule.dayOfWeek) continue;
+      seen += 1;
+      if (seen === rule.repeatWeeks) {
+        completedDates.push(formatUtcDate(date));
+        break;
+      }
+    }
+  }
+
+  return completedDates.sort().slice(-1)[0] ?? "";
+}
+
+function formatCycleLabel(cycle: FixedScheduleCycle) {
+  if (cycle === "daily") return "Lặp theo ngày";
+  if (cycle === "monthly") return "Hàng tháng";
+  return "Hàng tuần";
 }
 
 // ═══════════════════════════════════════════════════════════════
 // PAGE COMPONENT
 // ═══════════════════════════════════════════════════════════════
+
+const occurrenceKey = (occ: Pick<OccurrenceUIState, "date" | "timeStart" | "timeEnd">) =>
+  `${occ.date}-${occ.timeStart}-${occ.timeEnd}`;
+
+const startOfUtcWeek = (date: Date) => {
+  const day = date.getUTCDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  return addUtcDays(date, mondayOffset);
+};
+
+function getOccurrenceTone(occ: OccurrenceUIState) {
+  if (occ.action === "skip") return "bg-gray-100 text-gray-400 border-gray-200";
+  if (occ.action === "custom") return "bg-purple-100 text-purple-700 border-purple-200";
+  if (!occ.hasConflict) return "bg-green-100 text-green-700 border-green-200";
+  if (occ.suggestedReplacement || occ.action === "replace") {
+    return "bg-amber-100 text-amber-700 border-amber-200";
+  }
+  return "bg-red-100 text-red-700 border-red-200";
+}
+
+function getOccurrenceSymbol(occ: OccurrenceUIState) {
+  if (occ.action === "skip") return "-";
+  if (occ.action === "custom") return "D";
+  if (!occ.hasConflict) return "OK";
+  if (occ.suggestedReplacement || occ.action === "replace") return "B";
+  return "!";
+}
+
+function getOccurrenceMoveLabel(occ: OccurrenceUIState) {
+  if (occ.action !== "custom") return "";
+  const targetDate = occ.customDate || occ.date;
+  const targetStart = occ.customTimeStart || occ.timeStart;
+  const targetEnd = occ.customTimeEnd || occ.timeEnd;
+  const targetCourt = occ.customCourtName ? ` · ${occ.customCourtName}` : "";
+  return `Đổi sang ${formatDisplayDate(targetDate)} · ${targetStart}-${targetEnd}${targetCourt}`;
+}
+
+function ensureUniqueScheduleRuleIds(rules: ScheduleRuleState[]) {
+  const usedIds = new Set<string>();
+  let changed = false;
+
+  const nextRules = rules.map((rule) => {
+    if (!usedIds.has(rule.id)) {
+      usedIds.add(rule.id);
+      return rule;
+    }
+
+    changed = true;
+    let nextId = createRuleId();
+    while (usedIds.has(nextId)) nextId = createRuleId();
+    usedIds.add(nextId);
+    return { ...rule, id: nextId };
+  });
+
+  return changed ? nextRules : rules;
+}
+
+function FixedScheduleTutorialDemoController({
+  onStepChange,
+}: {
+  onStepChange: (nextStep: 1 | 2) => void;
+}) {
+  const { isActive, currentStep, steps } = useTutorial();
+  const controlledRef = useRef(false);
+
+  useEffect(() => {
+    const target = steps[currentStep]?.targetSelector ?? "";
+    const shouldShowPreviewDemo =
+      target.includes("fixed-occurrences") ||
+      target.includes("fixed-payment-info");
+
+    if (isActive) {
+      controlledRef.current = true;
+      onStepChange(shouldShowPreviewDemo ? 2 : 1);
+      return;
+    }
+
+    if (controlledRef.current) {
+      controlledRef.current = false;
+      onStepChange(1);
+    }
+  }, [currentStep, isActive, onStepChange, steps]);
+
+  return null;
+}
 
 export default function FixedSchedulePage() {
   const router = useRouter();
@@ -186,43 +514,121 @@ export default function FixedSchedulePage() {
   const [courts, setCourts] = useState<Court[]>([]);
   const [loadingCourts, setLoadingCourts] = useState(true);
   const [courtId, setCourtId] = useState("");
-  const [customerType, setCustomerType] = useState<
-    "personal" | "group" | "tournament"
-  >("personal");
   const [cycle, setCycle] = useState<FixedScheduleCycle>("weekly");
-  const [bookingMode, setBookingMode] =
-    useState<FixedScheduleBookingMode>("occurrence_count");
-  const [occurrenceCount, setOccurrenceCount] = useState(8);
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const [scheduleRules, setScheduleRules] = useState<ScheduleRuleForm[]>([
+  const [fixedRepeatMode, setFixedRepeatMode] = useState<FixedRepeatMode>("shared");
+  const [sharedRepeatWeeks, setSharedRepeatWeeks] = useState(DEFAULT_REPEAT_WEEKS);
+  const [scheduleRules, setScheduleRules] = useState<ScheduleRuleState[]>([
     {
-      id: "rule-1",
-      dayOfWeek: 1,
-      dayOfMonth: 1,
-      timeStart: "18:00",
-      durationHours: 2,
+      id: "rule-blank-initial",
+      dayOfWeek: UNSET_DAY_OF_WEEK,
+      repeat: true,
+      repeatWeeks: DEFAULT_REPEAT_WEEKS,
+      repeatUntil: "weeks",
+      timeStart: "",
+      timeEnd: "",
     },
   ]);
+  const [activeRuleId, setActiveRuleId] = useState("rule-blank-initial");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [slotSelectionNotice, setSlotSelectionNotice] = useState("");
+  const [activeSession, setActiveSession] = useState<SessionColor>("purple"); // default buổi tối
+  const [showSummaryDetail, setShowSummaryDetail] = useState(false);
+  const [showCustomTime, setShowCustomTime] = useState(false);
 
-  const primaryRule = scheduleRules[0];
-  const timeStart = primaryRule?.timeStart ?? "";
-  const timeEnd = primaryRule
-    ? addHoursToTime(primaryRule.timeStart, primaryRule.durationHours)
-    : "";
+  const selectedDays = Array.from(
+    new Set(
+      scheduleRules
+        .filter((rule) => rule.repeat && isValidDayOfWeek(rule.dayOfWeek))
+        .map((rule) => rule.dayOfWeek),
+    ),
+  );
+  const activeRule = scheduleRules.find(
+    (rule) => rule.id === activeRuleId,
+  );
+
+  useEffect(() => {
+    const uniqueRules = ensureUniqueScheduleRuleIds(scheduleRules);
+    if (uniqueRules === scheduleRules) return;
+
+    setScheduleRules(uniqueRules);
+    if (!uniqueRules.some((rule) => rule.id === activeRuleId)) {
+      setActiveRuleId(uniqueRules[0]?.id ?? "");
+    }
+  }, [activeRuleId, scheduleRules]);
+
+  const primaryRule = scheduleRules[0] ?? {
+    id: "fallback-rule",
+    dayOfWeek: UNSET_DAY_OF_WEEK,
+    repeat: true,
+    repeatWeeks: DEFAULT_REPEAT_WEEKS,
+    repeatUntil: "weeks" as const,
+    timeStart: "",
+    timeEnd: "",
+  };
+  const timeStart = primaryRule.timeStart;
+  const timeEnd = primaryRule.timeEnd;
+  const getRuleOccurrenceCount = (rule: ScheduleRuleState) => {
+    if (cycle === "weekly" && rule.repeat && fixedRepeatMode === "shared") {
+      return sharedRepeatWeeks;
+    }
+    if (!rule.repeat && rule.repeatUntil === "month_end" && rule.specificDate) {
+      return countWeeklyDatesUntil(rule.specificDate, getMonthEndDate(rule.specificDate));
+    }
+    return rule.repeatWeeks;
+  };
+  const repeatingRules = scheduleRules.filter((rule) => rule.repeat);
+  const oddRules = scheduleRules.filter((rule) => !rule.repeat);
+  const weeklyOccurrenceCount = scheduleRules.reduce(
+    (sum, rule) => sum + getRuleOccurrenceCount(rule),
+    0,
+  );
+  const dailyOccurrenceCount =
+    getDateRangeDays(startDate, endDate) * repeatingRules.length +
+    oddRules.reduce((sum, rule) => sum + getRuleOccurrenceCount(rule), 0);
+  const occurrenceCount =
+    cycle === "daily" ? dailyOccurrenceCount : weeklyOccurrenceCount;
+  const longestRepeatWeeks = Math.max(
+    ...scheduleRules.map((rule) => getRuleOccurrenceCount(rule)),
+    0,
+  );
+  const repeatingEstimatedEndDate =
+    cycle === "daily"
+      ? endDate
+      : estimateWeeklyEndDate(startDate, scheduleRules.map((rule) => ({
+          ...rule,
+          repeatWeeks: getRuleOccurrenceCount(rule),
+          dayOfWeek: rule.repeat
+            ? rule.dayOfWeek
+            : rule.specificDate
+              ? toUtcDate(rule.specificDate).getUTCDay()
+              : rule.dayOfWeek,
+        })));
+  const estimatedEndDate = repeatingEstimatedEndDate;
   const normalizedRules: FixedScheduleRule[] = scheduleRules.map((rule) => ({
-    ...(cycle === "weekly"
+    ...(rule.repeat && cycle === "weekly" && isValidDayOfWeek(rule.dayOfWeek)
       ? { dayOfWeek: rule.dayOfWeek }
-      : { dayOfMonth: rule.dayOfMonth }),
+      : {}),
+    ...(!rule.repeat
+      ? {
+          specificDate: rule.specificDate,
+          ...(isValidDayOfWeek(rule.dayOfWeek)
+            ? { dayOfWeek: rule.dayOfWeek }
+            : {}),
+        }
+      : {}),
+    repeat: rule.repeat,
+    repeatWeeks: getRuleOccurrenceCount(rule),
+    repeatUntil: rule.repeatUntil,
     timeStart: rule.timeStart,
-    timeEnd: addHoursToTime(rule.timeStart, rule.durationHours),
+    timeEnd: rule.timeEnd,
   }));
 
   // ── Step 2 state ──
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("sepay");
   const {
     preview,
     occurrences,
@@ -266,7 +672,7 @@ export default function FixedSchedulePage() {
     if (!customerName && user.fullName) setCustomerName(user.fullName);
     if (!customerPhone && user.phone) setCustomerPhone(user.phone);
     if (!customerEmail && user.email) setCustomerEmail(user.email);
-  }, [user]);
+  }, [user, customerName, customerPhone, customerEmail]);
 
   // ── Live total ──
   const liveTotal = (() => {
@@ -289,33 +695,132 @@ export default function FixedSchedulePage() {
   })();
 
   // ── Validation ──
-  const minimumOccurrences = cycle === "weekly" ? 4 : 2;
-  const repeatValues = scheduleRules.map((rule) =>
-    cycle === "weekly" ? rule.dayOfWeek : rule.dayOfMonth,
-  );
-  const hasDuplicateRepeatDay =
-    new Set(repeatValues).size !== repeatValues.length;
+  const minimumWeeks = 4;
+  const duplicateCheckEntries = scheduleRules.flatMap((rule) => {
+    if (!rule.timeStart || !rule.timeEnd) return [];
+    if (!rule.repeat && !rule.specificDate) return [];
+    if (cycle !== "daily" && rule.repeat && !isValidDayOfWeek(rule.dayOfWeek)) return [];
+    const startMinutes = toMinutes(rule.timeStart);
+    const endMinutes = toMinutes(rule.timeEnd);
+    if (endMinutes <= startMinutes) return [];
+    const baseEntry = {
+      ruleId: rule.id,
+      repeat: rule.repeat,
+      startMinutes,
+      endMinutes,
+    };
+
+    if (!rule.repeat && rule.specificDate) {
+      const firstDate = toUtcDate(rule.specificDate);
+      return Array.from({ length: getRuleOccurrenceCount(rule) }, (_, index) => {
+        const date = formatUtcDate(addUtcDays(firstDate, index * 7));
+        return {
+          ...baseEntry,
+          key: date,
+          label: `${formatDisplayDate(date)} ${rule.timeStart}-${rule.timeEnd}`,
+        };
+      });
+    }
+
+    if (cycle === "daily") {
+      return [
+        {
+          ...baseEntry,
+          key: "daily",
+          label: `Mỗi ngày ${rule.timeStart}-${rule.timeEnd}`,
+        },
+      ];
+    }
+
+    if (startDate && isValidDayOfWeek(rule.dayOfWeek)) {
+      const firstDate = toUtcDate(getNextDateForDay(rule.dayOfWeek, startDate));
+      return Array.from({ length: getRuleOccurrenceCount(rule) }, (_, index) => {
+        const date = formatUtcDate(addUtcDays(firstDate, index * 7));
+        return {
+          ...baseEntry,
+          key: date,
+          label: `${formatDisplayDate(date)} ${rule.timeStart}-${rule.timeEnd}`,
+        };
+      });
+    }
+
+    const day = getRuleDayMeta(rule.dayOfWeek);
+    return [
+      {
+        ...baseEntry,
+        key: `weekly-${rule.dayOfWeek}`,
+        label: `${day.short} ${rule.timeStart}-${rule.timeEnd}`,
+      },
+    ];
+  });
+  const duplicateRuleIds = new Set<string>();
+  const duplicateRuleMessages: string[] = [];
+  const mergeSuggestions: Array<{
+    fixedRuleId: string;
+    oddRuleId: string;
+    message: string;
+  }> = [];
+
+  duplicateCheckEntries.forEach((entry, index) => {
+    duplicateCheckEntries.slice(index + 1).forEach((other) => {
+      const isSameSlot = entry.key === other.key;
+      const isOverlapping =
+        entry.startMinutes < other.endMinutes &&
+        other.startMinutes < entry.endMinutes;
+      if (!isSameSlot || !isOverlapping) return;
+
+      duplicateRuleIds.add(entry.ruleId);
+      duplicateRuleIds.add(other.ruleId);
+      const message = `${entry.label} trùng với ${other.label}`;
+      if (!duplicateRuleMessages.includes(message)) {
+        duplicateRuleMessages.push(message);
+      }
+
+      const isSameTimeRange =
+        entry.startMinutes === other.startMinutes &&
+        entry.endMinutes === other.endMinutes;
+      if (entry.repeat !== other.repeat && isSameTimeRange) {
+        const fixedEntry = entry.repeat ? entry : other;
+        const oddEntry = entry.repeat ? other : entry;
+        const mergeMessage = `Lịch cố định ${fixedEntry.label} đang chèn vào lịch lẻ ${oddEntry.label}. Nên hợp 2 lịch thành 1 lịch cố định để tránh đặt trùng.`;
+        if (!mergeSuggestions.some((item) => item.fixedRuleId === fixedEntry.ruleId && item.oddRuleId === oddEntry.ruleId)) {
+          mergeSuggestions.push({
+            fixedRuleId: fixedEntry.ruleId,
+            oddRuleId: oddEntry.ruleId,
+            message: mergeMessage,
+          });
+        }
+      }
+    });
+  });
+  const hasDuplicateRule = duplicateRuleIds.size > 0;
+  const hasMergeSuggestion = mergeSuggestions.length > 0;
   const rulesAreValid =
     scheduleRules.length > 0 &&
     scheduleRules.every((rule) => {
-      const startHour = Number(rule.timeStart.split(":")[0]);
-      const repeatValue = cycle === "weekly" ? rule.dayOfWeek : rule.dayOfMonth;
+      const hasScheduleTarget =
+        cycle === "daily" && rule.repeat
+          ? true
+          : rule.repeat
+            ? isValidDayOfWeek(rule.dayOfWeek)
+            : !!rule.specificDate;
       return (
-        Number.isInteger(startHour) &&
-        startHour + rule.durationHours <= 23 &&
-        (cycle === "weekly"
-          ? repeatValue >= 0 && repeatValue <= 6
-          : repeatValue >= 1 && repeatValue <= 31)
+        hasScheduleTarget &&
+        getRuleOccurrenceCount(rule) >= (rule.repeat ? minimumWeeks : 1) &&
+        getRuleOccurrenceCount(rule) <= 52 &&
+        toMinutes(rule.timeEnd) > toMinutes(rule.timeStart)
       );
     }) &&
-    !hasDuplicateRepeatDay;
+    !hasDuplicateRule;
   const isStep1Valid = !!(
     courtId &&
     startDate &&
     rulesAreValid &&
-    (bookingMode === "occurrence_count"
-      ? occurrenceCount >= minimumOccurrences && occurrenceCount <= 52
-      : endDate && endDate >= startDate)
+    (cycle === "daily"
+      ? repeatingRules.length === 0 ||
+        (endDate && getDateRangeDays(startDate, endDate) >= 2)
+      : repeatingRules.length === 0 ||
+        scheduleRules.every((rule) => getRuleOccurrenceCount(rule) >= (rule.repeat ? minimumWeeks : 1)))
   );
   const isStep2Valid = !!(
     customerName.trim() &&
@@ -329,49 +834,657 @@ export default function FixedSchedulePage() {
   const unresolvedOccurrences = occurrences.filter(
     (occurrence) => occurrence.action === "pending",
   );
+  const usesDateRangeMode = cycle === "daily" && repeatingRules.length > 0;
+  const isPreviewDemoStep = step === 2 && !preview && occurrences.length === 0;
+
+  const getRuleFirstDate = (
+    rule: ScheduleRuleState,
+    baseStartDate = startDate,
+  ) => {
+    if (!rule.repeat && rule.specificDate) return rule.specificDate;
+    if (rule.repeat && rule.anchorDate) return rule.anchorDate;
+    if (cycle === "daily") return baseStartDate;
+    if (rule.repeat && isValidDayOfWeek(rule.dayOfWeek) && baseStartDate) {
+      return getNextDateForDay(rule.dayOfWeek, baseStartDate);
+    }
+    return "";
+  };
+
+  const getFirstSelectedDate = (
+    rules: ScheduleRuleState[],
+    baseStartDate = startDate,
+  ) => {
+    return rules
+      .map((rule) => getRuleFirstDate(rule, baseStartDate))
+      .filter(Boolean)
+      .sort()[0] ?? "";
+  };
+
+  const syncStartDateWithFirstRule = (
+    rules: ScheduleRuleState[],
+    fallbackDate = "",
+  ) => {
+    const firstDate = getFirstSelectedDate(rules, fallbackDate || startDate);
+    if (firstDate) setStartDate(firstDate);
+  };
+
+  const handleStartDateChange = (value: string) => {
+    if (!value) {
+      setStartDate("");
+      return;
+    }
+
+    setStartDate(getFirstSelectedDate(scheduleRules, value) || value);
+  };
 
   // ── Handlers ──
-  const updateScheduleRule = (id: string, patch: Partial<ScheduleRuleForm>) => {
+  const setSharedFixedRepeatWeeks = (repeatWeeks: number) => {
+    const safeWeeks = Math.min(
+      52,
+      Math.max(
+        minimumWeeks,
+        Number.isFinite(repeatWeeks) ? repeatWeeks : minimumWeeks,
+      ),
+    );
+    setSharedRepeatWeeks(safeWeeks);
     setScheduleRules((current) =>
-      current.map((rule) => (rule.id === id ? { ...rule, ...patch } : rule)),
+      current.map((rule) =>
+        rule.repeat
+          ? { ...rule, repeatWeeks: safeWeeks, repeatUntil: "weeks" }
+          : rule,
+      ),
     );
   };
 
-  const addScheduleRule = () => {
-    if (scheduleRules.length >= 4) return;
-    const lastRule = scheduleRules[scheduleRules.length - 1];
-    setScheduleRules((current) => [
-      ...current,
-      {
-        id: `rule-${Date.now()}`,
-        dayOfWeek: ((lastRule?.dayOfWeek ?? 0) + 1) % 7,
-        dayOfMonth: Math.min((lastRule?.dayOfMonth ?? 0) + 1, 31),
-        timeStart: lastRule?.timeStart ?? "18:00",
-        durationHours: lastRule?.durationHours ?? 2,
-      },
-    ]);
+  const handleFixedRepeatModeChange = (mode: FixedRepeatMode) => {
+    setFixedRepeatMode(mode);
+    if (mode === "shared") {
+      setScheduleRules((current) =>
+        current.map((rule) =>
+          rule.repeat
+            ? { ...rule, repeatWeeks: sharedRepeatWeeks, repeatUntil: "weeks" }
+            : rule,
+        ),
+      );
+    }
   };
 
-  const removeScheduleRule = (id: string) => {
-    setScheduleRules((current) => current.filter((rule) => rule.id !== id));
+  const addRule = (day: number) => {
+    const sourceRule =
+      scheduleRules.find((rule) => rule.id === activeRuleId) ?? scheduleRules[0];
+    const anchorDate = getNextDateForDay(day, startDate || today);
+    const newRule: ScheduleRuleState = {
+      id: createRuleId(),
+      dayOfWeek: day,
+      anchorDate,
+      repeat: true,
+      repeatWeeks:
+        fixedRepeatMode === "shared"
+          ? sharedRepeatWeeks
+          : sourceRule?.repeatWeeks ?? DEFAULT_REPEAT_WEEKS,
+      repeatUntil: "weeks",
+      timeStart: sourceRule?.timeStart ?? DEFAULT_RULE_TIME.timeStart,
+      timeEnd: sourceRule?.timeEnd ?? DEFAULT_RULE_TIME.timeEnd,
+    };
+    const nextRules = sortScheduleRules([...scheduleRules, newRule]);
+    setScheduleRules(nextRules);
+    syncStartDateWithFirstRule(nextRules, anchorDate);
+    setActiveRuleId(newRule.id);
+  };
+
+  const addBlankRule = () => {
+    const newRule: ScheduleRuleState = {
+      id: createRuleId(),
+      dayOfWeek: UNSET_DAY_OF_WEEK,
+      repeat: true,
+      repeatWeeks:
+        fixedRepeatMode === "shared" ? sharedRepeatWeeks : DEFAULT_REPEAT_WEEKS,
+      repeatUntil: "weeks",
+      timeStart: "",
+      timeEnd: "",
+    };
+
+    setScheduleRules((current) => sortScheduleRules([...current, newRule]));
+    setActiveRuleId(newRule.id);
+    setSlotSelectionNotice("");
+  };
+
+  const removeRule = (ruleId: string) => {
+    const targetRule = scheduleRules.find((rule) => rule.id === ruleId);
+    if (!targetRule) return;
+    const next = sortScheduleRules(
+      scheduleRules.filter(
+        (rule) => !ruleHasSameScheduleTarget(rule, targetRule),
+      ),
+    );
+    if (!next.length) {
+      toast.error("Cần giữ ít nhất một khung giờ.");
+      return;
+    }
+    setScheduleRules(next);
+    if (scheduleRules.some((rule) => rule.id === activeRuleId && ruleHasSameScheduleTarget(rule, targetRule))) {
+      setActiveRuleId(next[0].id);
+    }
+  };
+
+  const mergeOddRuleIntoFixedRule = (fixedRuleId: string, oddRuleId: string) => {
+    const fixedRule = scheduleRules.find((rule) => rule.id === fixedRuleId);
+    const oddRule = scheduleRules.find((rule) => rule.id === oddRuleId);
+    if (!fixedRule || !oddRule || !oddRule.specificDate) return;
+
+    let mergedRepeatWeeks = Math.max(
+      getRuleOccurrenceCount(fixedRule),
+      getRuleOccurrenceCount(oddRule),
+    );
+    if (startDate) {
+      const fixedStart = toUtcDate(getNextDateForDay(fixedRule.dayOfWeek, startDate));
+      const oddEnd = addUtcDays(toUtcDate(oddRule.specificDate), (getRuleOccurrenceCount(oddRule) - 1) * 7);
+      const weeksToCoverOddEnd =
+        Math.floor((oddEnd.getTime() - fixedStart.getTime()) / (7 * 86400000)) + 1;
+      mergedRepeatWeeks = Math.max(mergedRepeatWeeks, weeksToCoverOddEnd);
+    }
+
+    mergedRepeatWeeks = Math.min(52, Math.max(minimumWeeks, mergedRepeatWeeks));
+    if (fixedRepeatMode === "shared") {
+      setSharedRepeatWeeks(mergedRepeatWeeks);
+    }
+    setScheduleRules((current) =>
+      sortScheduleRules(
+        current
+          .filter((rule) => rule.id !== oddRuleId)
+          .map((rule) =>
+            fixedRepeatMode === "shared" && rule.repeat
+              ? {
+                  ...rule,
+                  repeat: true,
+                  repeatUntil: "weeks",
+                  repeatWeeks: mergedRepeatWeeks,
+                  timeStart:
+                    rule.id === fixedRuleId
+                      ? fixedRule.timeStart || oddRule.timeStart
+                      : rule.timeStart,
+                  timeEnd:
+                    rule.id === fixedRuleId
+                      ? fixedRule.timeEnd || oddRule.timeEnd
+                      : rule.timeEnd,
+                }
+              : rule.id === fixedRuleId
+                ? {
+                    ...rule,
+                    repeat: true,
+                    repeatUntil: "weeks",
+                    repeatWeeks: mergedRepeatWeeks,
+                    timeStart: fixedRule.timeStart || oddRule.timeStart,
+                    timeEnd: fixedRule.timeEnd || oddRule.timeEnd,
+                  }
+                : rule,
+          ),
+      ),
+    );
+    setActiveRuleId(fixedRuleId);
+    toast.success("Đã hợp lịch lẻ vào lịch cố định.");
+  };
+
+  const setRuleDayOfWeek = (ruleId: string, dayOfWeek: number) => {
+    if (!isValidDayOfWeek(dayOfWeek)) return;
+    const targetRule = scheduleRules.find((rule) => rule.id === ruleId);
+    if (!targetRule) return;
+    const anchorDate = getNextDateForDay(dayOfWeek, startDate || today);
+    const nextRules = sortScheduleRules(
+      scheduleRules.map((rule) =>
+        ruleHasSameScheduleTarget(rule, targetRule)
+          ? {
+              ...rule,
+              dayOfWeek,
+              anchorDate: rule.repeat ? anchorDate : rule.anchorDate,
+              specificDate: rule.repeat ? undefined : rule.specificDate,
+            }
+          : rule,
+      ),
+    );
+    setScheduleRules(nextRules);
+    syncStartDateWithFirstRule(nextRules, anchorDate);
+    setActiveRuleId(ruleId);
+    setSlotSelectionNotice("");
+  };
+
+  const setRuleAnchorDate = (ruleId: string, anchorDate: string) => {
+    if (!anchorDate) return;
+    const targetRule = scheduleRules.find((rule) => rule.id === ruleId);
+    if (!targetRule) return;
+    const dayOfWeek = toUtcDate(anchorDate).getUTCDay();
+    const nextRules = sortScheduleRules(
+      scheduleRules.map((rule) =>
+        ruleHasSameScheduleTarget(rule, targetRule)
+          ? {
+              ...rule,
+              dayOfWeek,
+              anchorDate,
+              specificDate: rule.repeat ? undefined : rule.specificDate,
+            }
+          : rule,
+      ),
+    );
+    setScheduleRules(nextRules);
+    syncStartDateWithFirstRule(nextRules, anchorDate);
+    setActiveRuleId(ruleId);
+    setSlotSelectionNotice("");
+  };
+
+  const toggleSelectedDay = (day: number) => {
+    const activeBlankRule = scheduleRules.find(
+      (rule) =>
+        rule.id === activeRuleId &&
+        rule.repeat &&
+        !isValidDayOfWeek(rule.dayOfWeek),
+    );
+    if (activeBlankRule) {
+      setRuleDayOfWeek(activeBlankRule.id, day);
+      return;
+    }
+
+    const rulesOfDay = scheduleRules.filter(
+      (rule) => rule.repeat && rule.dayOfWeek === day,
+    );
+    if (rulesOfDay.length > 0) {
+      const oddSpecificDate = getNextDateForDay(day, startDate || today);
+      const existingOddRule = scheduleRules.find(
+        (rule) => !rule.repeat && rule.specificDate === oddSpecificDate,
+      );
+
+      if (existingOddRule) {
+        setActiveRuleId(existingOddRule.id);
+        setSlotSelectionNotice("Đang chỉnh lịch lẻ cho thứ này. Khung giờ cố định đã được bôi đen.");
+        return;
+      }
+
+      const newOddRule: ScheduleRuleState = {
+        id: createRuleId(),
+        dayOfWeek: day,
+        repeat: false,
+        specificDate: oddSpecificDate,
+        repeatWeeks: 1,
+        repeatUntil: "weeks",
+        timeStart: "",
+        timeEnd: "",
+      };
+
+      const nextRules = sortScheduleRules([...scheduleRules, newOddRule]);
+      setScheduleRules(nextRules);
+      syncStartDateWithFirstRule(nextRules, oddSpecificDate);
+      setActiveRuleId(newOddRule.id);
+      setSlotSelectionNotice(
+        `${getDayMeta(day).label} đã có lịch cố định. Hãy chọn lịch lẻ ở khung giờ khác; khung cố định đang được bôi đen.`,
+      );
+      return;
+    }
+    addRule(day);
+  };
+
+  const setRuleRepeatWeeks = (ruleId: string, repeatWeeks: number) => {
+    const targetRule = scheduleRules.find((rule) => rule.id === ruleId);
+    if (!targetRule) return;
+    setScheduleRules((current) =>
+      current.map((rule) => {
+        if (!ruleHasSameScheduleTarget(rule, targetRule)) return rule;
+        const minWeeks = rule.repeat ? minimumWeeks : 1;
+        const safeWeeks = Math.min(
+          52,
+          Math.max(minWeeks, Number.isFinite(repeatWeeks) ? repeatWeeks : minWeeks),
+        );
+        return { ...rule, repeatWeeks: safeWeeks, repeatUntil: "weeks" };
+      }),
+    );
+  };
+
+  const setRuleRepeatMode = (ruleId: string, repeat: boolean) => {
+    const targetRule = scheduleRules.find((rule) => rule.id === ruleId);
+    if (!targetRule) return;
+    const nextRules = sortScheduleRules(
+      scheduleRules.map((rule) => {
+        if (!ruleHasSameScheduleTarget(rule, targetRule)) return rule;
+        if (repeat) {
+          return {
+            ...rule,
+            repeat: true,
+            anchorDate: rule.specificDate ?? rule.anchorDate,
+            specificDate: undefined,
+            repeatUntil: "weeks",
+            repeatWeeks:
+              fixedRepeatMode === "shared"
+                ? sharedRepeatWeeks
+                : Math.max(minimumWeeks, rule.repeatWeeks),
+          };
+        }
+
+        const specificDate =
+          rule.specificDate ||
+          rule.anchorDate ||
+          (isValidDayOfWeek(rule.dayOfWeek)
+            ? getNextDateForDay(rule.dayOfWeek, startDate || today)
+            : "");
+        return {
+          ...rule,
+          repeat: false,
+          specificDate: specificDate || undefined,
+          dayOfWeek: specificDate
+            ? toUtcDate(specificDate).getUTCDay()
+            : UNSET_DAY_OF_WEEK,
+          repeatUntil: rule.repeatUntil ?? "weeks",
+          repeatWeeks: Math.max(1, rule.repeatWeeks),
+        };
+      }),
+    );
+    setScheduleRules(nextRules);
+    syncStartDateWithFirstRule(nextRules);
+  };
+
+  const setRuleSpecificDate = (ruleId: string, specificDate: string) => {
+    if (!specificDate) return;
+    const targetRule = scheduleRules.find((rule) => rule.id === ruleId);
+    if (!targetRule) return;
+    const nextRules = sortScheduleRules(
+      scheduleRules.map((rule) =>
+        ruleHasSameScheduleTarget(rule, targetRule)
+          ? {
+              ...rule,
+              specificDate,
+              dayOfWeek: toUtcDate(specificDate).getUTCDay(),
+            }
+          : rule,
+      ),
+    );
+    setScheduleRules(nextRules);
+    syncStartDateWithFirstRule(nextRules, specificDate);
+  };
+
+  const setRuleRepeatUntil = (
+    ruleId: string,
+    repeatUntil: ScheduleRuleState["repeatUntil"],
+  ) => {
+    const targetRule = scheduleRules.find((rule) => rule.id === ruleId);
+    if (!targetRule) return;
+    setScheduleRules((current) =>
+      current.map((rule) =>
+        ruleHasSameScheduleTarget(rule, targetRule)
+          ? { ...rule, repeatUntil }
+          : rule,
+      ),
+    );
+  };
+
+  const ruleHasSameScheduleTarget = (
+    rule: ScheduleRuleState,
+    target: ScheduleRuleState,
+  ) => {
+    if (rule.repeat !== target.repeat) return false;
+    if (rule.repeat) {
+      if (cycle === "daily") return true;
+      if (!isValidDayOfWeek(rule.dayOfWeek) || !isValidDayOfWeek(target.dayOfWeek)) {
+        return rule.id === target.id;
+      }
+      return rule.dayOfWeek === target.dayOfWeek;
+    }
+    if (rule.specificDate && target.specificDate) {
+      return rule.specificDate === target.specificDate;
+    }
+    if (!isValidDayOfWeek(rule.dayOfWeek) || !isValidDayOfWeek(target.dayOfWeek)) {
+      return rule.id === target.id;
+    }
+    return rule.dayOfWeek === target.dayOfWeek;
+  };
+
+  const scheduleRuleGroups = scheduleRules.reduce<
+    Array<{ key: string; primaryRule: ScheduleRuleState; rules: ScheduleRuleState[] }>
+  >((groups, rule) => {
+    const existingGroup = groups.find((group) =>
+      ruleHasSameScheduleTarget(rule, group.primaryRule),
+    );
+    if (existingGroup) {
+      existingGroup.rules.push(rule);
+      existingGroup.rules = sortScheduleRules(existingGroup.rules);
+      return groups;
+    }
+
+    groups.push({
+      key: `${rule.repeat ? "fixed" : "odd"}-${
+        rule.specificDate ??
+        (isValidDayOfWeek(rule.dayOfWeek) ? rule.dayOfWeek : rule.id)
+      }`,
+      primaryRule: rule,
+      rules: [rule],
+    });
+    return groups;
+  }, []);
+
+  const getBlockingFixedRuleForSlot = (
+    rule: ScheduleRuleState | undefined,
+    slot: Pick<TimeSlot, "start" | "end">,
+  ) => {
+    return getBlockingFixedRuleForRange(rule, slot.start, slot.end);
+  };
+
+  const getBlockingFixedRuleForRange = (
+    rule: ScheduleRuleState | undefined,
+    timeStart: string,
+    timeEnd: string,
+  ) => {
+    if (!rule || rule.repeat || !timeStart || !timeEnd) return undefined;
+    const startMinutes = toMinutes(timeStart);
+    const endMinutes = toMinutes(timeEnd);
+    return scheduleRules.find(
+      (candidate) => {
+        if (
+          !candidate.repeat ||
+          !isValidDayOfWeek(candidate.dayOfWeek) ||
+          !isValidDayOfWeek(rule.dayOfWeek) ||
+          candidate.dayOfWeek !== rule.dayOfWeek
+        ) {
+          return false;
+        }
+        return (
+          startMinutes < toMinutes(candidate.timeEnd) &&
+          toMinutes(candidate.timeStart) < endMinutes
+        );
+      },
+    );
+  };
+
+  const handleSelectRuleSlot = (
+    ruleId: string | undefined,
+    timeStart: string,
+    timeEnd: string,
+  ) => {
+    if (!ruleId) {
+      toast.error("Vui lòng chọn ngày trước khi chọn giờ.");
+      return;
+    }
+
+    const currentRule = scheduleRules.find((rule) => rule.id === ruleId);
+    if (!currentRule) {
+      toast.error("Vui lòng chọn ngày trước khi chọn giờ.");
+      return;
+    }
+    if (cycle !== "daily" && currentRule.repeat && !isValidDayOfWeek(currentRule.dayOfWeek)) {
+      toast.error("Vui lòng chọn thứ trước khi chọn giờ.");
+      return;
+    }
+    if (!currentRule.repeat && !currentRule.specificDate) {
+      toast.error("Vui lòng chọn ngày trước khi chọn giờ.");
+      return;
+    }
+
+    setSlotSelectionNotice("");
+
+    const blockingFixedRule = getBlockingFixedRuleForSlot(currentRule, {
+      start: timeStart,
+      end: timeEnd,
+    });
+    if (blockingFixedRule) {
+      setSlotSelectionNotice(
+        `Khung ${timeStart} - ${timeEnd} đã thuộc lịch cố định ${blockingFixedRule.timeStart} - ${blockingFixedRule.timeEnd}. Vui lòng chọn giờ khác cho lịch lẻ.`,
+      );
+      return;
+    }
+
+    const targetRules = scheduleRules.filter((rule) =>
+      ruleHasSameScheduleTarget(rule, currentRule),
+    );
+    const selectedSlotKeys = new Set<string>();
+    targetRules.forEach((rule) => {
+      getRuleSlotKeys(rule).forEach((key) => selectedSlotKeys.add(key));
+    });
+
+    const clickedSlot = { start: timeStart, end: timeEnd };
+    const clickedSlotKey = getSlotKey(clickedSlot);
+    if (selectedSlotKeys.has(clickedSlotKey)) {
+      selectedSlotKeys.delete(clickedSlotKey);
+    } else {
+      selectedSlotKeys.add(clickedSlotKey);
+    }
+
+    const nextRanges = buildRangesFromSlotKeys(selectedSlotKeys);
+    const otherRules = scheduleRules.filter(
+      (rule) => !ruleHasSameScheduleTarget(rule, currentRule),
+    );
+
+    if (nextRanges.length === 0) {
+      if (otherRules.length === 0) {
+        const blankRule = { ...currentRule, timeStart: "", timeEnd: "" };
+        setScheduleRules([blankRule]);
+        setActiveRuleId(blankRule.id);
+        return;
+      }
+
+      const nextRules = sortScheduleRules(otherRules);
+      setScheduleRules(nextRules);
+      setActiveRuleId(nextRules[0].id);
+      return;
+    }
+
+    const usedRuleIds = new Set(otherRules.map((rule) => rule.id));
+    const createUniqueRuleId = () => {
+      let id = createRuleId();
+      while (usedRuleIds.has(id)) id = createRuleId();
+      return id;
+    };
+    const nextTargetRules = nextRanges.map((range, index) => {
+      const existingRule =
+        targetRules.find(
+          (rule) =>
+            !usedRuleIds.has(rule.id) &&
+            rule.timeStart === range.timeStart && rule.timeEnd === range.timeEnd,
+        ) ??
+        targetRules.find((rule) => !usedRuleIds.has(rule.id)) ??
+        targetRules[index];
+      const baseRule = existingRule ?? currentRule;
+      const nextId =
+        existingRule && !usedRuleIds.has(existingRule.id)
+          ? existingRule.id
+          : createUniqueRuleId();
+      usedRuleIds.add(nextId);
+
+      return {
+        ...baseRule,
+        id: nextId,
+        timeStart: range.timeStart,
+        timeEnd: range.timeEnd,
+        repeatWeeks:
+          baseRule.repeat && fixedRepeatMode === "shared"
+            ? sharedRepeatWeeks
+            : baseRule.repeatWeeks,
+        repeatUntil: baseRule.repeat ? "weeks" : baseRule.repeatUntil,
+      };
+    });
+
+    const nextRules = sortScheduleRules([...otherRules, ...nextTargetRules]);
+    setScheduleRules(nextRules);
+
+    const clickedStart = toMinutes(timeStart);
+    const nextActiveRule =
+      nextTargetRules.find((rule) =>
+        slotIsInsideRange(clickedSlot, rule.timeStart, rule.timeEnd),
+      ) ??
+      nextTargetRules.find((rule) => toMinutes(rule.timeStart) >= clickedStart) ??
+      nextTargetRules[0];
+    setActiveRuleId(nextActiveRule.id);
+  };
+
+  const handleSelectCustomRuleTime = (
+    ruleId: string | undefined,
+    timeStart: string,
+    timeEnd: string,
+  ) => {
+    if (!ruleId) {
+      toast.error("Vui lòng chọn ngày trước khi chọn giờ.");
+      return;
+    }
+    const currentRule = scheduleRules.find((rule) => rule.id === ruleId);
+    if (!currentRule) {
+      toast.error("Vui lòng chọn ngày trước khi chọn giờ.");
+      return;
+    }
+    if (cycle !== "daily" && currentRule.repeat && !isValidDayOfWeek(currentRule.dayOfWeek)) {
+      toast.error("Vui lòng chọn thứ trước khi chọn giờ.");
+      return;
+    }
+    if (!currentRule.repeat && !currentRule.specificDate) {
+      toast.error("Vui lòng chọn ngày trước khi chọn giờ.");
+      return;
+    }
+    const blockingFixedRule = getBlockingFixedRuleForRange(
+      currentRule,
+      timeStart,
+      timeEnd,
+    );
+    if (blockingFixedRule) {
+      setSlotSelectionNotice(
+        `Khung ${timeStart} - ${timeEnd} đang trùng lịch cố định ${blockingFixedRule.timeStart} - ${blockingFixedRule.timeEnd}.`,
+      );
+      return;
+    }
+
+    setSlotSelectionNotice("");
+    setScheduleRules((current) =>
+      current.map((rule) =>
+        rule.id === ruleId
+          ? { ...rule, timeStart, timeEnd }
+          : rule,
+      ),
+    );
+  };
+
+  const resetActiveRuleSlots = () => {
+    if (!activeRule) return;
+    setSlotSelectionNotice("");
+    setScheduleRules((current) =>
+      current.map((rule) =>
+        rule.id === activeRule.id ? { ...rule, timeStart: "", timeEnd: "" } : rule,
+      ),
+    );
   };
 
   const buildSchedulePayload = () => ({
     courtId: parseInt(courtId),
     cycle,
-    bookingMode,
+    bookingMode: usesDateRangeMode ? DATE_RANGE_BOOKING_MODE : FIXED_BOOKING_MODE,
     startDate,
-    ...(bookingMode === "occurrence_count" ? { occurrenceCount } : { endDate }),
+    ...(usesDateRangeMode ? { endDate } : { occurrenceCount }),
     rules: normalizedRules,
     timeStart,
     timeEnd,
   });
 
   const handlePreview = async () => {
+    if (hasDuplicateRule) {
+      toast.error("Có buổi bị trùng. Vui lòng đổi ngày/giờ hoặc xóa khung trùng.");
+      return;
+    }
     if (!isStep1Valid) {
       toast.error("Vui lòng điền đầy đủ thông tin!");
       return;
     }
+
     const ok = await fetchPreview(buildSchedulePayload());
     if (ok) setStep(2);
   };
@@ -394,6 +1507,8 @@ export default function FixedSchedulePage() {
 
     const decisions = occurrences.map((occ) => ({
       date: occ.date,
+      timeStart: occ.timeStart,
+      timeEnd: occ.timeEnd,
       action: occ.action as OccurrenceAction,
       ...(occ.action === "replace" && occ.selectedReplacement
         ? { replaceWithCourtId: occ.selectedReplacement.courtId }
@@ -401,6 +1516,7 @@ export default function FixedSchedulePage() {
       ...(occ.action === "custom"
         ? {
             replaceWithCourtId: occ.customCourtId,
+            customDate: occ.customDate,
             customTimeStart: occ.customTimeStart,
             customTimeEnd: occ.customTimeEnd,
           }
@@ -413,30 +1529,89 @@ export default function FixedSchedulePage() {
       customerPhone,
       customerEmail: customerEmail || undefined,
       paymentMethod,
-      userId: user?.role !== "guest" ? user?.id : undefined,
       decisions,
     });
 
     if (result) {
-      localStorage.setItem(
-        "completedFixedBooking",
-        JSON.stringify({
-          fixedSchedule: {
-            id: result.scheduleId,
-            courtName:
-              courts.find((c) => c.id === parseInt(courtId))?.name || "Sân",
-            cycle,
-            bookingMode,
-            startDate,
-            endDate: preview.endDate ?? endDate,
-            occurrenceCount: result.bookingsCreated,
-            invoiceCode: result.invoiceCode,
-            totalAmount: result.totalAmount,
-          },
+      const checkout = {
+        fixedSchedule: {
+          id: result.scheduleId,
+          courtName:
+            courts.find((c) => c.id === parseInt(courtId))?.name || "Sân",
+          cycle,
+          bookingMode: usesDateRangeMode ? DATE_RANGE_BOOKING_MODE : FIXED_BOOKING_MODE,
+          startDate,
+          endDate: preview.endDate,
+          occurrenceCount: result.bookingsCreated,
           invoiceCode: result.invoiceCode,
           totalAmount: result.totalAmount,
-          bookingsCreated: result.bookingsCreated,
-        }),
+        },
+        invoiceId: result.invoiceId,
+        invoiceCode: result.invoiceCode,
+        totalAmount: result.totalAmount,
+        bookingsCreated: result.bookingsCreated,
+        paymentMethod: result.paymentMethod || paymentMethod,
+        paymentStatus: "pending",
+        checkinQrValue: result.invoiceCode,
+      };
+
+      if (["sepay", "vnpay", "momo"].includes(paymentMethod)) {
+        try {
+          const payResult = await paymentApi.create(
+            result.invoiceId,
+            paymentMethod as "sepay" | "vnpay" | "momo",
+          );
+
+          if (payResult.success && payResult.paymentId) {
+            Object.assign(checkout, {
+              paymentId: payResult.paymentId,
+              qrImageUrl: payResult.qrImageUrl,
+              bankCode: payResult.bankCode,
+              accountNumber: payResult.accountNumber,
+              transferContent: payResult.transferContent,
+            });
+
+            localStorage.setItem(
+              FIXED_CHECKOUT_STORAGE_KEY,
+              JSON.stringify(checkout),
+            );
+            localStorage.setItem(
+              `${FIXED_CHECKOUT_STORAGE_KEY}:${result.scheduleId}`,
+              JSON.stringify(checkout),
+            );
+
+            if (payResult.payUrl) {
+              window.location.href = payResult.payUrl;
+              return;
+            }
+
+            if (payResult.checkoutUrl && payResult.formFields) {
+              submitPaymentForm(payResult.checkoutUrl, payResult.formFields);
+              return;
+            }
+          }
+
+          Object.assign(checkout, {
+            paymentError:
+              payResult.error ||
+              "Không thể tạo phiên thanh toán online. Lịch vẫn được giữ để nhân viên xử lý.",
+          });
+        } catch (error: any) {
+          Object.assign(checkout, {
+            paymentError:
+              error?.message ||
+              "Không thể tạo phiên thanh toán online. Lịch vẫn được giữ để nhân viên xử lý.",
+          });
+        }
+      }
+
+      localStorage.setItem(
+        FIXED_CHECKOUT_STORAGE_KEY,
+        JSON.stringify(checkout),
+      );
+      localStorage.setItem(
+        `${FIXED_CHECKOUT_STORAGE_KEY}:${result.scheduleId}`,
+        JSON.stringify(checkout),
       );
       router.push(`/booking/success?id=${result.scheduleId}`);
     }
@@ -445,10 +1620,19 @@ export default function FixedSchedulePage() {
   const today = new Date().toISOString().split("T")[0];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-green-50/20 to-emerald-50/30">
+    <TutorialProvider
+      tutorialId="fixed_schedule"
+      storageKey="tutorial_seen_fixed_schedule"
+      steps={fixedScheduleTutorialSteps}
+    >
+    <FixedScheduleTutorialDemoController onStepChange={setStep} />
+    <div
+      data-cycle-label={formatCycleLabel(cycle)}
+      className="min-h-screen bg-gradient-to-br from-slate-50 via-green-50/20 to-emerald-50/30"
+    >
       {/* ── Top bar ── */}
       <div className="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-gray-100 shadow-sm">
-        <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
+        <div className="mx-auto flex h-16 max-w-[1600px] items-center justify-between px-4 xl:px-6">
           <button
             onClick={() => router.push("/")}
             className="flex items-center gap-2 text-sm text-gray-500 hover:text-green-600 transition-colors group"
@@ -512,7 +1696,7 @@ export default function FixedSchedulePage() {
       </div>
 
       {/* ── Page header ── */}
-      <div className="max-w-5xl mx-auto px-4 pt-8 pb-4">
+      <div className="mx-auto max-w-[1600px] px-4 pt-8 pb-4 xl:px-6">
         <motion.div
           initial={{ opacity: 0, y: -12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -525,13 +1709,13 @@ export default function FixedSchedulePage() {
             Lịch đặt sân cố định
           </h1>
           <p className="text-gray-500 mt-2 text-sm">
-            Đặt sân định kỳ theo tuần hoặc tháng — không lo hết chỗ
+            Đặt sân định kỳ theo tuần — không lo hết chỗ
           </p>
         </motion.div>
       </div>
 
       {/* ── Main content ── */}
-      <div className="max-w-5xl mx-auto px-4 pb-24">
+      <div className="mx-auto max-w-[1600px] px-4 pb-24 xl:px-6">
         <AnimatePresence mode="wait">
           {/* ════════ STEP 1 ════════ */}
           {step === 1 ? (
@@ -541,17 +1725,27 @@ export default function FixedSchedulePage() {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 24 }}
               transition={{ duration: 0.25 }}
-              className="max-w-2xl mx-auto space-y-4"
+              className="mx-auto w-full space-y-4"
             >
               {/* Chọn sân */}
-              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-4">
-                <h2 className="font-semibold text-gray-800 flex items-center gap-2">
-                  <MapPin className="h-4 w-4 text-green-600" /> Chọn sân
-                </h2>
+              <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+                <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)] lg:items-center">
+                <div>
+                  <div className="inline-flex h-7 items-center gap-2 rounded-full bg-green-50 px-3 text-xs font-bold uppercase tracking-wide text-green-700">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-green-600 text-[11px] text-white">
+                      1
+                    </span>
+                    Sân chơi
+                  </div>
+                  <h2 className="mt-2 flex items-center gap-2 font-semibold text-gray-900">
+                    <MapPin className="h-4 w-4 text-green-600" /> Chọn sân
+                  </h2>
+                </div>
                 {loadingCourts ? (
                   <div className="h-11 bg-gray-100 animate-pulse rounded-xl" />
                 ) : (
                   <select
+                    data-tutorial="fixed-court-select"
                     value={courtId}
                     onChange={(e) => setCourtId(e.target.value)}
                     className="w-full h-11 px-3.5 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-500 transition-all"
@@ -565,137 +1759,850 @@ export default function FixedSchedulePage() {
                     ))}
                   </select>
                 )}
+                </div>
               </div>
 
               {/* Thời gian */}
-              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-5">
-                <h2 className="font-semibold text-gray-800 flex items-center gap-2">
-                  <Calendar className="h-4 w-4 text-green-600" /> Thời gian đặt
-                  sân
-                </h2>
-
-                {/* Đối tượng */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                    Đối tượng
-                  </label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {(
-                      [
-                        { value: "personal", label: "Cá nhân" },
-                        { value: "group", label: "Nhóm" },
-                        { value: "tournament", label: "Giải đấu" },
-                      ] as const
-                    ).map((opt) => (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        onClick={() => setCustomerType(opt.value)}
-                        className={cn(
-                          "h-10 rounded-xl border text-sm font-semibold transition-all",
-                          customerType === opt.value
-                            ? "border-green-600 bg-green-50 text-green-700"
-                            : "border-gray-200 text-gray-500 hover:border-green-300",
-                        )}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
+              <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="inline-flex h-7 items-center gap-2 rounded-full bg-green-50 px-3 text-xs font-bold uppercase tracking-wide text-green-700">
+                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-green-600 text-[11px] text-white">
+                        2
+                      </span>
+                      Thời gian
+                    </div>
+                    <h2 className="mt-2 flex items-center gap-2 font-semibold text-gray-900">
+                      <Calendar className="h-4 w-4 text-green-600" /> Thiết lập lịch
+                    </h2>
+                  </div>
+                  <div className="rounded-full bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-500">
+                    {occurrenceCount > 0 ? `${occurrenceCount} buổi dự kiến` : "Chưa có buổi"}
                   </div>
                 </div>
 
-                {/* Chu kỳ */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                    Chu kỳ lặp <span className="text-red-400">*</span>
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {(
-                      [
-                        {
-                          value: "weekly",
-                          label: "Hàng tuần",
-                          desc: "Lặp mỗi 7 ngày",
-                        },
-                        {
-                          value: "monthly",
-                          label: "Hàng tháng",
-                          desc: "Lặp theo ngày trong tháng",
-                        },
-                      ] as const
-                    ).map((opt) => (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        onClick={() => setCycle(opt.value)}
-                        className={cn(
-                          "min-h-14 rounded-xl border px-3 py-2 text-left transition-all",
-                          cycle === opt.value
-                            ? "border-green-600 bg-green-50 text-green-700"
-                            : "border-gray-200 text-gray-600 hover:border-green-300",
-                        )}
-                      >
-                        <span className="block text-sm font-semibold">
-                          {opt.label}
-                        </span>
-                        <span className="block text-xs text-gray-400 mt-0.5">
-                          {opt.desc}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
+                <div className="grid grid-cols-2 gap-2 rounded-2xl border border-gray-100 bg-gray-50 p-2">
+                  {[
+                    {
+                      value: "weekly" as FixedScheduleCycle,
+                      label: "Lặp theo tuần",
+                      desc: "Chọn thứ và khung giờ cố định",
+                    },
+                    {
+                      value: "daily" as FixedScheduleCycle,
+                      label: "Lặp theo ngày",
+                      desc: "Từ ngày đến ngày, ngày nào cũng có lịch",
+                    },
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setCycle(option.value)}
+                      className={cn(
+                        "rounded-xl border p-3 text-left transition-all",
+                        cycle === option.value
+                          ? "border-green-600 bg-white text-green-700 shadow-sm"
+                          : "border-gray-200 bg-white text-gray-500 hover:border-green-300",
+                      )}
+                    >
+                      <p className="text-sm font-bold">{option.label}</p>
+                      <p className="mt-0.5 text-xs">{option.desc}</p>
+                    </button>
+                  ))}
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                    Cách tạo gói
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {(
-                      [
-                        {
-                          value: "occurrence_count",
-                          label: "Theo số buổi",
-                          desc: "Chủ động chọn quy mô gói",
-                        },
-                        {
-                          value: "date_range",
-                          label: "Theo khoảng ngày",
-                          desc: "Hệ thống xếp đến ngày kết thúc",
-                        },
-                      ] as const
-                    ).map((option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => setBookingMode(option.value)}
-                        className={cn(
-                          "min-h-14 rounded-xl border px-3 py-2 text-left transition-all",
-                          bookingMode === option.value
-                            ? "border-green-600 bg-green-50 text-green-700"
-                            : "border-gray-200 text-gray-600 hover:border-green-300",
+                <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(620px,0.9fr)] xl:items-start">
+                <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4 repeat-day-rules" data-tutorial="fixed-day-rules">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-gray-500">
+                        3. Ngày và buổi chơi
+                      </p>
+                      <p className="mt-1 text-sm font-semibold text-gray-900">
+                        Chọn thứ, lịch cố định hoặc lịch lẻ
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-gray-500">
+                      {scheduleRuleGroups.length} thẻ lịch
+                    </span>
+                  </div>
+                  <div className={cn("grid grid-cols-7 gap-1.5", cycle === "daily" && "hidden")}>
+                    {DAY_LABELS.map((day) => {
+                      const isSelected = selectedDays.includes(day.value);
+                      return (
+                        <button
+                          key={day.value}
+                          type="button"
+                          onClick={() => toggleSelectedDay(day.value)}
+                          title={day.label}
+                          className={cn(
+                            "h-11 rounded-xl border text-sm font-semibold transition-all",
+                            isSelected
+                              ? "border-green-600 bg-green-600 text-white shadow-sm shadow-green-600/20"
+                              : "border-gray-200 bg-white text-gray-500 hover:border-green-300 hover:text-green-700",
+                          )}
+                        >
+                          {day.short}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-2 text-xs text-gray-400">
+                    Chọn một hoặc nhiều ngày. Bấm lại vào thứ đã có lịch cố định để thêm lịch lẻ không trùng giờ.
+                  </p>
+                  {scheduleRuleGroups.length > 0 && (
+                    <div className="flex flex-wrap gap-2 pt-2">
+                      {scheduleRuleGroups.map((group) => {
+                        const rule = group.primaryRule;
+                        const groupRules = group.rules;
+                        const day = getRuleDayMeta(rule.dayOfWeek);
+                        const active = groupRules.some(
+                          (item) => item.id === activeRuleId,
+                        );
+                        const ruleWeeks = getRuleOccurrenceCount(rule);
+                        const duplicated = groupRules.some((item) =>
+                          duplicateRuleIds.has(item.id),
+                        );
+                        const displayDate = rule.specificDate
+                          ? formatDisplayDate(rule.specificDate)
+                          : "";
+                        const timeLabel = groupRules
+                          .filter((r) => r.timeStart && r.timeEnd)
+                          .map((r) => `${r.timeStart}-${r.timeEnd}`)
+                          .join(", ") || "Chưa chọn giờ";
+                        return (
+                          <button
+                            key={group.key}
+                            type="button"
+                            onClick={() => setActiveRuleId(rule.id)}
+                            className={cn(
+                              "group flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold transition-all",
+                              duplicated
+                                ? "border-red-400 bg-red-50 text-red-700 shadow-sm shadow-red-500/10"
+                                : active
+                                ? "border-green-600 bg-green-600 text-white shadow-md shadow-green-600/20"
+                                : "border-gray-200 bg-white text-gray-600 hover:border-green-300 hover:text-green-700 hover:shadow-sm",
+                            )}
+                          >
+                            <span className="font-bold">
+                              {!rule.repeat && displayDate
+                                ? displayDate
+                                : cycle === "daily"
+                                  ? "Mỗi ngày"
+                                  : day.short}
+                            </span>
+                            <span className={cn("text-[11px]", active ? "text-green-100" : "text-gray-400")}>
+                              {timeLabel}
+                            </span>
+                            <span
+                              className={cn(
+                                "rounded-full px-1.5 py-0.5 text-[10px] font-bold",
+                                active
+                                  ? "bg-white/20 text-white"
+                                  : rule.repeat
+                                    ? "bg-green-50 text-green-600"
+                                    : "bg-purple-50 text-purple-600",
+                              )}
+                            >
+                              {rule.repeat ? `${ruleWeeks}w` : "Lẻ"}
+                            </span>
+                            {duplicated && <AlertCircle className="h-3 w-3 text-red-500" />}
+                            <span
+                              onClick={(e) => { e.stopPropagation(); removeRule(rule.id); }}
+                              className={cn(
+                                "ml-0.5 flex h-4 w-4 items-center justify-center rounded-full text-[10px] transition-colors",
+                                active
+                                  ? "text-green-200 hover:bg-white/20 hover:text-white"
+                                  : "text-gray-300 hover:bg-red-50 hover:text-red-500",
+                              )}
+                              title="Xóa"
+                            >
+                              <X className="h-3 w-3" />
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Active rule detail panel — expands inline */}
+                  {activeRule && (
+                    <div className="mt-3 rounded-xl border border-green-200 bg-green-50/50 p-3 space-y-3 text-xs">
+                      {(() => {
+                        const rule = activeRule;
+                        const groupRules = scheduleRules.filter((r) =>
+                          ruleHasSameScheduleTarget(r, rule),
+                        );
+                        const ruleWeeks = getRuleOccurrenceCount(rule);
+                        const minRuleWeeks = rule.repeat ? minimumWeeks : 1;
+                        const totalGroupOccurrences = groupRules.reduce(
+                          (sum, item) => sum + getRuleOccurrenceCount(item),
+                          0,
+                        );
+                        const usesSharedFixedRepeat =
+                          cycle === "weekly" &&
+                          rule.repeat &&
+                          fixedRepeatMode === "shared";
+                        const weekControlLocked =
+                          usesSharedFixedRepeat ||
+                          (!rule.repeat && rule.repeatUntil === "month_end");
+                        const mergeSuggestion = mergeSuggestions.find(
+                          (item) =>
+                            groupRules.some(
+                              (groupRule) =>
+                                item.fixedRuleId === groupRule.id ||
+                                item.oddRuleId === groupRule.id,
+                            ),
+                        );
+                        const displayDate = rule.specificDate
+                          ? formatDisplayDate(rule.specificDate)
+                          : "";
+                        const oddRuleDates =
+                          !rule.repeat && rule.specificDate
+                            ? getWeeklyDateSequence(rule.specificDate, ruleWeeks)
+                            : [];
+                        const visibleOddRuleDates = oddRuleDates.slice(0, 8);
+                        const hiddenOddRuleDateCount = Math.max(
+                          0,
+                          oddRuleDates.length - visibleOddRuleDates.length,
+                        );
+
+                        return (
+                          <>
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-green-600 text-[10px] font-bold text-white">
+                                  {!rule.repeat && displayDate
+                                    ? displayDate.slice(0, 5)
+                                    : cycle === "daily"
+                                      ? "∞"
+                                  : getRuleDayMeta(rule.dayOfWeek).short}
+                                </span>
+                                <span className="font-bold text-gray-900">
+                                  {!rule.repeat && displayDate
+                                    ? `Lịch lẻ · ${displayDate}`
+                                    : cycle === "daily"
+                                      ? "Mỗi ngày"
+                                      : getRuleDayMeta(rule.dayOfWeek).label}
+                                </span>
+                              </div>
+                              <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-bold text-green-700">
+                                {groupRules.length} buổi · {ruleWeeks} tuần · {totalGroupOccurrences} lượt
+                              </span>
+                            </div>
+
+                            {/* Time slots within this group */}
+                            {groupRules.length > 1 && (
+                              <div className="flex flex-wrap gap-1.5">
+                                {groupRules.map((timeRule, index) => (
+                                  <button
+                                    key={`${timeRule.id}-${timeRule.timeStart}-${timeRule.timeEnd}`}
+                                    type="button"
+                                    onClick={() => setActiveRuleId(timeRule.id)}
+                                    className={cn(
+                                      "rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors",
+                                      activeRuleId === timeRule.id
+                                        ? "border-green-500 bg-white text-green-700 shadow-sm"
+                                        : "border-green-200 bg-white/80 text-gray-600 hover:border-green-400",
+                                    )}
+                                  >
+                                    Buổi {index + 1}:{" "}
+                                    {timeRule.timeStart && timeRule.timeEnd
+                                      ? `${timeRule.timeStart}-${timeRule.timeEnd}`
+                                      : "Chưa chọn"}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Compact settings row */}
+                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                              {rule.repeat && cycle !== "daily" && (
+                                <div className="space-y-1">
+                                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Ngày</p>
+                                  <input
+                                    type="date"
+                                    value={rule.anchorDate || ""}
+                                    min={today}
+                                    onChange={(e) => {
+                                      if (!e.target.value) return;
+                                      setRuleAnchorDate(rule.id, e.target.value);
+                                    }}
+                                    className="h-7 w-full rounded-md border border-gray-200 bg-white px-2 text-[11px] font-semibold text-gray-700 focus:border-green-500 focus:outline-none"
+                                  />
+                                  <p className="text-[10px] font-semibold text-green-700">
+                                    {isValidDayOfWeek(rule.dayOfWeek)
+                                      ? `Trùng ${getRuleDayMeta(rule.dayOfWeek).label}`
+                                      : "Chọn ngày để tự xác định thứ"}
+                                  </p>
+                                </div>
+                              )}
+
+                              {/* Type toggle */}
+                              <div className="space-y-1">
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Loại</p>
+                                <div className="grid grid-cols-2 gap-0.5 rounded-lg bg-gray-100 p-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setRuleRepeatMode(rule.id, true)}
+                                    className={cn(
+                                      "h-7 rounded-md text-[11px] font-semibold transition-all",
+                                      rule.repeat
+                                        ? "bg-white text-green-700 shadow-sm"
+                                        : "text-gray-400 hover:text-gray-600",
+                                    )}
+                                  >
+                                    CĐ
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setRuleRepeatMode(rule.id, false)}
+                                    className={cn(
+                                      "h-7 rounded-md text-[11px] font-semibold transition-all",
+                                      !rule.repeat
+                                        ? "bg-white text-purple-700 shadow-sm"
+                                        : "text-gray-400 hover:text-gray-600",
+                                    )}
+                                  >
+                                    Lẻ
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Week count */}
+                              <div className="space-y-1" data-tutorial="fixed-repeat-weeks">
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Số tuần</p>
+                                <div className={cn("flex items-center gap-1", weekControlLocked && "pointer-events-none opacity-50")}>
+                                  <button
+                                    type="button"
+                                    onClick={() => setRuleRepeatWeeks(rule.id, rule.repeatWeeks - 1)}
+                                    className="h-7 w-7 shrink-0 rounded-md border border-gray-200 bg-white text-sm font-bold text-gray-400 hover:text-green-700 disabled:opacity-30"
+                                    disabled={weekControlLocked || rule.repeatWeeks <= minRuleWeeks}
+                                  >-</button>
+                                  <input
+                                    type="number"
+                                    min={minRuleWeeks}
+                                    max={52}
+                                    value={weekControlLocked ? ruleWeeks : rule.repeatWeeks}
+                                    onChange={(e) => setRuleRepeatWeeks(rule.id, Number(e.target.value))}
+                                    disabled={weekControlLocked}
+                                    className="h-7 min-w-0 flex-1 rounded-md border border-gray-200 px-1 text-center text-xs font-bold text-gray-700 focus:border-green-500 focus:outline-none"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => setRuleRepeatWeeks(rule.id, rule.repeatWeeks + 1)}
+                                    className="h-7 w-7 shrink-0 rounded-md border border-gray-200 bg-white text-sm font-bold text-gray-400 hover:text-green-700 disabled:opacity-30"
+                                    disabled={weekControlLocked || rule.repeatWeeks >= 52}
+                                  >+</button>
+                                </div>
+                              </div>
+
+                              {/* Specific date for odd rules */}
+                              {!rule.repeat && (
+                                <div className="space-y-1">
+                                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Ngày BĐ</p>
+                                  <input
+                                    type="date"
+                                    value={rule.specificDate || ""}
+                                    min={today}
+                                    onChange={(e) => setRuleSpecificDate(rule.id, e.target.value)}
+                                    className="h-7 w-full rounded-md border border-gray-200 bg-white px-2 text-[11px] font-semibold text-gray-700 focus:border-green-500 focus:outline-none"
+                                  />
+                                </div>
+                              )}
+
+                              {/* Repeat until for odd rules */}
+                              {!rule.repeat && (
+                                <div className="space-y-1">
+                                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Phạm vi</p>
+                                  <div className="grid grid-cols-2 gap-0.5 rounded-lg bg-gray-100 p-0.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => setRuleRepeatUntil(rule.id, "weeks")}
+                                      className={cn(
+                                        "h-7 rounded-md text-[10px] font-semibold transition-all",
+                                        rule.repeatUntil === "weeks"
+                                          ? "bg-white text-green-700 shadow-sm"
+                                          : "text-gray-400 hover:text-gray-600",
+                                      )}
+                                    >
+                                      Tuần
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setRuleRepeatUntil(rule.id, "month_end")}
+                                      className={cn(
+                                        "h-7 rounded-md text-[10px] font-semibold transition-all",
+                                        rule.repeatUntil === "month_end"
+                                          ? "bg-white text-green-700 shadow-sm"
+                                          : "text-gray-400 hover:text-gray-600",
+                                      )}
+                                    >
+                                      Tháng
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Odd rule dates preview */}
+                            {!rule.repeat && rule.specificDate && visibleOddRuleDates.length > 0 && (
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-purple-500">Ngày đặt:</span>
+                                {visibleOddRuleDates.map((date, index) => (
+                                  <span
+                                    key={`${rule.id}-${date}`}
+                                    className={cn(
+                                      "rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+                                      index === 0
+                                        ? "border-purple-300 bg-white text-purple-700"
+                                        : "border-purple-100 bg-white/80 text-gray-500",
+                                    )}
+                                  >
+                                    {formatDisplayDate(date)}
+                                  </span>
+                                ))}
+                                {hiddenOddRuleDateCount > 0 && (
+                                  <span className="text-[10px] text-gray-400">+{hiddenOddRuleDateCount}</span>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Merge suggestion */}
+                            {mergeSuggestion && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  mergeOddRuleIntoFixedRule(
+                                    mergeSuggestion.fixedRuleId,
+                                    mergeSuggestion.oddRuleId,
+                                  )
+                                }
+                                className="h-8 w-full rounded-lg border border-amber-200 bg-amber-50 text-xs font-bold text-amber-700 hover:bg-amber-100"
+                              >
+                                Hợp lịch lẻ vào lịch cố định
+                              </button>
+                            )}
+
+                            <p className="text-[10px] text-gray-400">
+                              {usesSharedFixedRepeat
+                                ? "Dùng số tuần lặp chung."
+                                : rule.repeat
+                                  ? `Min ${minimumWeeks} · Max 52 tuần.`
+                                  : rule.repeatUntil === "month_end" && rule.specificDate
+                                    ? `Đến ${formatDisplayDate(getMonthEndDate(rule.specificDate))}.`
+                                    : "1–52 tuần."}
+                            </p>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  )}
+                  {hasDuplicateRule && (
+                    <div
+                      className={cn(
+                        "flex items-start gap-3 rounded-xl border px-3 py-3 text-sm",
+                        hasMergeSuggestion
+                          ? "border-amber-200 bg-amber-50 text-amber-800"
+                          : "border-red-200 bg-red-50 text-red-700",
+                      )}
+                    >
+                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <div className="space-y-2">
+                        <p className="font-semibold">
+                          {hasMergeSuggestion
+                            ? "Lịch cố định đang chèn vào lịch lẻ."
+                            : "Có buổi bị trùng trong danh sách khung giờ."}
+                        </p>
+                        <div className="space-y-0.5 text-xs">
+                          {(hasMergeSuggestion ? mergeSuggestions.map((item) => item.message) : duplicateRuleMessages)
+                            .slice(0, 3)
+                            .map((message) => (
+                            <p key={message}>{message}</p>
+                          ))}
+                          {duplicateRuleMessages.length > 3 && !hasMergeSuggestion && (
+                            <p>
+                              Và {duplicateRuleMessages.length - 3} buổi trùng khác.
+                            </p>
+                          )}
+                        </div>
+                        {hasMergeSuggestion && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              mergeOddRuleIntoFixedRule(
+                                mergeSuggestions[0].fixedRuleId,
+                                mergeSuggestions[0].oddRuleId,
+                              )
+                            }
+                            className="h-9 rounded-lg border border-amber-300 bg-white px-3 text-xs font-bold text-amber-700 transition-colors hover:bg-amber-100"
+                          >
+                            Hợp lịch lẻ vào lịch cố định
+                          </button>
                         )}
-                      >
-                        <span className="block text-sm font-semibold">
-                          {option.label}
+                      </div>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={addBlankRule}
+                    className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-green-300 bg-green-50 px-4 py-3 text-sm font-bold text-green-700 transition-all hover:border-green-500 hover:bg-green-100"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Thêm lịch trống để tự thiết lập
+                  </button>
+                </div>
+
+                <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm space-y-3" data-tutorial="fixed-time-slots">
+                  {/* Context header — prominent banner */}
+                  <div className="flex items-center gap-3 rounded-xl bg-gradient-to-r from-green-600 to-emerald-600 px-4 py-3 text-white shadow-md shadow-green-600/20">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 backdrop-blur-sm">
+                      <Clock className="h-4 w-4" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-green-100">Đang chỉnh khung giờ cho</p>
+                      <p className="text-sm font-bold truncate">
+                        {activeRule
+                          ? !activeRule.repeat && activeRule.specificDate
+                            ? `Lịch lẻ · ${formatDisplayDate(activeRule.specificDate)}`
+                            : cycle === "daily"
+                            ? "Mỗi ngày"
+                            : getRuleDayMeta(activeRule.dayOfWeek).label
+                          : "Chưa chọn ngày"}
+                      </p>
+                    </div>
+                    {activeRule?.timeStart && activeRule?.timeEnd && (
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full bg-white/20 px-3 py-1 text-xs font-bold backdrop-blur-sm">
+                          {activeRule.timeStart} – {activeRule.timeEnd}
                         </span>
-                        <span className="block text-xs text-gray-400 mt-0.5">
-                          {option.desc}
-                        </span>
-                      </button>
-                    ))}
+                        <button
+                          type="button"
+                          onClick={resetActiveRuleSlots}
+                          className="rounded-full bg-white/10 p-1 hover:bg-white/20 transition-colors"
+                          title="Chọn lại giờ"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {slotSelectionNotice && (
+                    <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span>{slotSelectionNotice}</span>
+                    </div>
+                  )}
+
+                  {/* Session tabs */}
+                  <div className="flex gap-1 rounded-xl bg-gray-100 p-1">
+                    {TIME_SESSIONS.map((session) => {
+                      const isActive = session.color === activeSession;
+                      const hasSelectedSlots = activeRule && rangesIntersect(
+                        activeRule.timeStart,
+                        activeRule.timeEnd,
+                        session.slots,
+                      );
+                      const SessionIcon = session.color === "amber" ? Sun : session.color === "blue" ? Sunset : Moon;
+                      return (
+                        <button
+                          key={session.label}
+                          type="button"
+                          onClick={() => setActiveSession(session.color)}
+                          className={cn(
+                            "flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2.5 text-xs font-bold transition-all",
+                            isActive
+                              ? "bg-white text-gray-900 shadow-sm"
+                              : "text-gray-400 hover:text-gray-600",
+                          )}
+                        >
+                          <SessionIcon className="h-3.5 w-3.5" />
+                          <span className="hidden sm:inline">{session.label.replace(/^[^\s]+\s/, "")}</span>
+                          <span className="sm:hidden">{session.range.split(" – ")[0]}</span>
+                          {hasSelectedSlots && (
+                            <span className={cn(
+                              "h-1.5 w-1.5 rounded-full",
+                              isActive ? "bg-green-500" : "bg-green-400",
+                            )} />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Active session slots */}
+                  {TIME_SESSIONS.filter((s) => s.color === activeSession).map((session) => {
+                    const colors = SESSION_COLORS[session.color];
+                    return (
+                      <div key={session.label} className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className={cn("text-xs font-bold px-2 py-0.5 rounded-full", colors.badge)}>
+                            {session.range}
+                          </span>
+                          <span className="text-[11px] text-gray-400">
+                            Ô đen = đã có lịch cố định
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                          {session.slots.map((slot) => {
+                            const blockingFixedRule =
+                              getBlockingFixedRuleForSlot(activeRule, slot);
+                            const selectedRule = activeRule
+                              ? scheduleRules.find(
+                                  (rule) =>
+                                    ruleHasSameScheduleTarget(rule, activeRule) &&
+                                    slotIsInsideRange(
+                                      slot,
+                                      rule.timeStart,
+                                      rule.timeEnd,
+                                    ),
+                                )
+                              : undefined;
+                            const isSlotActive = !!selectedRule;
+                            return (
+                              <button
+                                key={`${slot.start}-${slot.end}`}
+                                type="button"
+                                title={
+                                  blockingFixedRule
+                                    ? `${slot.label} đã thuộc lịch cố định ${blockingFixedRule.timeStart} - ${blockingFixedRule.timeEnd}`
+                                    : `${slot.label}`
+                                }
+                                disabled={!!blockingFixedRule}
+                                onClick={() =>
+                                  handleSelectRuleSlot(
+                                    activeRule?.id,
+                                    slot.start,
+                                    slot.end,
+                                  )
+                                }
+                                className={cn(
+                                  "relative h-12 rounded-xl border-2 text-sm font-bold transition-all flex items-center justify-center gap-1.5",
+                                  blockingFixedRule
+                                    ? "cursor-not-allowed border-gray-800 bg-gray-900 text-gray-400"
+                                    : isSlotActive
+                                    ? cn(colors.active, "shadow-sm scale-[1.02]")
+                                    : cn(
+                                        "border-gray-200 bg-white text-gray-600",
+                                        colors.slot,
+                                      ),
+                                )}
+                              >
+                                {isSlotActive && !blockingFixedRule && (
+                                  <CheckCircle2 className="h-4 w-4" />
+                                )}
+                                {slot.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* Custom time — collapsible */}
+                  <div className="rounded-xl border border-gray-100 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setShowCustomTime(!showCustomTime)}
+                      className="flex w-full items-center justify-between px-3 py-2.5 text-xs font-semibold text-gray-500 hover:bg-gray-50 transition-colors"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <Settings2 className="h-3.5 w-3.5" />
+                        Tùy chỉnh giờ chơi (ngoài khung có sẵn)
+                      </span>
+                      {showCustomTime ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                    </button>
+                    {showCustomTime && (
+                      <div className="border-t border-gray-100 bg-gray-50/50 px-3 py-3">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-xs text-gray-500 font-medium">Giờ bắt đầu</label>
+                            <select
+                              value={activeRule?.timeStart || ""}
+                              onChange={(e) => {
+                                const start = e.target.value;
+                                if (!start) return;
+                                const startHour = parseInt(start.split(":")[0]);
+                                const currentEndHour = activeRule?.timeEnd ? parseInt(activeRule.timeEnd.split(":")[0]) : 0;
+                                if (currentEndHour <= startHour) {
+                                  const newEnd = `${String(Math.min(22, startHour + 2)).padStart(2, "0")}:00`;
+                                  handleSelectCustomRuleTime(activeRule?.id, start, newEnd);
+                                } else {
+                                  handleSelectCustomRuleTime(activeRule?.id, start, activeRule?.timeEnd || "");
+                                }
+                              }}
+                              className="w-full h-9 px-3 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-500"
+                            >
+                              <option value="">-- Bắt đầu --</option>
+                              {Array.from({ length: 16 }, (_, i) => {
+                                const hour = 6 + i;
+                                const val = `${String(hour).padStart(2, "0")}:00`;
+                                return (
+                                  <option key={val} value={val}>
+                                    {val}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs text-gray-500 font-medium">Giờ kết thúc</label>
+                            <select
+                              value={activeRule?.timeEnd || ""}
+                              onChange={(e) => {
+                                const end = e.target.value;
+                                if (!end) return;
+                                handleSelectCustomRuleTime(activeRule?.id, activeRule?.timeStart || "", end);
+                              }}
+                              className="w-full h-9 px-3 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-500"
+                            >
+                              <option value="">-- Kết thúc --</option>
+                              {Array.from({ length: 17 }, (_, i) => {
+                                const hour = 6 + i;
+                                const val = `${String(hour).padStart(2, "0")}:00`;
+                                const startHour = activeRule?.timeStart ? parseInt(activeRule.timeStart.split(":")[0]) : 5;
+                                if (hour <= startHour) return null;
+                                return (
+                                  <option key={val} value={val}>
+                                    {val}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
+                </div>
+
 
                 <div
                   className={cn(
-                    "grid gap-3",
-                    bookingMode === "date_range"
-                      ? "grid-cols-2"
-                      : "grid-cols-1",
+                    "rounded-2xl border border-green-200 bg-green-50/30 p-3 space-y-3",
+                    cycle === "daily" && "hidden",
                   )}
                 >
-                  <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-3 text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-green-600 font-bold text-white">
+                        {occurrenceCount}
+                      </span>
+                      <div>
+                        <p className="font-bold text-gray-800">Tổng cộng {occurrenceCount} buổi</p>
+                        <p className="text-[10px] text-gray-500">
+                          {repeatingRules.length} CĐ · {oddRules.length} Lẻ · Max {longestRepeatWeeks} tuần
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowSummaryDetail(!showSummaryDetail)}
+                      className="flex items-center gap-1 rounded-lg border border-green-200 bg-white px-2 py-1 text-[11px] font-bold text-green-700 hover:bg-green-50 transition-colors"
+                    >
+                      <Settings2 className="h-3 w-3" />
+                      {showSummaryDetail ? "Thu gọn" : "Cấu hình lặp"}
+                    </button>
+                  </div>
+
+                  {showSummaryDetail && (
+                    <div className="space-y-3 border-t border-green-200/50 pt-3 text-xs">
+                      {repeatingRules.length > 0 && (
+                        <div className="rounded-xl border border-gray-100 bg-white p-3 space-y-2.5">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-bold text-gray-700">Cách lặp lịch cố định</p>
+                              <p className="text-[10px] text-gray-400">Chọn lặp chung số tuần hoặc lặp riêng từng thứ.</p>
+                            </div>
+                            <span className="shrink-0 rounded-full bg-green-50 px-2 py-0.5 font-bold text-green-700">
+                              {fixedRepeatMode === "shared" ? `${sharedRepeatWeeks}w chung` : "Lặp riêng"}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-0.5 rounded-lg bg-gray-100 p-0.5">
+                            <button
+                              type="button"
+                              onClick={() => handleFixedRepeatModeChange("shared")}
+                              className={cn(
+                                "h-8 rounded-md text-[11px] font-semibold transition-all",
+                                fixedRepeatMode === "shared"
+                                  ? "bg-white text-green-700 shadow-sm"
+                                  : "text-gray-500 hover:text-gray-700",
+                              )}
+                            >
+                              Lặp chung
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleFixedRepeatModeChange("custom")}
+                              className={cn(
+                                "h-8 rounded-md text-[11px] font-semibold transition-all",
+                                fixedRepeatMode === "custom"
+                                  ? "bg-white text-green-700 shadow-sm"
+                                  : "text-gray-500 hover:text-gray-700",
+                              )}
+                            >
+                              Lặp riêng
+                            </button>
+                          </div>
+
+                          {fixedRepeatMode === "shared" && (
+                            <div className="space-y-1">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Số tuần lặp chung</p>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setSharedFixedRepeatWeeks(sharedRepeatWeeks - 1)}
+                                  disabled={sharedRepeatWeeks <= minimumWeeks}
+                                  className="h-8 w-8 shrink-0 rounded-lg border border-gray-200 bg-white text-sm font-bold text-gray-400 hover:text-green-700 disabled:opacity-30"
+                                >
+                                  -
+                                </button>
+                                <input
+                                  type="number"
+                                  min={minimumWeeks}
+                                  max={52}
+                                  value={sharedRepeatWeeks}
+                                  onChange={(e) => setSharedFixedRepeatWeeks(Number(e.target.value))}
+                                  className="h-8 min-w-0 flex-1 rounded-lg border border-gray-200 px-2 text-center text-xs font-bold text-gray-700 focus:border-green-500 focus:outline-none"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setSharedFixedRepeatWeeks(sharedRepeatWeeks + 1)}
+                                  disabled={sharedRepeatWeeks >= 52}
+                                  className="h-8 w-8 shrink-0 rounded-lg border border-gray-200 bg-white text-sm font-bold text-gray-400 hover:text-green-700 disabled:opacity-30"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-3 gap-2 text-center">
+                        <div className="rounded-xl border border-gray-100 bg-white px-2 py-1.5">
+                          <p className="text-[10px] font-medium text-gray-400">Cố định</p>
+                          <p className="font-bold text-green-700">{repeatingRules.length} khung</p>
+                        </div>
+                        <div className="rounded-xl border border-gray-100 bg-white px-2 py-1.5">
+                          <p className="text-[10px] font-medium text-gray-400">Lịch lẻ</p>
+                          <p className="font-bold text-blue-700">{oddRules.length} khung</p>
+                        </div>
+                        <div className="rounded-xl border border-gray-100 bg-white px-2 py-1.5">
+                          <p className="text-[10px] font-medium text-gray-400">Tuần lặp</p>
+                          <p className="font-bold text-purple-700">{longestRepeatWeeks} tuần</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5" data-tutorial="fixed-start-date">
                     <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                       Ngày bắt đầu <span className="text-red-400">*</span>
                     </label>
@@ -703,230 +2610,34 @@ export default function FixedSchedulePage() {
                       type="date"
                       value={startDate}
                       min={today}
-                      onChange={(e) => setStartDate(e.target.value)}
+                      onChange={(e) => handleStartDateChange(e.target.value)}
                       className="w-full h-11 px-3.5 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-500 transition-all"
                     />
                   </div>
-                  {bookingMode === "date_range" && (
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                        Ngày kết thúc <span className="text-red-400">*</span>
-                      </label>
-                      <input
-                        type="date"
-                        value={endDate}
-                        min={startDate || today}
-                        onChange={(e) => setEndDate(e.target.value)}
-                        className="w-full h-11 px-3.5 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-500 transition-all"
-                      />
-                    </div>
-                  )}
-                </div>
-
-                {bookingMode === "occurrence_count" && (
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                      Số buổi của gói <span className="text-red-400">*</span>
+                      Ngày kết thúc {cycle === "daily" ? <span className="text-red-400">*</span> : null}
                     </label>
-                    <div className="flex flex-wrap gap-2">
-                      {OCCURRENCE_COUNT_PRESETS.map((count) => (
-                        <button
-                          key={count}
-                          type="button"
-                          onClick={() => setOccurrenceCount(count)}
-                          className={cn(
-                            "h-9 min-w-14 rounded-xl border text-sm font-semibold transition-all",
-                            occurrenceCount === count
-                              ? "border-green-600 bg-green-600 text-white"
-                              : "border-gray-200 text-gray-600 hover:border-green-300",
-                          )}
-                        >
-                          {count}
-                        </button>
-                      ))}
-                      <input
-                        type="number"
-                        min={minimumOccurrences}
-                        max={52}
-                        value={occurrenceCount}
-                        onChange={(event) =>
-                          setOccurrenceCount(Number(event.target.value))
-                        }
-                        className="h-9 w-24 px-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-green-500/30"
-                        aria-label="Số buổi tùy chỉnh"
-                      />
-                    </div>
-                    <p className="text-xs text-gray-400">
-                      Tối thiểu {minimumOccurrences}, tối đa 52 buổi.
-                    </p>
+                    <input
+                      type="date"
+                      value={cycle === "daily" ? endDate : estimatedEndDate}
+                      min={startDate || today}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      disabled={cycle !== "daily"}
+                      className="w-full h-11 px-3.5 border border-gray-200 rounded-xl text-sm bg-white disabled:bg-gray-50 disabled:text-gray-500 focus:outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-500 transition-all"
+                    />
+                    {cycle !== "daily" ? (
+                      <p className="text-xs text-gray-400">Tự tính theo số tuần và khung giờ đã chọn.</p>
+                    ) : null}
                   </div>
-                )}
-
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <label className="text-xs font-medium text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
-                      <Clock className="h-3.5 w-3.5" /> Lịch lặp{" "}
-                      <span className="text-red-400">*</span>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={addScheduleRule}
-                      disabled={scheduleRules.length >= 4}
-                      className="flex items-center gap-1 text-xs font-semibold text-green-600 hover:text-green-700 disabled:text-gray-300"
-                    >
-                      <Plus className="h-3.5 w-3.5" /> Thêm lịch
-                    </button>
-                  </div>
-
-                  {scheduleRules.map((rule, index) => {
-                    const endTime = addHoursToTime(
-                      rule.timeStart,
-                      rule.durationHours,
-                    );
-                    const exceedsClosingTime =
-                      Number(endTime.split(":")[0]) > 23;
-                    return (
-                      <div
-                        key={rule.id}
-                        className="rounded-xl border border-gray-200 bg-gray-50/60 p-3 space-y-3"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-semibold text-gray-700">
-                            Lịch {index + 1}
-                          </span>
-                          {scheduleRules.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => removeScheduleRule(rule.id)}
-                              className="p-1.5 text-gray-400 hover:text-red-500 transition-colors"
-                              aria-label={`Xóa lịch ${index + 1}`}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          )}
-                        </div>
-
-                        {cycle === "weekly" ? (
-                          <div className="grid grid-cols-7 gap-1">
-                            {DAY_LABELS.map((day) => (
-                              <button
-                                key={day.value}
-                                type="button"
-                                onClick={() =>
-                                  updateScheduleRule(rule.id, {
-                                    dayOfWeek: day.value,
-                                  })
-                                }
-                                title={day.label}
-                                className={cn(
-                                  "h-9 rounded-lg border text-xs font-semibold transition-all",
-                                  rule.dayOfWeek === day.value
-                                    ? "border-green-600 bg-green-600 text-white"
-                                    : "border-gray-200 bg-white text-gray-500 hover:border-green-300",
-                                )}
-                              >
-                                {day.short}
-                              </button>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm text-gray-500">Ngày</span>
-                            <input
-                              type="number"
-                              min={1}
-                              max={31}
-                              value={rule.dayOfMonth}
-                              onChange={(event) =>
-                                updateScheduleRule(rule.id, {
-                                  dayOfMonth: Math.min(
-                                    31,
-                                    Math.max(1, Number(event.target.value)),
-                                  ),
-                                })
-                              }
-                              className="h-9 w-20 px-3 border border-gray-200 bg-white rounded-lg text-sm"
-                            />
-                            <span className="text-xs text-gray-400">
-                              hàng tháng
-                            </span>
-                          </div>
-                        )}
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                            <label className="text-xs text-gray-500">
-                              Giờ bắt đầu
-                            </label>
-                            <select
-                              value={rule.timeStart}
-                              onChange={(event) =>
-                                updateScheduleRule(rule.id, {
-                                  timeStart: event.target.value,
-                                })
-                              }
-                              className="w-full h-10 px-3 border border-gray-200 bg-white rounded-lg text-sm"
-                            >
-                              {HOUR_OPTIONS.map((hour) => (
-                                <option key={hour} value={hour}>
-                                  {hour}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-xs text-gray-500">
-                              Thời lượng
-                            </label>
-                            <div className="grid grid-cols-3 gap-1">
-                              {DURATION_OPTIONS.map((duration) => (
-                                <button
-                                  key={duration}
-                                  type="button"
-                                  onClick={() =>
-                                    updateScheduleRule(rule.id, {
-                                      durationHours: duration,
-                                    })
-                                  }
-                                  className={cn(
-                                    "h-10 rounded-lg border text-xs font-semibold",
-                                    rule.durationHours === duration
-                                      ? "border-green-600 bg-green-50 text-green-700"
-                                      : "border-gray-200 bg-white text-gray-500",
-                                  )}
-                                >
-                                  {duration} giờ
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-
-                        <p
-                          className={cn(
-                            "text-xs",
-                            exceedsClosingTime
-                              ? "text-red-500"
-                              : "text-green-700",
-                          )}
-                        >
-                          Khung giờ: {rule.timeStart} – {endTime}
-                          {exceedsClosingTime && " (vượt quá giờ hoạt động)"}
-                        </p>
-                      </div>
-                    );
-                  })}
-
-                  <p className="text-xs text-gray-400 flex items-center gap-1.5">
-                    <AlertCircle className="h-3.5 w-3.5 text-blue-400" />
-                    Có thể tạo tối đa 4 lịch khác nhau trong cùng một gói.
-                  </p>
-                  {hasDuplicateRepeatDay && (
-                    <p className="text-xs text-red-500">
-                      Mỗi lịch cần chọn một ngày lặp khác nhau.
-                    </p>
-                  )}
                 </div>
+                <p className="text-xs text-gray-500">
+                  Khoảng lịch:{" "}
+                  <strong className="text-green-700">
+                    {startDate || "Chưa chọn"} → {estimatedEndDate || "Chưa tính"}
+                  </strong>
+                  {occurrenceCount > 0 ? ` · ${occurrenceCount} buổi` : ""}
+                </p>
               </div>
 
               {/* Info note */}
@@ -951,6 +2662,7 @@ export default function FixedSchedulePage() {
               </div>
 
               <Button
+                data-tutorial="fixed-preview-button"
                 onClick={handlePreview}
                 disabled={!isStep1Valid || loadingPreview}
                 className="w-full h-12 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-xl shadow-lg shadow-green-600/25 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:translate-y-0"
@@ -979,8 +2691,18 @@ export default function FixedSchedulePage() {
             >
               {/* ── LEFT ── */}
               <div className="lg:col-span-3 space-y-4">
+                {preview && occurrences.some((occ) => occ.hasConflict) && (
+                  <ConflictCalendarMap
+                    occurrences={occurrences}
+                    preview={preview}
+                    onSetAction={setOccurrenceAction}
+                    onSetCustomAction={setCustomAction}
+                    checkSlot={checkSlot}
+                  />
+                )}
+
                 {/* Occurrences list */}
-                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden" data-tutorial="fixed-occurrences">
                   <div className="px-6 py-4 border-b border-gray-50">
                     <h2 className="font-semibold text-gray-800 flex items-center gap-2">
                       <Calendar className="h-4 w-4 text-green-600" /> Danh sách
@@ -1054,22 +2776,64 @@ export default function FixedSchedulePage() {
                   </div>
 
                   <div className="divide-y divide-gray-50 max-h-[480px] overflow-y-auto">
-                    {occurrences.map((occ, idx) => (
-                      <OccurrenceRow
-                        key={occ.date}
-                        occ={occ}
-                        index={idx + 1}
-                        preview={preview!}
-                        onSetAction={setOccurrenceAction}
-                        onSetCustomAction={setCustomAction}
-                        checkSlot={checkSlot}
-                      />
-                    ))}
+                    {isPreviewDemoStep && (
+                      <div className="divide-y divide-gray-50">
+                        {[
+                          {
+                            title: "Buổi 1",
+                            date: "Thứ Ba, 18:00 - 20:00",
+                            status: "Khả dụng",
+                            tone: "bg-green-50 text-green-700 border-green-100",
+                            note: "Giữ nguyên lịch này trong gói cố định.",
+                          },
+                          {
+                            title: "Buổi 2",
+                            date: "Thứ Ba tuần kế tiếp, 18:00 - 20:00",
+                            status: "Có sân bù",
+                            tone: "bg-amber-50 text-amber-700 border-amber-100",
+                            note: "Nếu trùng lịch, hệ thống gợi ý sân thay thế.",
+                          },
+                          {
+                            title: "Buổi 3",
+                            date: "Thứ Ba tuần sau nữa, 18:00 - 20:00",
+                            status: "Đã chọn",
+                            tone: "bg-blue-50 text-blue-700 border-blue-100",
+                            note: "User có thể giữ, đổi sân, đổi giờ hoặc bỏ qua.",
+                          },
+                        ].map((item) => (
+                          <div key={item.title} className="flex items-center gap-3 px-6 py-4">
+                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-green-100 text-sm font-bold text-green-700">
+                              {item.title.replace("Buổi ", "")}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="font-semibold text-gray-900">{item.title}</p>
+                              <p className="text-xs text-gray-500">{item.date}</p>
+                              <p className="mt-1 text-xs text-gray-400">{item.note}</p>
+                            </div>
+                            <span className={cn("rounded-full border px-2 py-1 text-xs font-bold", item.tone)}>
+                              {item.status}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {!isPreviewDemoStep &&
+                      occurrences.map((occ, idx) => (
+                        <OccurrenceRow
+                          key={occurrenceKey(occ)}
+                          occ={occ}
+                          index={idx + 1}
+                          preview={preview!}
+                          onSetAction={setOccurrenceAction}
+                          onSetCustomAction={setCustomAction}
+                          checkSlot={checkSlot}
+                        />
+                      ))}
                   </div>
                 </div>
 
                 {/* Customer info */}
-                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-4">
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-4" data-tutorial="fixed-payment-info">
                   <h2 className="font-semibold text-gray-800 flex items-center gap-2">
                     <User className="h-4 w-4 text-green-600" />
                     Thông tin khách hàng
@@ -1137,8 +2901,8 @@ export default function FixedSchedulePage() {
 
                   <div className="flex items-start gap-2 rounded-xl bg-green-50 p-3 text-xs text-green-700">
                     <Shield className="h-4 w-4 mt-0.5 shrink-0" />
-                    Gói hàng tháng được điều chỉnh tối đa 2 buổi; gói hàng tuần
-                    tối đa 1 buổi.
+                    Gói cố định được điều chỉnh tối đa 1 buổi trước khi thanh
+                    toán.
                   </div>
                 </div>
 
@@ -1190,7 +2954,7 @@ export default function FixedSchedulePage() {
                           Gói cố định · {preview.summary.totalOccurrences} buổi
                         </p>
                         <p className="text-xs text-gray-400">
-                          {startDate} → {preview.endDate ?? endDate}
+                          {startDate} → {preview.endDate ?? "Đang tính"}
                         </p>
                       </div>
                     </div>
@@ -1304,13 +3068,542 @@ export default function FixedSchedulePage() {
           </div>
         </div>
       )}
+      <TutorialTrigger />
+      <TutorialOverlay />
     </div>
+    </TutorialProvider>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════
 // ADJUST SLOT MODAL — chọn giờ mới theo buổi Sáng/Chiều/Tối
 // ═══════════════════════════════════════════════════════════════
+
+function ConflictCalendarMap({
+  occurrences,
+  preview,
+  onSetAction,
+  onSetCustomAction,
+  checkSlot,
+}: {
+  occurrences: OccurrenceUIState[];
+  preview: FixedSchedulePreviewResponse;
+  onSetAction: (
+    date: string,
+    action: OccurrenceAction,
+    replaceWithCourtId?: number,
+    timeStart?: string,
+    timeEnd?: string,
+  ) => void;
+  onSetCustomAction: (
+    date: string,
+    customDate: string,
+    courtId: number,
+    courtName: string,
+    timeStart: string,
+    timeEnd: string,
+    originalTimeStart?: string,
+    originalTimeEnd?: string,
+  ) => void;
+  checkSlot: (req: CheckSlotRequest) => Promise<CheckSlotResponse | null>;
+}) {
+  const [selectedKey, setSelectedKey] = useState(
+    occurrences.find((occ) => occ.hasConflict)?.date
+      ? occurrenceKey(occurrences.find((occ) => occ.hasConflict)!)
+      : occurrenceKey(occurrences[0]),
+  );
+  const [modalOcc, setModalOcc] = useState<OccurrenceUIState | null>(null);
+  const selectedOcc =
+    occurrences.find((occ) => occurrenceKey(occ) === selectedKey) ??
+    occurrences[0];
+  const calendarEntries = occurrences.flatMap((occ) => {
+    const base = [{
+      key: `base-${occurrenceKey(occ)}`,
+      date: occ.date,
+      occ,
+      isMoveTarget: false,
+    }];
+
+    if (occ.action !== "custom" || !occ.customDate) return base;
+
+    return [
+      ...base,
+      {
+        key: `target-${occurrenceKey(occ)}-${occ.customDate}-${occ.customTimeStart || occ.timeStart}`,
+        date: occ.customDate,
+        occ,
+        isMoveTarget: true,
+      },
+    ];
+  });
+  const weeks = Array.from(
+    calendarEntries.reduce((map, entry) => {
+      const weekKey = formatUtcDate(startOfUtcWeek(toUtcDate(entry.date)));
+      const items = map.get(weekKey) ?? [];
+      items.push(entry);
+      map.set(weekKey, items);
+      return map;
+    }, new Map<string, typeof calendarEntries>()),
+  ).sort(([a], [b]) => a.localeCompare(b));
+
+  const handleCustomConfirm = (
+    occ: OccurrenceUIState,
+    courtId: number,
+    courtName: string,
+    customDate: string,
+    timeStart: string,
+    timeEnd: string,
+  ) => {
+    onSetCustomAction(
+      occ.date,
+      customDate,
+      courtId,
+      courtName,
+      timeStart,
+      timeEnd,
+      occ.timeStart,
+      occ.timeEnd,
+    );
+    setModalOcc(null);
+    setSelectedKey(occurrenceKey(occ));
+  };
+
+  return (
+    <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+          <Calendar className="h-4 w-4 text-green-600" />
+          Sơ đồ lịch tổng quan
+        </h3>
+        <div className="flex flex-wrap gap-1.5 text-[11px] font-semibold">
+          <span className="rounded-full bg-green-50 px-2 py-1 text-green-700">OK</span>
+          <span className="rounded-full bg-amber-50 px-2 py-1 text-amber-700">B: sân bù</span>
+          <span className="rounded-full bg-red-50 px-2 py-1 text-red-700">!: trùng</span>
+          <span className="rounded-full bg-purple-50 px-2 py-1 text-purple-700">D: đã đổi</span>
+          <span className="rounded-full bg-gray-50 px-2 py-1 text-gray-500">-: bỏ</span>
+        </div>
+      </div>
+
+      <div className="mt-4 hidden sm:block overflow-x-auto">
+        <div className="min-w-[560px] space-y-2">
+          <div className="grid grid-cols-[72px_repeat(7,minmax(52px,1fr))] gap-2 text-center text-xs font-semibold text-gray-400">
+            <span />
+            {DAY_LABELS.map((day) => (
+              <span key={day.value}>{day.short}</span>
+            ))}
+          </div>
+          {weeks.map(([weekKey, weekOccurrences], index) => (
+            <div
+              key={weekKey}
+              className="grid grid-cols-[72px_repeat(7,minmax(52px,1fr))] gap-2"
+            >
+              <div className="rounded-lg bg-gray-50 px-2 py-2 text-xs font-semibold text-gray-500">
+                W{index + 1}
+                <div className="font-normal text-[11px]">{weekKey.slice(5)}</div>
+              </div>
+              {DAY_LABELS.map((day) => {
+                const items = weekOccurrences.filter(
+                  (entry) => toUtcDate(entry.date).getUTCDay() === day.value,
+                );
+                return (
+                  <div key={`${weekKey}-${day.value}`} className="space-y-1">
+                    {items.length === 0 ? (
+                      <div className="h-9 rounded-lg border border-dashed border-gray-100 bg-gray-50/60" />
+                    ) : (
+                      items.map((entry) => {
+                        const { occ } = entry;
+                        const active = occurrenceKey(occ) === occurrenceKey(selectedOcc);
+                        const moveLabel = getOccurrenceMoveLabel(occ);
+                        return (
+                          <button
+                            key={entry.key}
+                            type="button"
+                            title={
+                              entry.isMoveTarget
+                                ? `Lịch mới: ${formatDisplayDate(entry.date)} ${occ.customTimeStart || occ.timeStart}-${occ.customTimeEnd || occ.timeEnd} | Gốc: ${occ.date} ${occ.timeStart}-${occ.timeEnd}`
+                                : `${occ.date} ${occ.timeStart}-${occ.timeEnd}${moveLabel ? ` | ${moveLabel}` : ""}`
+                            }
+                            onClick={() => setSelectedKey(occurrenceKey(occ))}
+                            className={cn(
+                              "h-9 w-full rounded-lg border text-[11px] font-bold transition-all hover:-translate-y-0.5",
+                              entry.isMoveTarget
+                                ? "border-purple-300 bg-purple-200 text-purple-800 shadow-sm shadow-purple-100"
+                                : getOccurrenceTone(occ),
+                              active && "ring-2 ring-green-500/30",
+                            )}
+                          >
+                            {entry.isMoveTarget ? "D" : getOccurrenceSymbol(occ)}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-2 sm:hidden">
+        {calendarEntries
+          .slice()
+          .sort((a, b) => {
+            const dateCompare = a.date.localeCompare(b.date);
+            if (dateCompare !== 0) return dateCompare;
+            const aTime = a.isMoveTarget ? a.occ.customTimeStart || a.occ.timeStart : a.occ.timeStart;
+            const bTime = b.isMoveTarget ? b.occ.customTimeStart || b.occ.timeStart : b.occ.timeStart;
+            return aTime.localeCompare(bTime);
+          })
+          .map((entry) => {
+            const { occ } = entry;
+            return (
+          <button
+            key={entry.key}
+            type="button"
+            onClick={() => setSelectedKey(occurrenceKey(occ))}
+            className={cn(
+              "flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left text-xs font-semibold",
+              entry.isMoveTarget
+                ? "border-purple-300 bg-purple-200 text-purple-800"
+                : getOccurrenceTone(occ),
+            )}
+          >
+            <span>
+              {entry.isMoveTarget
+                ? `${entry.date} · ${occ.customTimeStart || occ.timeStart}-${occ.customTimeEnd || occ.timeEnd}`
+                : `${occ.date} · ${occ.timeStart}-${occ.timeEnd}`}
+              {entry.isMoveTarget ? (
+                <span className="mt-1 block text-[11px] text-purple-800">
+                  Lịch mới từ {formatDisplayDate(occ.date)}
+                </span>
+              ) : getOccurrenceMoveLabel(occ) && (
+                <span className="mt-1 block text-[11px] text-purple-700">
+                  {getOccurrenceMoveLabel(occ)}
+                </span>
+              )}
+            </span>
+            <span>{entry.isMoveTarget ? "D" : getOccurrenceSymbol(occ)}</span>
+          </button>
+            );
+          })}
+      </div>
+
+      {selectedOcc && (
+        <div className="mt-4 rounded-xl border border-gray-100 bg-gray-50 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-semibold text-gray-800">
+                {selectedOcc.dayLabel} · {selectedOcc.date}
+              </p>
+              <p className="text-xs text-gray-500">
+                {selectedOcc.timeStart}-{selectedOcc.timeEnd}
+                {selectedOcc.hasConflict && selectedOcc.conflicts.length > 0
+                  ? ` · Trùng ${selectedOcc.conflicts.map((item) => item.time).join(", ")}`
+                  : ""}
+              </p>
+              {getOccurrenceMoveLabel(selectedOcc) && (
+                <p className="mt-1 text-xs font-semibold text-purple-700">
+                  {getOccurrenceMoveLabel(selectedOcc)}
+                </p>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <ActionBtn
+                active={selectedOcc.action === "keep"}
+                color="green"
+                onClick={() =>
+                  onSetAction(
+                    selectedOcc.date,
+                    "keep",
+                    undefined,
+                    selectedOcc.timeStart,
+                    selectedOcc.timeEnd,
+                  )
+                }
+              >
+                Giữ
+              </ActionBtn>
+              {selectedOcc.suggestedReplacement && (
+                <ActionBtn
+                  active={selectedOcc.action === "replace"}
+                  color="blue"
+                  onClick={() =>
+                    onSetAction(
+                      selectedOcc.date,
+                      "replace",
+                      undefined,
+                      selectedOcc.timeStart,
+                      selectedOcc.timeEnd,
+                    )
+                  }
+                >
+                  Sân bù
+                </ActionBtn>
+              )}
+              <ActionBtn
+                active={selectedOcc.action === "custom"}
+                color="purple"
+                onClick={() => setModalOcc(selectedOcc)}
+              >
+                Đổi
+              </ActionBtn>
+              <ActionBtn
+                active={selectedOcc.action === "skip"}
+                color="gray"
+                onClick={() =>
+                  onSetAction(
+                    selectedOcc.date,
+                    "skip",
+                    undefined,
+                    selectedOcc.timeStart,
+                    selectedOcc.timeEnd,
+                  )
+                }
+              >
+                Bỏ
+              </ActionBtn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modalOcc && (
+        <AdjustSlotModal
+          occ={modalOcc}
+          originalCourtId={preview.court.id}
+          onConfirm={(courtId, courtName, customDate, timeStart, timeEnd) =>
+            handleCustomConfirm(
+              modalOcc,
+              courtId,
+              courtName,
+              customDate,
+              timeStart,
+              timeEnd,
+            )
+          }
+          onClose={() => setModalOcc(null)}
+          checkSlot={checkSlot}
+        />
+      )}
+    </div>
+  );
+}
+
+type FixedWeekSlotStatus = "available" | "booked" | "hold";
+
+function addHoursToTime(time: string, hours: number) {
+  const next = toMinutes(time) + hours * 60;
+  return `${String(Math.floor(next / 60)).padStart(2, "0")}:00`;
+}
+
+function dateShortLabel(date: Date) {
+  return `${String(date.getUTCDate()).padStart(2, "0")}/${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function isSlotInRange(time: string, start?: string, end?: string) {
+  if (!start || !end) return false;
+  const minutes = toMinutes(time);
+  return minutes >= toMinutes(start) && minutes < toMinutes(end);
+}
+
+function FixedWeekSlotGrid({
+  courtId,
+  occ,
+  customDate,
+  selectedSlot,
+  minDate,
+  onSelect,
+}: {
+  courtId: number;
+  occ: OccurrenceUIState;
+  customDate: string;
+  selectedSlot: { start: string; end: string } | null;
+  minDate: string;
+  onSelect: (date: string, start: string, end: string) => void;
+}) {
+  const durationHours = Math.max(1, Math.round((toMinutes(occ.timeEnd) - toMinutes(occ.timeStart)) / 60));
+  const [weekStart, setWeekStart] = useState(() => startOfUtcWeek(toUtcDate(customDate || occ.date)));
+  const [slotsByDate, setSlotsByDate] = useState<Record<string, Record<string, FixedWeekSlotStatus>>>({});
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const timeSlots = generateTimeSlots();
+  const days = Array.from({ length: 7 }, (_, index) => addUtcDays(weekStart, index));
+  const weekEnd = days[6];
+
+  useEffect(() => {
+    if (!customDate) return;
+    const selectedDate = toUtcDate(customDate);
+    const currentEnd = addUtcDays(weekStart, 6);
+    if (selectedDate < weekStart || selectedDate > currentEnd) {
+      setWeekStart(startOfUtcWeek(selectedDate));
+    }
+  }, [customDate, weekStart]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadSlots = async () => {
+      setLoading(true);
+      setLoadError("");
+      const next: Record<string, Record<string, FixedWeekSlotStatus>> = {};
+      let hadLoadError = false;
+
+      for (const day of days) {
+        const dateKey = formatUtcDate(day);
+        const dayMap: Record<string, FixedWeekSlotStatus> = {};
+        timeSlots.forEach((time) => { dayMap[time] = "available"; });
+
+        try {
+          const slots = await courtApi.getSlots(courtId, dateKey);
+          slots.forEach((slot: { time: string; status: FixedWeekSlotStatus }) => {
+            if (dayMap[slot.time]) dayMap[slot.time] = slot.status;
+          });
+        } catch {
+          hadLoadError = true;
+        }
+
+        next[dateKey] = dayMap;
+      }
+
+      if (!cancelled) {
+        setSlotsByDate(next);
+        setLoadError(
+          hadLoadError
+            ? "Một số ngày chưa tải được từ server; các slot tải được vẫn hiển thị trạng thái thật."
+            : "",
+        );
+        setLoading(false);
+      }
+    };
+
+    void loadSlots();
+    return () => { cancelled = true; };
+  }, [courtId, weekStart]);
+
+  const isOriginal = (dateKey: string, time: string) =>
+    dateKey === occ.date && isSlotInRange(time, occ.timeStart, occ.timeEnd);
+
+  const isSelected = (dateKey: string, time: string) =>
+    Boolean(dateKey === customDate && selectedSlot && isSlotInRange(time, selectedSlot.start, selectedSlot.end));
+
+  const canSelect = (dateKey: string, start: string) => {
+    const end = addHoursToTime(start, durationHours);
+    if (dateKey < minDate || toMinutes(end) > toMinutes("22:00")) return false;
+
+    for (let minutes = toMinutes(start); minutes < toMinutes(end); minutes += 60) {
+      const time = `${String(Math.floor(minutes / 60)).padStart(2, "0")}:00`;
+      const status = slotsByDate[dateKey]?.[time] || "available";
+      if (!isOriginal(dateKey, time) && status !== "available") return false;
+    }
+    return true;
+  };
+
+  return (
+    <div className="rounded-2xl border border-green-100 bg-green-50/40 p-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Lịch trống theo tuần</p>
+          <p className="text-[11px] text-gray-400">{dateShortLabel(weekStart)} - {dateShortLabel(weekEnd)}</p>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setWeekStart((current) => addUtcDays(current, -7))}
+            className="h-8 w-8 rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-50"
+            aria-label="Tuần trước"
+          >
+            <ChevronLeft className="mx-auto h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setWeekStart((current) => addUtcDays(current, 7))}
+            className="h-8 w-8 rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-50"
+            aria-label="Tuần sau"
+          >
+            <ChevronRight className="mx-auto h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      <div className="mb-3 flex flex-wrap gap-3 text-[11px] text-gray-500">
+        <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-green-100 ring-1 ring-green-200" /> Trống</span>
+        <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-red-100 ring-1 ring-red-200" /> Đã đặt</span>
+        <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-amber-100 ring-1 ring-amber-200" /> Giữ chỗ</span>
+        <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-blue-100 ring-1 ring-blue-200" /> Lịch gốc</span>
+        <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-orange-500" /> Đã chọn</span>
+      </div>
+
+      {loadError && (
+        <div className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-medium text-red-600">{loadError}</div>
+      )}
+
+      <div className="overflow-x-auto">
+        <div className="min-w-[720px]">
+          <div className="mb-1 grid grid-cols-[96px_repeat(7,1fr)] gap-1">
+            <div />
+            {days.map((day) => {
+              const dateKey = formatUtcDate(day);
+              const meta = getDayMeta(day.getUTCDay());
+              return (
+                <div key={dateKey} className="rounded-lg py-1 text-center text-xs font-semibold text-gray-600">
+                  <div>{meta.short}</div>
+                  <div className={cn(dateKey === customDate ? "text-green-700" : "text-gray-900")}>{dateShortLabel(day)}</div>
+                </div>
+              );
+            })}
+          </div>
+
+          {timeSlots.map((time) => (
+            <div key={time} className="mb-1 grid grid-cols-[96px_repeat(7,1fr)] gap-1">
+              <div className="flex items-center justify-end pr-2 font-mono text-[10px] text-gray-500">
+                {formatSlotRange(time)}
+              </div>
+              {days.map((day) => {
+                const dateKey = formatUtcDate(day);
+                const status = slotsByDate[dateKey]?.[time] || "available";
+                const original = isOriginal(dateKey, time);
+                const selected = isSelected(dateKey, time);
+                const selectable = canSelect(dateKey, time);
+
+                return (
+                  <button
+                    key={`${dateKey}-${time}`}
+                    type="button"
+                    disabled={loading || !selectable}
+                    onClick={() => onSelect(dateKey, time, addHoursToTime(time, durationHours))}
+                    className={cn(
+                      "h-8 rounded-md text-[10px] font-semibold transition-colors",
+                      selected
+                        ? "bg-orange-500 text-white shadow-sm"
+                        : original
+                          ? "bg-blue-50 text-blue-700 ring-1 ring-blue-200"
+                          : status === "available" && selectable
+                            ? "bg-green-100 text-green-700 hover:bg-green-200"
+                            : status === "hold"
+                              ? "bg-amber-100 text-amber-700"
+                              : "bg-red-50 text-red-400",
+                      (loading || !selectable) && !selected && !original && "cursor-not-allowed opacity-60",
+                    )}
+                  >
+                    {selected ? "Chọn" : original ? "Gốc" : status === "hold" ? "Giữ" : ""}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {loading && (
+        <div className="mt-3 flex items-center gap-2 text-xs font-medium text-green-700">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Đang tải lịch trống...
+        </div>
+      )}
+    </div>
+  );
+}
 
 function AdjustSlotModal({
   occ,
@@ -1324,73 +3617,124 @@ function AdjustSlotModal({
   onConfirm: (
     courtId: number,
     courtName: string,
+    customDate: string,
     timeStart: string,
     timeEnd: string,
   ) => void;
   onClose: () => void;
   checkSlot: (req: CheckSlotRequest) => Promise<CheckSlotResponse | null>;
 }) {
+  const [customDate, setCustomDate] = useState(occ.customDate || occ.date);
   const [selectedSlot, setSelectedSlot] = useState<{
     start: string;
     end: string;
-  } | null>(null);
+  } | null>(
+    occ.customTimeStart && occ.customTimeEnd
+      ? { start: occ.customTimeStart, end: occ.customTimeEnd }
+      : null,
+  );
   const [checking, setChecking] = useState(false);
   const [checkResult, setCheckResult] = useState<CheckSlotResponse | null>(
     null,
   );
   const [selectedCourtId, setSelectedCourtId] = useState<number | null>(null);
+  const [slotSelectionNotice, setSlotSelectionNotice] = useState("");
+  const [localSession, setLocalSession] = useState<SessionColor>("purple"); // default buổi tối
+  const minDate = new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
+    .toISOString()
+    .split("T")[0];
 
   // Reset kết quả khi đổi khung giờ
   const handleSelectSlot = (start: string, end: string) => {
-    setSelectedSlot({ start, end });
+    const next = resolveContiguousSlotSelection(selectedSlot, { start, end });
+    if (!next) {
+      setSlotSelectionNotice(CONTIGUOUS_SLOT_NOTICE);
+      toast.warning("Các khung giờ được chọn phải liền mạch nhau.");
+      return;
+    }
+
+    setSlotSelectionNotice("");
+    setSelectedSlot(next);
     setCheckResult(null);
     setSelectedCourtId(null);
   };
 
-  const handleCheck = async () => {
+  const handleChangeDate = (date: string) => {
+    setCustomDate(date);
+    setSlotSelectionNotice("");
+    setCheckResult(null);
+    setSelectedCourtId(null);
+  };
+
+  useEffect(() => {
     if (!selectedSlot) {
-      toast.error("Vui lòng chọn khung giờ mới");
+      setCheckResult(null);
+      setSelectedCourtId(null);
       return;
     }
-    setChecking(true);
-    const result = await checkSlot({
-      courtId: originalCourtId,
-      date: occ.date,
-      timeStart: selectedSlot.start,
-      timeEnd: selectedSlot.end,
-    });
-    setCheckResult(result);
-    if (result) {
-      // Auto-select sân đầu tiên available
-      const first = result.courts.find((c) => c.available);
-      setSelectedCourtId(first?.id ?? null);
-      if (!result.hasAvailable) {
-        toast.warning(
-          "Không có sân nào trống trong khung giờ này. Hãy chọn giờ khác!",
-        );
+
+    let cancelled = false;
+
+    const loadSelectedSlot = async () => {
+      setChecking(true);
+      try {
+        const result = await checkSlot({
+          courtId: originalCourtId,
+          date: customDate,
+          timeStart: selectedSlot.start,
+          timeEnd: selectedSlot.end,
+        });
+
+        if (cancelled) return;
+
+        setCheckResult(result);
+        const first = (result?.courts || []).find((c) => c.available);
+        setSelectedCourtId(first?.id ?? null);
+      } finally {
+        if (!cancelled) setChecking(false);
       }
-    }
-    setChecking(false);
-  };
+    };
+
+    void loadSelectedSlot();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    checkSlot,
+    customDate,
+    originalCourtId,
+    selectedSlot,
+  ]);
 
   const handleConfirm = () => {
     if (!selectedCourtId || !checkResult || !selectedSlot) return;
-    const court = checkResult.courts.find((c) => c.id === selectedCourtId);
+    const court = (checkResult.courts || []).find(
+      (c) => c.id === selectedCourtId,
+    );
     if (!court || !court.available) {
       toast.error("Vui lòng chọn sân còn trống");
       return;
     }
-    onConfirm(court.id, court.name, selectedSlot.start, selectedSlot.end);
+    onConfirm(
+      court.id,
+      court.name,
+      customDate,
+      selectedSlot.start,
+      selectedSlot.end,
+    );
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[92vh] overflow-y-auto">
         {/* Header */}
         <div className="px-6 pt-5 pb-4 border-b border-gray-100">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="font-bold text-gray-900">Đổi giờ cho buổi này</h3>
+              <h3 className="font-bold text-gray-900">
+                Đổi ngày/giờ cho buổi này
+              </h3>
               <p className="text-xs text-gray-400 mt-0.5">
                 {occ.dayLabel} · {occ.date} · Giờ gốc: {occ.timeStart}–
                 {occ.timeEnd}
@@ -1406,10 +3750,46 @@ function AdjustSlotModal({
         </div>
 
         <div className="p-6 space-y-5">
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+              <Calendar className="h-3.5 w-3.5" /> Chọn ngày mới
+            </p>
+            <input
+              type="date"
+              value={customDate}
+              min={minDate}
+              onChange={(event) => handleChangeDate(event.target.value)}
+              className="w-full h-10 rounded-xl border border-gray-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-500"
+            />
+            {customDate !== occ.date && (
+              <p className="text-xs text-purple-600">
+                Buổi này sẽ được chuyển từ {occ.date} sang {customDate}.
+              </p>
+            )}
+          </div>
+
+          <FixedWeekSlotGrid
+            courtId={originalCourtId}
+            occ={occ}
+            customDate={customDate}
+            selectedSlot={selectedSlot}
+            minDate={minDate}
+            onSelect={(date, start, end) => {
+              handleChangeDate(date);
+              setSlotSelectionNotice("");
+              setSelectedSlot({ start, end });
+              setCheckResult(null);
+              setSelectedCourtId(null);
+            }}
+          />
+
           {/* Chọn khung giờ theo buổi */}
           <div className="space-y-3">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
-              <Clock className="h-3.5 w-3.5" /> Chọn khung giờ mới
+              <Clock className="h-3.5 w-3.5" /> Chọn nhanh theo buổi
+            </p>
+            <p className="text-xs text-gray-500">
+              Chọn một hoặc nhiều ô 1 giờ liền nhau.
             </p>
 
             {selectedSlot && (
@@ -1424,6 +3804,7 @@ function AdjustSlotModal({
                 <button
                   onClick={() => {
                     setSelectedSlot(null);
+                    setSlotSelectionNotice("");
                     setCheckResult(null);
                     setSelectedCourtId(null);
                   }}
@@ -1434,15 +3815,53 @@ function AdjustSlotModal({
               </div>
             )}
 
-            {TIME_SESSIONS.map((session) => {
-              const colors = SESSION_COLORS[session.color as SessionColor];
-              const isActiveSession =
-                selectedSlot &&
-                session.slots.some(
-                  (sl) =>
-                    sl.start === selectedSlot.start &&
-                    sl.end === selectedSlot.end,
+            {slotSelectionNotice && (
+              <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{slotSelectionNotice}</span>
+              </div>
+            )}
+
+            {/* Local Session Tabs */}
+            <div className="flex gap-1 rounded-xl bg-gray-100 p-1">
+              {TIME_SESSIONS.map((session) => {
+                const isActive = session.color === localSession;
+                const hasSelectedSlots = selectedSlot && rangesIntersect(
+                  selectedSlot.start,
+                  selectedSlot.end,
+                  session.slots,
                 );
+                const SessionIcon = session.color === "amber" ? Sun : session.color === "blue" ? Sunset : Moon;
+                return (
+                  <button
+                    key={session.label}
+                    type="button"
+                    onClick={() => setLocalSession(session.color as SessionColor)}
+                    className={cn(
+                      "flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-bold transition-all",
+                      isActive
+                        ? "bg-white text-gray-900 shadow-sm"
+                        : "text-gray-400 hover:text-gray-600",
+                    )}
+                  >
+                    <SessionIcon className="h-3.5 w-3.5" />
+                    <span>{session.label.replace(/^[^\s]+\s/, "")}</span>
+                    {hasSelectedSlots && (
+                      <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Local Session Slots */}
+            {TIME_SESSIONS.filter((s) => s.color === localSession).map((session) => {
+              const colors = SESSION_COLORS[session.color as SessionColor];
+              const isActiveSession = selectedSlot && rangesIntersect(
+                selectedSlot.start,
+                selectedSlot.end,
+                session.slots,
+              );
               return (
                 <div
                   key={session.label}
@@ -1468,24 +3887,26 @@ function AdjustSlotModal({
                   </div>
                   <div className="grid grid-cols-2 gap-1.5">
                     {session.slots.map((slot) => {
-                      const isSelected =
-                        selectedSlot?.start === slot.start &&
-                        selectedSlot?.end === slot.end;
-                      // Nếu đã check, hiển thị availability ngay trên slot
-                      const slotResult = checkResult?.courts;
+                      const isSelected = slotIsInsideRange(
+                        slot,
+                        selectedSlot?.start,
+                        selectedSlot?.end,
+                      );
                       return (
                         <button
                           key={slot.label}
                           type="button"
+                          title={`${slot.label} thuộc ${session.label}`}
                           onClick={() => handleSelectSlot(slot.start, slot.end)}
                           className={cn(
-                            "h-9 px-2 rounded-lg text-xs font-semibold border-2 transition-all text-left pl-3",
+                            "h-9 px-2 rounded-lg text-xs font-semibold border-2 transition-all text-left pl-3 flex items-center gap-1.5",
                             isSelected
                               ? colors.active
                               : `border-gray-200 text-gray-600 bg-white ${colors.slot}`,
                           )}
                         >
-                          {slot.label}
+                          {isSelected && <CheckCircle2 className="h-3.5 w-3.5" />}
+                          <span>{slot.label}</span>
                         </button>
                       );
                     })}
@@ -1495,28 +3916,19 @@ function AdjustSlotModal({
             })}
           </div>
 
-          {/* Nút kiểm tra */}
-          <button
-            onClick={handleCheck}
-            disabled={!selectedSlot || checking}
-            className="w-full h-10 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-200 disabled:text-gray-400 text-white text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
-          >
-            {checking ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" /> Đang kiểm tra...
-              </>
-            ) : (
-              <>
-                <Search className="h-4 w-4" /> Kiểm tra sân trống
-              </>
-            )}
-          </button>
+          {selectedSlot && checking && (
+            <div className="flex items-center justify-center gap-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-600">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Đang tự kiểm tra sân trống...
+            </div>
+          )}
 
           {/* Danh sách sân */}
           {checkResult && (
             <div className="space-y-2">
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                Sân available · {checkResult.timeStart}–{checkResult.timeEnd}
+                Sân available · {checkResult.date || customDate} ·{" "}
+                {checkResult.timeStart}–{checkResult.timeEnd}
                 {!checkResult.hasAvailable && (
                   <span className="ml-2 text-red-500 normal-case font-normal">
                     — Không có sân trống
@@ -1524,7 +3936,7 @@ function AdjustSlotModal({
                 )}
               </p>
               <div className="space-y-2 max-h-52 overflow-y-auto">
-                {checkResult.courts.map((court) => (
+                {(checkResult.courts || []).map((court) => (
                   <button
                     key={court.id}
                     type="button"
@@ -1580,6 +3992,11 @@ function AdjustSlotModal({
                     )}
                   </button>
                 ))}
+                {(checkResult.courts || []).length === 0 && (
+                  <div className="rounded-xl border border-dashed border-gray-200 p-4 text-center text-sm text-gray-400">
+                    Chưa có dữ liệu sân cho ngày/giờ này. Hãy thử kiểm tra lại.
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1597,7 +4014,7 @@ function AdjustSlotModal({
             onClick={handleConfirm}
             disabled={
               !selectedCourtId ||
-              !checkResult?.courts.find((c) => c.id === selectedCourtId)
+              !(checkResult?.courts || []).find((c) => c.id === selectedCourtId)
                 ?.available
             }
             className="flex-1 h-10 bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
@@ -1625,13 +4042,22 @@ function OccurrenceRow({
   occ: OccurrenceUIState;
   index: number;
   preview: FixedSchedulePreviewResponse;
-  onSetAction: (date: string, action: OccurrenceAction) => void;
+  onSetAction: (
+    date: string,
+    action: OccurrenceAction,
+    replaceWithCourtId?: number,
+    timeStart?: string,
+    timeEnd?: string,
+  ) => void;
   onSetCustomAction: (
     date: string,
+    customDate: string,
     courtId: number,
     courtName: string,
     timeStart: string,
     timeEnd: string,
+    originalTimeStart?: string,
+    originalTimeEnd?: string,
   ) => void;
   checkSlot: (req: CheckSlotRequest) => Promise<CheckSlotResponse | null>;
 }) {
@@ -1640,17 +4066,29 @@ function OccurrenceRow({
   const handleCustomConfirm = (
     courtId: number,
     courtName: string,
+    customDate: string,
     timeStart: string,
     timeEnd: string,
   ) => {
-    onSetCustomAction(occ.date, courtId, courtName, timeStart, timeEnd);
+    onSetCustomAction(
+      occ.date,
+      customDate,
+      courtId,
+      courtName,
+      timeStart,
+      timeEnd,
+      occ.timeStart,
+      occ.timeEnd,
+    );
     setModalOpen(false);
-    toast.success(`Đã đổi sang ${courtName} · ${timeStart}–${timeEnd}`);
+    toast.success(
+      `Đã đổi sang ${customDate} · ${courtName} · ${timeStart}–${timeEnd}`,
+    );
   };
 
   const displayTime =
     occ.action === "custom" && occ.customTimeStart
-      ? `${occ.customCourtName} · ${occ.customTimeStart}–${occ.customTimeEnd}`
+      ? `${occ.customDate && occ.customDate !== occ.date ? `${occ.customDate} · ` : ""}${occ.customCourtName} · ${occ.customTimeStart}–${occ.customTimeEnd}`
       : occ.action === "replace" && occ.selectedReplacement
         ? `${occ.selectedReplacement.courtName} · ${occ.timeStart}–${occ.timeEnd}`
         : `${occ.timeStart}–${occ.timeEnd}`;
@@ -1726,7 +4164,7 @@ function OccurrenceRow({
               <ActionBtn
                 active={occ.action === "keep"}
                 color="green"
-                onClick={() => onSetAction(occ.date, "keep")}
+                onClick={() => onSetAction(occ.date, "keep", undefined, occ.timeStart, occ.timeEnd)}
               >
                 Giữ
               </ActionBtn>
@@ -1735,12 +4173,12 @@ function OccurrenceRow({
                 color="purple"
                 onClick={() => setModalOpen(true)}
               >
-                Đổi giờ
+                Đổi ngày/giờ
               </ActionBtn>
               <ActionBtn
                 active={occ.action === "skip"}
                 color="gray"
-                onClick={() => onSetAction(occ.date, "skip")}
+                onClick={() => onSetAction(occ.date, "skip", undefined, occ.timeStart, occ.timeEnd)}
               >
                 Bỏ
               </ActionBtn>
@@ -1751,7 +4189,7 @@ function OccurrenceRow({
               <ActionBtn
                 active={occ.action === "replace"}
                 color="blue"
-                onClick={() => onSetAction(occ.date, "replace")}
+                onClick={() => onSetAction(occ.date, "replace", undefined, occ.timeStart, occ.timeEnd)}
               >
                 Sân bù
               </ActionBtn>
@@ -1760,12 +4198,12 @@ function OccurrenceRow({
                 color="purple"
                 onClick={() => setModalOpen(true)}
               >
-                Đổi giờ
+                Đổi ngày/giờ
               </ActionBtn>
               <ActionBtn
                 active={occ.action === "skip"}
                 color="gray"
-                onClick={() => onSetAction(occ.date, "skip")}
+                onClick={() => onSetAction(occ.date, "skip", undefined, occ.timeStart, occ.timeEnd)}
               >
                 Bỏ
               </ActionBtn>
@@ -1778,12 +4216,12 @@ function OccurrenceRow({
                 color="purple"
                 onClick={() => setModalOpen(true)}
               >
-                Đổi lịch
+                Đổi ngày/giờ
               </ActionBtn>
               <ActionBtn
                 active={occ.action === "skip"}
                 color="gray"
-                onClick={() => onSetAction(occ.date, "skip")}
+                onClick={() => onSetAction(occ.date, "skip", undefined, occ.timeStart, occ.timeEnd)}
               >
                 Bỏ
               </ActionBtn>

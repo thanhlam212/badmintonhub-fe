@@ -32,6 +32,8 @@ interface OrderItem {
 interface Order {
   id: string
   rawId?: string
+  invoiceCode?: string
+  warrantyCode?: string
   items: OrderItem[]
   customer: { name: string; phone: string; email: string; address: string }
   note: string
@@ -433,7 +435,7 @@ function OrderDetailDialog({ order, onApprove, onStartDelivery, onDeliver, onRef
             size="sm"
             className="gap-1 text-xs h-7"
             onClick={() => printWarrantyCard({
-              orderCode: order.id,
+              orderCode: order.warrantyCode || `BH-${order.invoiceCode || order.id}`,
               date: order.createdAt,
               customerName: order.customer.name,
               customerPhone: order.customer.phone,
@@ -510,9 +512,13 @@ export default function EmployeeOrdersPage() {
             const wh = inventory.find(inv => inv.warehouseId === o.fulfillingWarehouseId)
             if (wh) fulfillingWarehouse = wh.warehouse
           }
+          const invoiceCode = formatHDReference(o.orderCode || o.order_code || o.invoiceCode || o.invoice_code || o.sales_code || o.id, o.createdAt || o.created_at)
+          const warrantyCode = String(o.warrantyCode || o.warranty_code || `BH-${invoiceCode}`)
           return {
-            id: formatHDReference(o.orderCode || o.order_code || o.invoiceCode || o.invoice_code || o.sales_code || o.id, o.createdAt || o.created_at),
+            id: invoiceCode,
             rawId: String(o.id),
+            invoiceCode,
+            warrantyCode,
             items: (o.items || []).map((i: any) => ({ productId: i.productId || i.product_id, name: i.productName || i.name || "", price: i.price || 0, qty: i.quantity || i.qty || 0 })),
             customer: { name: o.customerName || "", phone: o.customerPhone || "", email: o.customerEmail || "", address: o.shippingAddress || "" },
             note: o.note || "", subtotal: o.amount || 0, shippingFee: 0, total: o.amount || 0,
@@ -549,13 +555,13 @@ export default function EmployeeOrdersPage() {
         if (order?.status === "pending" && updates.status === "processing") {
           const confirmRes = await orderApi.updateStatus(apiId, "confirmed")
           if (!confirmRes.success) {
-            console.error("Lỗi xác nhận đơn:", confirmRes.error)
+            console.warn("Lỗi xác nhận đơn:", confirmRes.error)
             return
           }
         }
         const res = await orderApi.updateStatus(apiId, updates.status)
         if (!res.success) {
-          console.error("Lỗi cập nhật trạng thái:", res.error)
+          console.warn("Lỗi cập nhật trạng thái:", res.error)
           return
         }
         if (updates.status === "processing" || updates.status === "cancelled" || updates.status === "refunded") {
@@ -563,12 +569,13 @@ export default function EmployeeOrdersPage() {
         }
       }
     } catch (err) {
-      console.error("Lỗi cập nhật đơn hàng:", err)
+      console.warn("Lỗi cập nhật đơn hàng:", err)
       return
     }
     const updated = orders.map(o => o.id === orderId ? { ...o, ...updates } : o)
     setOrders(updated)
     setSelectedOrder(updated.find(o => o.id === orderId) || null)
+    loadOrders().catch(() => {})
   }
 
   const handleProcess = (orderId: string, warehouse?: string) => {

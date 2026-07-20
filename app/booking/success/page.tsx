@@ -9,7 +9,12 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
-import { formatVND, formatBookingReference } from '@/lib/utils';
+import { formatVND, formatBookingReference, formatFixedScheduleReference } from '@/lib/utils';
+import { paymentApi } from '@/lib/api';
+import {
+  FIXED_CHECKOUT_STORAGE_KEY,
+  type FixedScheduleCheckout,
+} from '@/app/booking/fixed-schedule/types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -37,29 +42,37 @@ interface RegularBookingData {
   note?: string;
 }
 
-// Fixed schedule booking (stored by /booking/fixed-schedule)
-interface FixedBookingData {
-  fixedSchedule: {
-    id: string;
-    courtName: string;
-    cycle: 'weekly' | 'monthly';
-    occurrenceCount: number;
-    invoiceCode: string;
-    totalAmount: number;
-  };
-  invoiceCode: string;
-  totalAmount: number;
-  bookingsCreated: number;
-}
-
 const paymentLabels: Record<string, string> = {
   cash: 'Tiền mặt',
   momo: 'MoMo',
   vnpay: 'VNPay',
   sepay: 'SePay',
+  bank_transfer: 'Chuyển khoản',
   bank: 'Chuyển khoản',
   wallet: 'Ví BadmintonHub',
 };
+
+const fixedRetryPaymentOptions = [
+  { value: 'sepay', label: 'SePay' },
+  { value: 'vnpay', label: 'VNPay' },
+  { value: 'momo', label: 'MoMo' },
+  { value: 'bank_transfer', label: 'Chuyển khoản' },
+] as const;
+
+function submitPaymentForm(checkoutUrl: string, formFields: Record<string, unknown>) {
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = checkoutUrl;
+  Object.entries(formFields).forEach(([name, value]) => {
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = name;
+    input.value = String(value ?? '');
+    form.appendChild(input);
+  });
+  document.body.appendChild(form);
+  form.submit();
+}
 
 // ─── Regular Booking Success ──────────────────────────────────────────────────
 function RegularSuccess({ data }: { data: RegularBookingData }) {
@@ -206,18 +219,131 @@ function RegularSuccess({ data }: { data: RegularBookingData }) {
 }
 
 // ─── Fixed Schedule Success ───────────────────────────────────────────────────
-function FixedSuccess({ data }: { data: FixedBookingData }) {
+function FixedSuccess({ data }: { data: FixedScheduleCheckout }) {
   const { fixedSchedule, invoiceCode, totalAmount, bookingsCreated } = data;
+  const [paymentStatus, setPaymentStatus] = useState(data.paymentStatus);
+  const [retryMethod, setRetryMethod] = useState(data.paymentMethod || 'sepay');
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState('');
+  const checkinQrValue = data.checkinQrValue || invoiceCode;
+  const fixedScheduleCode = formatFixedScheduleReference(fixedSchedule.id, fixedSchedule.startDate);
+
+  useEffect(() => {
+    if (!data.paymentId || paymentStatus !== 'pending') return;
+
+    let stopped = false;
+    const checkPayment = async () => {
+      const result = await paymentApi.getStatus(data.paymentId!);
+      if (stopped || !result.success || !result.data) return;
+
+      if (result.data.status === 'success') setPaymentStatus('success');
+      if (result.data.status === 'failed') setPaymentStatus('failed');
+    };
+
+    void checkPayment();
+    const interval = window.setInterval(checkPayment, 5000);
+    return () => {
+      stopped = true;
+      window.clearInterval(interval);
+    };
+  }, [data.paymentId, paymentStatus]);
+
+  const isManualPending =
+    (data.paymentMethod === 'cash' ||
+      data.paymentMethod === 'bank_transfer') &&
+    paymentStatus === 'pending';
+  const isOnlinePending =
+    !isManualPending && paymentStatus === 'pending';
+  const isPaid = paymentStatus === 'success';
+  const isFailed = paymentStatus === 'failed';
+  const canRetryPayment = !isPaid && Boolean(data.invoiceId);
+
+  const handleRetryPayment = async () => {
+    if (retryMethod === 'bank_transfer') {
+      setPaymentStatus('pending');
+      const next = {
+        ...data,
+        paymentMethod: 'bank_transfer' as const,
+        paymentStatus: 'pending' as const,
+        paymentError: undefined,
+      };
+      localStorage.setItem(FIXED_CHECKOUT_STORAGE_KEY, JSON.stringify(next));
+      localStorage.setItem(`${FIXED_CHECKOUT_STORAGE_KEY}:${fixedSchedule.id}`, JSON.stringify(next));
+      setRetryError('');
+      return;
+    }
+
+    setRetrying(true);
+    setRetryError('');
+    const result = await paymentApi.create(
+      data.invoiceId,
+      retryMethod as 'sepay' | 'vnpay' | 'momo',
+    );
+    setRetrying(false);
+
+    if (!result.success || !result.paymentId) {
+      setRetryError(result.error || 'Không thể tạo lại phiên thanh toán');
+      return;
+    }
+
+    const next = {
+      ...data,
+      paymentId: result.paymentId,
+      paymentMethod: retryMethod as any,
+      paymentStatus: 'pending' as const,
+      paymentError: undefined,
+      qrImageUrl: result.qrImageUrl,
+      bankCode: result.bankCode,
+      accountNumber: result.accountNumber,
+      transferContent: result.transferContent,
+    };
+    localStorage.setItem(FIXED_CHECKOUT_STORAGE_KEY, JSON.stringify(next));
+    localStorage.setItem(`${FIXED_CHECKOUT_STORAGE_KEY}:${fixedSchedule.id}`, JSON.stringify(next));
+
+    if (result.payUrl) {
+      window.location.href = result.payUrl;
+      return;
+    }
+    if (result.checkoutUrl && result.formFields) {
+      submitPaymentForm(result.checkoutUrl, result.formFields);
+      return;
+    }
+    setPaymentStatus('pending');
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50/40 via-white to-emerald-50/30 py-10 px-4">
       <div className="max-w-xl mx-auto space-y-4">
 
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8 text-center">
-          <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <CheckCircle2 className="h-11 w-11 text-green-600" />
+          <div className={cn(
+            "w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4",
+            isPaid ? "bg-green-100" : isFailed ? "bg-red-100" : "bg-amber-100",
+          )}>
+            {isPaid ? (
+              <CheckCircle2 className="h-11 w-11 text-green-600" />
+            ) : isFailed ? (
+              <AlertCircle className="h-11 w-11 text-red-600" />
+            ) : (
+              <Clock className="h-11 w-11 text-amber-600" />
+            )}
           </div>
-          <h1 className="text-2xl font-bold text-gray-900 mb-1">Đặt lịch thành công!</h1>
-          <p className="text-gray-500 text-sm mb-4">Cảm ơn bạn đã đặt lịch cố định tại BadmintonHub</p>
+          <h1 className="text-2xl font-bold text-gray-900 mb-1">
+            {isPaid
+              ? 'Thanh toán thành công!'
+              : isFailed
+                ? 'Thanh toán chưa thành công'
+                : 'Lịch đã được giữ chỗ'}
+          </h1>
+          <p className="text-gray-500 text-sm mb-4">
+            {isFailed
+              ? 'Bạn có thể thử lại trong lịch sử đặt sân trước khi giữ chỗ hết hạn.'
+              : isManualPending
+              ? 'Lịch cố định đang chờ nhân viên xác nhận thanh toán và kiểm tra lại lịch.'
+              : isOnlinePending
+                ? 'Đang chờ hệ thống ghi nhận thanh toán của bạn.'
+                : 'Lịch cố định của bạn đã được xác nhận.'}
+          </p>
           <div className="inline-flex flex-col items-center gap-1.5 px-5 py-3 bg-gray-50 rounded-xl border border-gray-100">
             <div className="flex items-center gap-2 text-sm">
               <Receipt className="h-4 w-4 text-gray-400" />
@@ -226,10 +352,76 @@ function FixedSuccess({ data }: { data: FixedBookingData }) {
             </div>
             <div className="flex items-center gap-2 text-xs text-gray-400">
               <span>Mã lịch:</span>
-              <span className="font-mono">{fixedSchedule.id.slice(0, 8)}...</span>
+              <span className="font-mono">{fixedScheduleCode}</span>
             </div>
           </div>
         </div>
+
+        {isOnlinePending && data.qrImageUrl && (
+          <div className="bg-white rounded-2xl border border-amber-200 shadow-sm p-6 text-center">
+            <div className="flex items-center justify-center gap-2 mb-2">
+              <QrCode className="h-5 w-5 text-amber-600" />
+              <h2 className="font-semibold text-gray-900">Quét QR để thanh toán</h2>
+            </div>
+            <p className="text-sm text-gray-500 mb-4">
+              Mã sẽ được kiểm tra tự động mỗi 5 giây.
+            </p>
+            <img
+              src={data.qrImageUrl}
+              alt="QR thanh toán SePay"
+              width={240}
+              height={240}
+              className="mx-auto rounded-xl border bg-white"
+            />
+            <div className="mt-4 rounded-xl bg-gray-50 p-3 text-sm space-y-1">
+              <p><span className="text-gray-500">Ngân hàng:</span> <strong>{data.bankCode || '—'}</strong></p>
+              <p><span className="text-gray-500">Số tài khoản:</span> <strong>{data.accountNumber || '—'}</strong></p>
+              <p><span className="text-gray-500">Nội dung:</span> <strong>{data.transferContent || invoiceCode}</strong></p>
+            </div>
+          </div>
+        )}
+
+        {data.paymentError && paymentStatus === 'pending' && (
+          <div className="bg-red-50 border border-red-100 rounded-2xl p-5 text-sm text-red-800">
+            <strong>Chưa thể mở cổng thanh toán.</strong> {data.paymentError}
+            {' '}Lịch vẫn đang được giữ trong 10 phút.
+          </div>
+        )}
+
+        {canRetryPayment && (
+          <div className="bg-white rounded-2xl border border-amber-200 shadow-sm p-6">
+            <h2 className="font-semibold text-gray-900 mb-2">Chọn lại phương thức thanh toán</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              Nếu bạn vừa hủy SePay, hãy chọn phương thức khác hoặc tạo lại phiên SePay.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {fixedRetryPaymentOptions.map((method) => (
+                <button
+                  key={method.value}
+                  type="button"
+                  onClick={() => setRetryMethod(method.value)}
+                  className={cn(
+                    'rounded-xl border px-3 py-2 text-sm font-semibold transition',
+                    retryMethod === method.value
+                      ? 'border-green-600 bg-green-50 text-green-700'
+                      : 'border-gray-200 text-gray-600 hover:border-green-300',
+                  )}
+                >
+                  {method.label}
+                </button>
+              ))}
+            </div>
+            {retryError && <p className="mt-3 text-sm text-red-600">{retryError}</p>}
+            <button
+              type="button"
+              onClick={handleRetryPayment}
+              disabled={retrying}
+              className="mt-4 w-full rounded-xl bg-green-600 px-4 py-3 text-sm font-semibold text-white disabled:bg-gray-300"
+            >
+              {retrying ? 'Đang tạo thanh toán...' : 'Tiếp tục thanh toán'}
+            </button>
+          </div>
+        )}
 
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
           <h2 className="font-semibold text-gray-800 flex items-center gap-2 mb-4">
@@ -238,10 +430,48 @@ function FixedSuccess({ data }: { data: FixedBookingData }) {
           </h2>
           <div className="grid grid-cols-2 gap-4">
             <InfoItem icon={<MapPin className="h-4 w-4" />} label="Sân" value={fixedSchedule.courtName} />
-            <InfoItem icon={<Calendar className="h-4 w-4" />} label="Chu kỳ" value={fixedSchedule.cycle === 'weekly' ? 'Hàng tuần' : 'Hàng tháng'} />
+            <InfoItem
+              icon={<Calendar className="h-4 w-4" />}
+              label="Chu kỳ"
+              value={
+                fixedSchedule.cycle === 'daily'
+                  ? 'Lặp theo ngày'
+                  : fixedSchedule.cycle === 'weekly'
+                    ? 'Hàng tuần'
+                    : 'Hàng tháng'
+              }
+            />
             <InfoItem icon={<Clock className="h-4 w-4" />} label="Số buổi đã đặt" value={`${bookingsCreated} buổi`} />
+            <InfoItem icon={<CreditCard className="h-4 w-4" />} label="Thanh toán" value={paymentLabels[data.paymentMethod] || data.paymentMethod} />
             <InfoItem icon={<CreditCard className="h-4 w-4" />} label="Tổng tiền" value={formatVND(totalAmount)} highlight />
           </div>
+        </div>
+
+        <div className="bg-[#0a2416] rounded-2xl p-6 text-center">
+          <div className="flex items-center justify-center gap-2 mb-1">
+            <QrCode className="h-4 w-4 text-green-400" />
+            <span className="text-green-400 text-xs font-semibold uppercase tracking-widest">
+              QR Check-in lịch cố định
+            </span>
+          </div>
+          <p className="text-green-200 text-sm mb-5">
+            Mã này dùng cố định cho cả gói. Mỗi lần đến sân, nhân viên quét mã này để check-in buổi đúng ngày hôm đó.
+          </p>
+          <div className="flex justify-center mb-4">
+            <img
+              src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(checkinQrValue)}&color=0a2416&bgcolor=ffffff`}
+              alt={`QR Check-in ${checkinQrValue}`}
+              width={180}
+              height={180}
+              className="border-4 border-white rounded-xl bg-white"
+            />
+          </div>
+          <p className="text-green-300/70 text-xs font-mono">{checkinQrValue}</p>
+          {isManualPending && (
+            <p className="mt-3 text-xs text-amber-200">
+              Lưu ý: nhân viên cần xác nhận thanh toán trước, sau đó QR mới check-in được.
+            </p>
+          )}
         </div>
 
         <div className="bg-blue-50 border border-blue-100 rounded-2xl p-5">
@@ -250,8 +480,11 @@ function FixedSuccess({ data }: { data: FixedBookingData }) {
           </h3>
           <ul className="space-y-2 text-sm text-blue-800">
             {[
-              'Chúng tôi sẽ gửi email xác nhận đến địa chỉ của bạn',
-              'Vui lòng thanh toán trước ngày đầu tiên tối thiểu 50% tổng tiền',
+              isManualPending
+                ? 'Cung cấp mã hóa đơn để nhân viên xác nhận thanh toán đặt sân cố định'
+                : isOnlinePending
+                  ? 'Hoàn tất thanh toán trong 10 phút để giữ lịch'
+                  : 'Thanh toán đã được ghi nhận và lịch đã xác nhận',
               'Xem và quản lý lịch đặt tại mục "Lịch sử đặt sân"',
             ].map((step, i) => (
               <li key={i} className="flex items-start gap-2.5">
@@ -310,16 +543,20 @@ function ErrorState() {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 function BookingSuccessContent() {
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [regularData, setRegularData] = useState<RegularBookingData | null>(null);
-  const [fixedData, setFixedData] = useState<FixedBookingData | null>(null);
+  const [fixedData, setFixedData] = useState<FixedScheduleCheckout | null>(null);
 
   useEffect(() => {
+    const scheduleId = searchParams.get('id');
+
     // Try regular booking first
     const savedRegular = localStorage.getItem('completedBooking');
     if (savedRegular) {
       try {
         setRegularData(JSON.parse(savedRegular));
+        localStorage.removeItem('completedBooking');
         setLoading(false);
         return;
       } catch {
@@ -327,17 +564,22 @@ function BookingSuccessContent() {
       }
     }
 
-    // Try fixed schedule booking
-    const savedFixed = localStorage.getItem('completedFixedBooking');
+    const savedFixed =
+      (scheduleId
+        ? localStorage.getItem(`${FIXED_CHECKOUT_STORAGE_KEY}:${scheduleId}`)
+        : null) ||
+      localStorage.getItem(FIXED_CHECKOUT_STORAGE_KEY) ||
+      localStorage.getItem('completedFixedBooking');
     if (savedFixed) {
       try {
         setFixedData(JSON.parse(savedFixed));
       } catch {
+        localStorage.removeItem(FIXED_CHECKOUT_STORAGE_KEY);
         localStorage.removeItem('completedFixedBooking');
       }
     }
     setLoading(false);
-  }, []);
+  }, [searchParams]);
 
   if (loading) {
     return (

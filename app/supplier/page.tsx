@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { POStatusBadge } from "@/components/shared"
-import { formatVND } from "@/lib/utils"
+import { formatVND, formatPOReference } from "@/lib/utils"
 import { cn } from "@/lib/utils"
 import {
   Bell, Package, Truck, FileText, ChevronDown, ChevronUp,
@@ -154,6 +154,7 @@ export default function SupplierPortal() {
   const pendingPOs = supplierPOs.filter(p => p.status === "pending")
   const inProgressPOs = supplierPOs.filter(p => p.status === "in-transit")
   const completedPOs = supplierPOs.filter(p => p.status === "delivered")
+  const getPOCode = (po: { id: string; createdDate?: string }) => formatPOReference(po.id, po.createdDate)
 
   return (
     <div className="min-h-screen bg-background">
@@ -245,7 +246,7 @@ export default function SupplierPortal() {
                     <div className="flex items-start justify-between">
                       <div>
                         <div className="flex items-center gap-2">
-                          <p className="font-mono text-sm text-primary font-semibold">{po.id}</p>
+                          <p className="font-mono text-sm text-primary font-semibold">{getPOCode(po)}</p>
                           <POStatusBadge status={po.status} />
                         </div>
                         <p className="text-sm text-muted-foreground mt-1">Ngày tạo: {po.createdDate}</p>
@@ -306,7 +307,7 @@ export default function SupplierPortal() {
                       <div className="flex items-start justify-between">
                         <div>
                           <div className="flex items-center gap-2">
-                            <p className="font-mono text-sm text-primary font-semibold">{po.id}</p>
+                            <p className="font-mono text-sm text-primary font-semibold">{getPOCode(po)}</p>
                             <POStatusBadge status={po.status} />
                           </div>
                           <p className="text-sm text-muted-foreground mt-1">Ngày giao dự kiến: {po.deliveryDate}</p>
@@ -389,7 +390,7 @@ export default function SupplierPortal() {
                     <div className="flex items-center justify-between">
                       <div>
                         <div className="flex items-center gap-2">
-                          <p className="font-mono text-sm text-muted-foreground">{po.id}</p>
+                          <p className="font-mono text-sm text-muted-foreground">{getPOCode(po)}</p>
                           <POStatusBadge status={po.status} />
                         </div>
                         <p className="text-sm text-muted-foreground mt-1">{po.items.length} sản phẩm - {formatVND(po.totalValue)}</p>

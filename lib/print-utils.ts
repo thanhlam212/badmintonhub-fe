@@ -244,6 +244,7 @@ export function printBookingReceipt(data: PrintBookingData) {
 export interface PrintCourtServiceInvoiceData {
   code: string
   date: string
+  invoiceKind?: "court" | "service" | "combined"
   customerName: string
   customerPhone?: string
   courtName: string
@@ -256,10 +257,25 @@ export interface PrintCourtServiceInvoiceData {
 }
 
 export function printCourtServiceInvoice(data: PrintCourtServiceInvoiceData) {
+  const invoiceKind = data.invoiceKind || "combined"
+  const showCourtFee = invoiceKind !== "service"
+  const showServices = invoiceKind !== "court"
+  const title =
+    invoiceKind === "court"
+      ? "HOA DON TIEN SAN"
+      : invoiceKind === "service"
+        ? "HOA DON DICH VU SAN"
+        : "HOA DON DICH VU CUOI BUOI"
+  const invoiceTotal =
+    invoiceKind === "court"
+      ? data.courtFee
+      : invoiceKind === "service"
+        ? data.serviceTotal
+        : data.total
   openPrint(`
     <div class="header">
       <div class="company">BadmintonHub</div>
-      <div class="title">HÓA ĐƠN DỊCH VỤ CUỐI BUỔI</div>
+      <div class="title">${esc(title)}</div>
       <div class="code">${esc(data.code)}</div>
       <div class="date">Ngày: ${esc(data.date)}</div>
     </div>
@@ -273,13 +289,15 @@ export function printCourtServiceInvoice(data: PrintCourtServiceInvoiceData) {
     <table>
       <thead><tr><th>Hạng mục</th><th class="center">SL</th><th class="right">Đơn giá</th><th class="right">Thành tiền</th></tr></thead>
       <tbody>
-        <tr><td>Tiền sân (${esc(data.timeSlot)})</td><td class="center">1</td><td class="right">${fmtVND(data.courtFee)}</td><td class="right">${fmtVND(data.courtFee)}</td></tr>
-        ${data.services.length === 0
-          ? `<tr><td>Dịch vụ tại sân</td><td class="center">0</td><td class="right">${fmtVND(0)}</td><td class="right">${fmtVND(0)}</td></tr>`
-          : data.services.map((service) => `<tr><td>${esc(service.name)}${service.note ? ` <span style="color:#6b7280">(${esc(service.note)})</span>` : ""}</td><td class="center">${service.qty}</td><td class="right">${fmtVND(service.price)}</td><td class="right">${fmtVND(service.qty * service.price)}</td></tr>`).join("")}
-        <tr class="total-row"><td colspan="3" class="right">Tổng tiền sân</td><td class="right">${fmtVND(data.courtFee)}</td></tr>
-        <tr class="total-row"><td colspan="3" class="right">Tổng tiền dịch vụ</td><td class="right">${fmtVND(data.serviceTotal)}</td></tr>
-        <tr class="total-row"><td colspan="3" class="right" style="font-size:14px">TỔNG THANH TOÁN</td><td class="right" style="font-size:14px">${fmtVND(data.total)}</td></tr>
+        ${showCourtFee ? `<tr><td>Tien san (${esc(data.timeSlot)})</td><td class="center">1</td><td class="right">${fmtVND(data.courtFee)}</td><td class="right">${fmtVND(data.courtFee)}</td></tr>` : ""}
+        ${showServices
+          ? data.services.length === 0
+            ? `<tr><td>Dich vu tai san</td><td class="center">0</td><td class="right">${fmtVND(0)}</td><td class="right">${fmtVND(0)}</td></tr>`
+            : data.services.map((service) => `<tr><td>${esc(service.name)}${service.note ? ` <span style="color:#6b7280">(${esc(service.note)})</span>` : ""}</td><td class="center">${service.qty}</td><td class="right">${fmtVND(service.price)}</td><td class="right">${fmtVND(service.qty * service.price)}</td></tr>`).join("")
+          : ""}
+        ${invoiceKind === "combined" ? `<tr class="total-row"><td colspan="3" class="right">Tong tien san</td><td class="right">${fmtVND(data.courtFee)}</td></tr>` : ""}
+        ${invoiceKind === "combined" ? `<tr class="total-row"><td colspan="3" class="right">Tong tien dich vu</td><td class="right">${fmtVND(data.serviceTotal)}</td></tr>` : ""}
+        <tr class="total-row"><td colspan="3" class="right" style="font-size:14px">TONG THANH TOAN</td><td class="right" style="font-size:14px">${fmtVND(invoiceTotal)}</td></tr>
       </tbody>
     </table>
     <div class="signatures">

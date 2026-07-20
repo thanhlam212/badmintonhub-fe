@@ -13,7 +13,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from "@/components/ui/dialog"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip"
-import { formatVND, generateTimeSlots, getWeekDays, isSlotPast } from "@/lib/utils"
+import { formatSlotRange, formatVND, generateTimeSlots, getWeekDays, isSlotPast } from "@/lib/utils"
 import { branchApi, courtApi, bookingApi, ApiBooking, type ApiCourt } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
@@ -56,7 +56,7 @@ export default function AdminCourtsPage() {
   useEffect(() => {
     const init = async () => {
       try {
-        const [brRes, cRes] = await Promise.all([branchApi.getAll(), courtApi.getAll()])
+        const [brRes, cRes] = await Promise.all([branchApi.getAll(), courtApi.getAll({ includeUnavailable: true })])
         setBranchesList(brRes.map((b: any) => ({ id: b.id, name: b.name, address: b.address || "", lat: b.lat || 0, lng: b.lng || 0 })))
         setCourtsData(cRes)
       } catch {
@@ -168,6 +168,11 @@ export default function AdminCourtsPage() {
       toast.error("Không thể đặt chỗ cho khung giờ đã qua")
       return
     }
+    const court = courtsData.find(c => c.id === courtId)
+    if (currentStatus === "available" && court && !court.available) {
+      toast.error("Sân đang đóng cửa. Hãy mở lại sân trước khi tạo booking mới.")
+      return
+    }
     if (adminAction === "remove") {
       if (currentStatus !== "available") {
         const matching = allBookings.find(b => b.courtId === courtId && b.dateLabel === dateLabel && b.time === time)
@@ -199,7 +204,7 @@ export default function AdminCourtsPage() {
       toast.error("Lỗi khi đặt chỗ")
     }
     setBookingsVersion(v => v + 1)
-  }, [adminAction, allBookings])
+  }, [adminAction, allBookings, courtsData])
 
   const handleConfirmCancelSlot = useCallback(async () => {
     if (!slotConfirm) return
@@ -253,16 +258,56 @@ export default function AdminCourtsPage() {
     setEditHours(court.hours); setEditDesc(court.description); setShowEdit(true)
   }, [])
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (!editCourt) return
-    persist(courtsData.map(c => c.id === editCourt.id
-      ? { ...c, name: editName, type: editType, price: editPrice, available: editAvailable, indoor: editIndoor, hours: editHours, description: editDesc }
-      : c))
-    setShowEdit(false)
+    try {
+      let updatedCourt: Court | null = null
+      const updateResult = await courtApi.update(editCourt.id, {
+        name: editName,
+        type: editType,
+        price: editPrice,
+        indoor: editIndoor,
+        hours: editHours,
+        description: editDesc,
+        amenities: editCourt.amenities,
+      })
+
+      if (!updateResult.success || !updateResult.court) {
+        toast.error(updateResult.error || "Không thể cập nhật sân")
+        return
+      }
+
+      updatedCourt = updateResult.court
+
+      if (updatedCourt.available !== editAvailable) {
+        const toggleResult = await courtApi.toggleAvailable(editCourt.id)
+        if (!toggleResult.success || !toggleResult.court) {
+          toast.error(toggleResult.error || "Không thể cập nhật trạng thái sân")
+          return
+        }
+        updatedCourt = toggleResult.court
+      }
+
+      persist(courtsData.map(c => c.id === editCourt.id ? updatedCourt! : c))
+      setShowEdit(false)
+      toast.success("Đã cập nhật sân. Các hóa đơn/booking cũ giữ nguyên số tiền đã tạo.")
+    } catch {
+      toast.error("Lỗi khi cập nhật sân")
+    }
   }
 
-  const toggleAvailable = (id: number) => {
-    persist(courtsData.map(c => c.id === id ? { ...c, available: !c.available } : c))
+  const toggleAvailable = async (id: number) => {
+    try {
+      const result = await courtApi.toggleAvailable(id)
+      if (!result.success || !result.court) {
+        toast.error(result.error || "Không thể cập nhật trạng thái sân")
+        return
+      }
+      persist(courtsData.map(c => c.id === id ? result.court! : c))
+      toast.success(result.court.available ? "Đã mở lại sân" : "Đã đóng cửa sân")
+    } catch {
+      toast.error("Lỗi khi cập nhật trạng thái sân")
+    }
   }
 
   return (
@@ -440,7 +485,7 @@ export default function AdminCourtsPage() {
           <CardContent className="p-0 pb-4">
             <div className="overflow-x-auto px-4">
               <div className="min-w-[700px]">
-                <div className="grid grid-cols-[56px_repeat(7,1fr)] gap-1 mb-1 sticky top-0 bg-background z-10 pb-1 border-b">
+                <div className="grid grid-cols-[90px_repeat(7,1fr)] gap-1 mb-1 sticky top-0 bg-background z-10 pb-1 border-b">
                   <div className="text-center text-[10px] text-muted-foreground font-medium py-1">Giờ</div>
                   {weekDays.map(d => (
                     <div key={d.label} className="text-center py-1">
@@ -451,8 +496,8 @@ export default function AdminCourtsPage() {
                 </div>
                 <TooltipProvider>
                   {timeSlots.map(time => (
-                    <div key={time} className="grid grid-cols-[56px_repeat(7,1fr)] gap-1 mb-[3px]">
-                      <div className="text-[11px] text-muted-foreground flex items-center justify-end pr-2 font-mono">{time}</div>
+                    <div key={time} className="grid grid-cols-[90px_repeat(7,1fr)] gap-1 mb-[3px]">
+                      <div className="text-[10px] text-muted-foreground flex items-center justify-end pr-2 font-mono">{formatSlotRange(time)}</div>
                       {weekDays.map(d => {
                         const status = courtAvailability[d.label]?.[time] || "available"
                         const past = isSlotPast(d.date, time)

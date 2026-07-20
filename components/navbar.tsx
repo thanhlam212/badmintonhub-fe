@@ -37,7 +37,7 @@ const navLinks = [
     ]
   },
   { href: "/shop", label: "Cửa hàng" },
-  { href: "/my-bookings", label: "Lịch đặt" },
+  { href: "/my-bookings", label: "Lịch đặt/Đơn hàng" },
   { href: "/community", label: "Cộng đồng" },
 ]
 

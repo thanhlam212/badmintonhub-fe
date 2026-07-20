@@ -10,13 +10,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogC
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { formatVND } from "@/lib/utils"
-import { salesOrderApi } from "@/lib/api"
+import { orderApi, salesOrderApi } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { Search, ShieldCheck, ShieldAlert, Clock, Loader2, Package } from "lucide-react"
 
 interface WarrantyItem { name: string; qty: number; price: number; warrantyMonths: number }
 interface WarrantyRecord {
-  orderId: string; exportDate: string; customer: string; phone: string
+  orderId: string; warrantyCode: string; invoiceCode: string; exportDate: string; customer: string; phone: string
+  source?: "offline" | "online"
   items: WarrantyItem[]; total: number
   caseStatus: "active" | "processing" | "resolved" | "expired"
   caseNote: string
@@ -69,8 +70,11 @@ export default function WarrantyPage() {
     const cases   = stored ? JSON.parse(stored) : {}
     setCaseMap(cases)
     try {
-      const res  = await salesOrderApi.getAll({ status: "exported" } as any)
-      const data = (res as any).success && (res as any).data ? (res as any).data : []
+      const [salesRes, onlineRes] = await Promise.all([
+        salesOrderApi.getAll({ status: "exported" } as any),
+        orderApi.getAll({ status: "delivered" }),
+      ])
+      const data = (salesRes as any).success && (salesRes as any).data ? (salesRes as any).data : []
       const built: WarrantyRecord[] = data.map((o: any) => {
         const id    = String(o.id)
         const date  = o.created_at ? new Date(o.created_at).toISOString().split("T")[0] : ""
@@ -80,14 +84,45 @@ export default function WarrantyPage() {
           warrantyMonths: getWarrantyMonths(i.product_name || i.name || ""),
         }))
         if (!items.some(it => it.warrantyMonths > 0)) return null
-        const ov  = cases[id]
+        const invoiceCode = String(o.invoice_code || o.invoiceCode || o.order_code || o.orderCode || o.sales_code || id)
+        const warrantyCode = String(o.warranty_code || o.warrantyCode || `BH-${invoiceCode}`)
+        const ov  = cases[warrantyCode] || cases[id]
         const allExp = items.filter(it => it.warrantyMonths > 0).every(it => isExpired(date, it.warrantyMonths))
         const caseStatus = ov?.status ?? (allExp ? "expired" : "active")
-        return { orderId: id, exportDate: date, customer: o.customer_name || "Khách lẻ",
+        return { orderId: id, warrantyCode, invoiceCode, exportDate: date, customer: o.customer_name || "Khách lẻ",
           phone: o.customer_phone || "", items, total: Number(o.final_total) || 0,
-          caseStatus, caseNote: ov?.note ?? "" } as WarrantyRecord
+          caseStatus, caseNote: ov?.note ?? "", source: "offline" } as WarrantyRecord
       }).filter(Boolean)
-      setRecords(built)
+      const onlineBuilt: WarrantyRecord[] = ((onlineRes as any).orders || []).map((o: any) => {
+        const id = String(o.rawId || o.id)
+        const date = o.createdAt ? new Date(o.createdAt).toISOString().split("T")[0] : ""
+        const invoiceCode = String(o.invoiceCode || o.orderCode || o.id)
+        const warrantyCode = String(o.warrantyCode || `BH-${invoiceCode}`)
+        const items: WarrantyItem[] = (o.items || []).map((i: any) => ({
+          name: i.productName || i.product_name || i.name || "",
+          qty: i.quantity || i.qty || 0,
+          price: Number(i.price) || 0,
+          warrantyMonths: getWarrantyMonths(i.productName || i.product_name || i.name || ""),
+        }))
+        if (!items.some(it => it.warrantyMonths > 0)) return null
+        const ov = cases[warrantyCode] || cases[id]
+        const allExp = items.filter(it => it.warrantyMonths > 0).every(it => isExpired(date, it.warrantyMonths))
+        const caseStatus = ov?.status ?? (allExp ? "expired" : "active")
+        return {
+          orderId: id,
+          warrantyCode,
+          invoiceCode,
+          exportDate: date,
+          customer: o.customerName || o.customer?.name || "Khách lẻ",
+          phone: o.customerPhone || o.customer?.phone || "",
+          items,
+          total: Number(o.totalAmount || o.amount || o.total) || 0,
+          caseStatus,
+          caseNote: ov?.note ?? "",
+          source: "online",
+        } as WarrantyRecord
+      }).filter(Boolean)
+      setRecords([...built, ...onlineBuilt].sort((a, b) => b.exportDate.localeCompare(a.exportDate)))
     } catch {}
     setLoading(false)
   }
@@ -95,7 +130,13 @@ export default function WarrantyPage() {
 
   const filtered = useMemo(() => records.filter(r => {
     if (statusFilter !== "all" && r.caseStatus !== statusFilter) return false
-    if (search && !r.customer.toLowerCase().includes(search.toLowerCase()) && !r.orderId.includes(search)) return false
+    if (
+      search &&
+      !r.customer.toLowerCase().includes(search.toLowerCase()) &&
+      !r.orderId.includes(search) &&
+      !r.warrantyCode.toLowerCase().includes(search.toLowerCase()) &&
+      !r.invoiceCode.toLowerCase().includes(search.toLowerCase())
+    ) return false
     if (searchPhone && !r.phone.includes(searchPhone)) return false
     return true
   }), [records, statusFilter, search, searchPhone])
@@ -104,9 +145,11 @@ export default function WarrantyPage() {
     processing: records.filter(r=>r.caseStatus==="processing").length, expired: records.filter(r=>r.caseStatus==="expired").length }
 
   const saveCase = (id: string, status: string, note: string) => {
-    const updated = { ...caseMap, [id]: { status, note } }
+    const record = records.find(r => r.orderId === id || r.warrantyCode === id)
+    const key = record?.warrantyCode || id
+    const updated = { ...caseMap, [key]: { status, note } }
     setCaseMap(updated); localStorage.setItem("warrantyCases", JSON.stringify(updated))
-    setRecords(prev => prev.map(r => r.orderId === id ? { ...r, caseStatus: status as any, caseNote: note } : r))
+    setRecords(prev => prev.map(r => r.orderId === id || r.warrantyCode === id ? { ...r, caseStatus: status as any, caseNote: note } : r))
   }
 
   return (
@@ -182,7 +225,13 @@ export default function WarrantyPage() {
                   const cfg = statusCfg[r.caseStatus]
                   return (
                     <TableRow key={r.orderId} className="hover:bg-muted/50">
-                      <TableCell className="font-mono text-xs text-blue-600 font-semibold">{r.orderId.slice(0,8).toUpperCase()}</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        <p className="font-semibold text-blue-600">{r.warrantyCode}</p>
+                        <p className="text-[10px] text-muted-foreground">{r.invoiceCode}</p>
+                        {r.source === "online" && (
+                          <Badge variant="outline" className="mt-1 text-[10px] font-sans">Online</Badge>
+                        )}
+                      </TableCell>
                       <TableCell className="text-xs">{r.exportDate}</TableCell>
                       <TableCell><p className="text-sm font-medium">{r.customer}</p>{r.phone&&<p className="text-xs text-muted-foreground">{r.phone}</p>}</TableCell>
                       <TableCell>
@@ -220,7 +269,7 @@ export default function WarrantyPage() {
         <Dialog open={!!selected} onOpenChange={open=>{if(!open)setSelected(null)}}>
           <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle className="font-serif">Cập nhật bảo hành – {selected.orderId.slice(0,8).toUpperCase()}</DialogTitle>
+              <DialogTitle className="font-serif">Cập nhật bảo hành – {selected.warrantyCode}</DialogTitle>
             </DialogHeader>
             <div className="space-y-4 mt-2">
               <div className="grid grid-cols-2 gap-3 text-sm">

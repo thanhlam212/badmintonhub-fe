@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useMemo, useEffect } from "react"
+import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -15,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { StockLevelIndicator } from "@/components/shared"
-import { formatVND, formatTransferReference } from "@/lib/utils"
+import { formatVND, formatTransferReference, formatPNKReference, formatPXKReference, formatPOReference } from "@/lib/utils"
 import { printTransferSlip, printWarehouseSlip } from "@/lib/print-utils"
 import { purchaseOrderApi } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -44,7 +45,31 @@ function buildWarehouseSlipCode(prefix: "PNK" | "PXK", seed?: string) {
   return `${prefix}-${new Date().getFullYear()}-${source.slice(-6)}`
 }
 
+function formatWarehouseSlipReference(slip: { id?: string; type: "import" | "export"; date?: string }) {
+  return slip.type === "import"
+    ? formatPNKReference(slip.id, slip.date)
+    : formatPXKReference(slip.id, slip.date)
+}
+
+function formatInventoryTransactionReference(tx: InventoryTransaction) {
+  if (tx.type === "import") return formatPNKReference(tx.id, tx.date)
+  if (tx.type === "export") return formatPXKReference(tx.id, tx.date)
+  return formatTransferReference(tx.id, tx.date)
+}
+
+function formatAdminSlipPOReference(slip: { poId?: string; poRawId?: string; poCreatedAt?: string; date?: string }) {
+  const poValue = slip.poId || slip.poRawId
+  return poValue ? formatPOReference(poValue, slip.poCreatedAt || slip.date) : ""
+}
+
+function describeAdminSlipNote(slip: { type?: string; note?: string; poId?: string; poRawId?: string; poCreatedAt?: string; date?: string }) {
+  const poCode = formatAdminSlipPOReference(slip)
+  if (poCode && slip.type === "import") return `Nhập kho theo PO ${poCode}`
+  return slip.note || ""
+}
+
 export default function EmployeeInventory() {
+  const searchParams = useSearchParams()
   const { user } = useAuth()
   const myWarehouse = user?.warehouse || ""
   const ctx = useInventory()
@@ -115,6 +140,42 @@ export default function EmployeeInventory() {
 
   const categories = [...new Set(inventory.map(i => i.category))]
   const warehouses = [...new Set(inventory.map(i => i.warehouse))]
+
+  useEffect(() => {
+    const tab = searchParams.get("tab")
+    if (tab && ["overview", "grn", "export", "slips", "transfers", "history"].includes(tab)) {
+      setActiveTab(tab)
+    }
+
+    const sku = searchParams.get("sku")
+    if (sku) {
+      setActiveTab("overview")
+      setSearch(sku)
+    }
+
+    const warehouseId = searchParams.get("warehouseId")
+    if (warehouseId) {
+      const warehouseName = inventory.find((item) => String(item.warehouseId) === warehouseId)?.warehouse
+      if (warehouseName) setWarehouseFilter(warehouseName)
+    }
+
+    if (searchParams.get("txId")) {
+      setActiveTab("history")
+    }
+
+    const transferId = searchParams.get("transferId")
+    if (transferId) {
+      setActiveTab("transfers")
+      const transfer = transferRequests.find(
+        (item) => item.id === transferId || item.reference === transferId,
+      )
+      if (transfer) {
+        setSelectedTransfer(transfer)
+        setTransferDetailOpen(true)
+      }
+    }
+  }, [inventory, searchParams, transferRequests])
+
   const grnSkuOptions = useMemo(() => {
     const options = new Map<string, { sku: string; name: string; unitCost?: number }>()
 
@@ -202,8 +263,8 @@ export default function EmployeeInventory() {
       date: slip.date,
       warehouse: slip.warehouse,
       supplier: slip.supplier,
-      poId: slip.poId,
-      note: slip.note,
+      poId: formatAdminSlipPOReference(slip),
+      note: describeAdminSlipNote(slip),
       createdBy: user?.fullName || "Nhan vien",
       assignedTo: slip.assignedTo || slip.warehouse,
       processedBy: user?.fullName || "Nhan vien",
@@ -222,8 +283,8 @@ export default function EmployeeInventory() {
     date: slip.date,
     warehouse: slip.warehouse,
     supplier: slip.supplier,
-    poId: slip.poId,
-    note: slip.note,
+    poId: formatAdminSlipPOReference(slip),
+    note: describeAdminSlipNote(slip),
     assignedTo: slip.assignedTo,
     items: slip.items,
   })
@@ -297,7 +358,7 @@ export default function EmployeeInventory() {
     setGrnNote("")
     // Mark admin slip as processed if this import was from an admin slip
     if (processingSlipId) {
-      ctx.processAdminSlip(processingSlipId, user?.fullName || "Nhân viên")
+      await ctx.processAdminSlip(processingSlipId, user?.fullName || "Nhân viên")
       setProcessingSlipId(null)
     }
     setTimeout(() => setGrnSuccess(false), 3000)
@@ -346,7 +407,7 @@ export default function EmployeeInventory() {
     setExportNote("")
     // Mark admin slip as processed if this export was from an admin slip
     if (processingSlipId) {
-      ctx.processAdminSlip(processingSlipId, user?.fullName || "Nhân viên")
+      await ctx.processAdminSlip(processingSlipId, user?.fullName || "Nhân viên")
       setProcessingSlipId(null)
     }
     setTimeout(() => setExportSuccess(false), 3000)
@@ -355,6 +416,7 @@ export default function EmployeeInventory() {
   // Redirect admin slip to import/export tab with pre-filled data
   const handleRedirectSlipToTab = (slip: typeof adminSlips[0]) => {
     if (slip.status === "processed") return
+    const slipCode = formatWarehouseSlipReference(slip)
     setProcessingSlipId(slip.id)
     setSlipDetailOpen(false)
     setSelectedSlip(null)
@@ -369,19 +431,19 @@ export default function EmployeeInventory() {
       })))
       setGrnWarehouse(slip.warehouse)
       setGrnSupplier(suppliers.find(s => s.name === slip.supplier)?.id.toString() || "")
-      setGrnPo(slip.poId || "")
+      setGrnPo(formatAdminSlipPOReference(slip))
       setGrnDate(new Date().toISOString().split("T")[0])
-      setGrnNote(`Phiếu admin: ${slip.id} — ${slip.note}`)
+      setGrnNote(`Phiếu admin: ${slipCode} — ${describeAdminSlipNote(slip)}`)
       setActiveTab("grn")
     } else {
       // Pre-fill export form
       setExportRows(slip.items.map(item => ({
         sku: item.sku,
         qty: item.qty,
-        reason: `Phiếu admin: ${slip.id}`,
+        reason: `Phiếu admin: ${slipCode}`,
       })))
       setExportDate(new Date().toISOString().split("T")[0])
-      setExportNote(`Phiếu admin: ${slip.id} — ${slip.note}`)
+      setExportNote(`Phiếu admin: ${slipCode} — ${describeAdminSlipNote(slip)}`)
       setActiveTab("export")
     }
   }
@@ -467,8 +529,8 @@ export default function EmployeeInventory() {
     if (!exportTransferTarget) return
     const t = exportTransferTarget
 
-    // Validate all qtys > 0
-    const allValid = t.items.every(item => (exportTransferQtys[item.sku] || 0) > 0)
+    // Điều chuyển hiện xử lý theo số lượng đã duyệt; không xuất lệch số lượng trên phiếu gốc.
+    const allValid = t.items.every(item => (exportTransferQtys[item.sku] || 0) === item.qty)
     if (!allValid) return
 
     // Check availability
@@ -1910,7 +1972,8 @@ export default function EmployeeInventory() {
                       disabled={
                         exportTransferTarget.items.some(item => {
                           const inv = inventory.find(i => i.sku === item.sku && i.warehouse === exportTransferTarget.fromWarehouse)
-                          return (exportTransferQtys[item.sku] || 0) <= 0 || (exportTransferQtys[item.sku] || 0) > (inv?.available || 0)
+                          const qty = exportTransferQtys[item.sku] || 0
+                          return qty !== item.qty || qty > (inv?.available || 0)
                         })
                       }
                       onClick={handleExportTransferConfirm}
@@ -1963,7 +2026,7 @@ export default function EmployeeInventory() {
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-1">
-                          <span className="font-mono text-sm font-bold text-blue-600">{slip.id}</span>
+                          <span className="font-mono text-sm font-bold text-blue-600">{formatWarehouseSlipReference(slip)}</span>
                           <Badge className={cn("text-[10px]",
                             slip.type === "import" ? "bg-green-100 text-green-700" : "bg-orange-100 text-orange-700"
                           )}>
@@ -1975,12 +2038,12 @@ export default function EmployeeInventory() {
                             {slip.status === "pending" ? "Chờ xử lý" : "Đã xử lý"}
                           </Badge>
                         </div>
-                        <p className="text-sm text-muted-foreground">{slip.note}</p>
+                        <p className="text-sm text-muted-foreground">{describeAdminSlipNote(slip)}</p>
                         <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
                           <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {slip.date}</span>
                           <span>Kho: {slip.warehouse}</span>
                           {slip.supplier && <span>NCC: {slip.supplier}</span>}
-                          {slip.poId && <span>PO: {slip.poId}</span>}
+                          {formatAdminSlipPOReference(slip) && <span>PO: {formatAdminSlipPOReference(slip)}</span>}
                           <span>Từ: {slip.createdBy}</span>
                         </div>
                         <div className="mt-2 flex flex-wrap gap-2">
@@ -2024,7 +2087,7 @@ export default function EmployeeInventory() {
                   <DialogHeader>
                     <DialogTitle className="font-serif flex items-center gap-2">
                       <FileText className="h-5 w-5" />
-                      Chi tiết phiếu {selectedSlip.id}
+                      Chi tiết phiếu {formatWarehouseSlipReference(selectedSlip)}
                     </DialogTitle>
                   </DialogHeader>
                   <div className="space-y-4">
@@ -2034,12 +2097,12 @@ export default function EmployeeInventory() {
                       <div><span className="text-muted-foreground">Ngày tạo:</span> {selectedSlip.date}</div>
                       <div><span className="text-muted-foreground">Kho:</span> {selectedSlip.warehouse}</div>
                       {selectedSlip.supplier && <div><span className="text-muted-foreground">NCC:</span> {selectedSlip.supplier}</div>}
-                      {selectedSlip.poId && <div><span className="text-muted-foreground">PO:</span> {selectedSlip.poId}</div>}
+                      {formatAdminSlipPOReference(selectedSlip) && <div><span className="text-muted-foreground">PO:</span> {formatAdminSlipPOReference(selectedSlip)}</div>}
                       <div><span className="text-muted-foreground">Người tạo:</span> {selectedSlip.createdBy}</div>
                     </div>
                     <div>
                       <p className="text-sm text-muted-foreground mb-1">Ghi chú:</p>
-                      <p className="text-sm bg-muted/50 p-2 rounded">{selectedSlip.note}</p>
+                      <p className="text-sm bg-muted/50 p-2 rounded">{describeAdminSlipNote(selectedSlip)}</p>
                     </div>
                     <Table>
                       <TableHeader>
@@ -2120,7 +2183,7 @@ export default function EmployeeInventory() {
                   <TableBody>
                     {transactions.map(tx => (
                       <TableRow key={tx.id}>
-                        <TableCell className="font-mono text-xs">{tx.id.slice(0, 15)}</TableCell>
+                        <TableCell className="font-mono text-xs">{formatInventoryTransactionReference(tx)}</TableCell>
                         <TableCell>
                           <Badge variant="secondary" className={cn("text-xs",
                             tx.type === "import" ? "bg-green-100 text-green-700" :

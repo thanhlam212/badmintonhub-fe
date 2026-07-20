@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Textarea } from "@/components/ui/textarea"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { formatVND, formatSalesOrderReference, formatHDReference } from "@/lib/utils"
+import { formatVND, formatSalesOrderReference, formatHDReference, formatPXKReference } from "@/lib/utils"
 import { productApi, salesOrderApi, orderApi } from "@/lib/api"
 import { useInventory } from "@/lib/inventory-context"
 import { printOrderInvoice, printWarehouseSlip, printWarrantyCard } from "@/lib/print-utils"
@@ -89,6 +89,8 @@ interface ExportSlip {
 interface OnlineOrder {
   id: string
   rawId?: string
+  invoiceCode?: string
+  warrantyCode?: string
   items: { productId: number; name: string; price: number; qty: number }[]
   customer: { name: string; phone: string; email: string; address: string }
   note: string
@@ -132,6 +134,14 @@ const slipStatusConfig: Record<string, { label: string; color: string }> = {
 const paymentLabels: Record<string, string> = {
   cash: "Tiền mặt", cod: "COD", momo: "MoMo", vnpay: "VNPay", bank: "Chuyển khoản",
   "Tiền mặt": "Tiền mặt", "MoMo": "MoMo", "VNPay": "VNPay", "Chuyển khoản": "Chuyển khoản",
+}
+
+function formatSalesExportSlipReference(order: SalesOrder) {
+  return formatPXKReference(order.rawId || order.id, order.date)
+}
+
+function formatExportSlipReference(slip: Pick<ExportSlip, "id" | "date">) {
+  return formatPXKReference(slip.id, slip.date)
 }
 
 export default function EmployeeSales() {
@@ -198,19 +208,25 @@ export default function EmployeeSales() {
       try {
         const orRes = await orderApi.getAll()
         if (orRes.orders) {
-          setOnlineOrders(orRes.orders.map((o: any) => ({
-            id: formatHDReference(o.orderCode || o.order_code || o.invoiceCode || o.invoice_code || o.sales_code || o.id, o.createdAt),
-            rawId: String(o.id),
-            items: (o.items || []).map((i: any) => ({ productId: i.productId || i.product_id, name: i.productName || i.name || "", price: i.price || 0, qty: i.quantity || i.qty || 0 })),
-            customer: { name: o.customerName || "", phone: o.customerPhone || "", email: o.customerEmail || "", address: o.shippingAddress || "" },
-            note: o.note || "",
-            subtotal: o.subtotal || o.amount || o.totalAmount || o.total || 0,
-            shippingFee: o.shippingFee || 0,
-            total: o.amount || o.totalAmount || o.total || 0,
-            paymentMethod: o.paymentMethod || "", status: o.status || "", createdAt: o.createdAt || "",
-            userId: o.userId || "", type: "online" as const, deliveryMethod: "delivery" as const,
-            fulfillingWarehouseId: o.fulfillingWarehouseId || null,
-          })))
+          setOnlineOrders(orRes.orders.map((o: any) => {
+            const invoiceCode = formatHDReference(o.orderCode || o.order_code || o.invoiceCode || o.invoice_code || o.sales_code || o.id, o.createdAt)
+            const warrantyCode = String(o.warrantyCode || o.warranty_code || `BH-${invoiceCode}`)
+            return {
+              id: invoiceCode,
+              rawId: String(o.id),
+              invoiceCode,
+              warrantyCode,
+              items: (o.items || []).map((i: any) => ({ productId: i.productId || i.product_id, name: i.productName || i.name || "", price: i.price || 0, qty: i.quantity || i.qty || 0 })),
+              customer: { name: o.customerName || "", phone: o.customerPhone || "", email: o.customerEmail || "", address: o.shippingAddress || "" },
+              note: o.note || "",
+              subtotal: o.subtotal || o.amount || o.totalAmount || o.total || 0,
+              shippingFee: o.shippingFee || 0,
+              total: o.amount || o.totalAmount || o.total || 0,
+              paymentMethod: o.paymentMethod || "", status: o.status || "", createdAt: o.createdAt || "",
+              userId: o.userId || "", type: "online" as const, deliveryMethod: "delivery" as const,
+              fulfillingWarehouseId: o.fulfillingWarehouseId || null,
+            }
+          }))
         }
       } catch {}
       // Export slips from localStorage for now (no backend endpoint)
@@ -295,7 +311,7 @@ export default function EmployeeSales() {
     const fromOrders = salesOrders
       .filter(order => order.status === "approved" || order.status === "exported")
       .map(order => ({
-        id: `PXK-${(order.rawId || order.id).slice(0, 8).toUpperCase()}`,
+        id: formatSalesExportSlipReference(order),
         orderId: order.id,
         date: order.date,
         items: order.items,
@@ -316,7 +332,7 @@ export default function EmployeeSales() {
   const filteredExportSlips = useMemo(() => {
     return salesExportSlips.filter(s => {
       if (slipStatusFilter !== "all" && s.status !== slipStatusFilter) return false
-      if (slipSearch && !s.id.toLowerCase().includes(slipSearch.toLowerCase()) && !s.orderId.toLowerCase().includes(slipSearch.toLowerCase())) return false
+      if (slipSearch && !formatExportSlipReference(s).toLowerCase().includes(slipSearch.toLowerCase()) && !s.orderId.toLowerCase().includes(slipSearch.toLowerCase())) return false
       return true
     })
   }, [salesExportSlips, slipStatusFilter, slipSearch])
@@ -622,7 +638,7 @@ export default function EmployeeSales() {
 
   const printSalesOrderWarehouseSlip = (order: SalesOrder) => {
     printWarehouseSlip({
-      id: `PXK-${(order.rawId || order.id).slice(0, 8).toUpperCase()}`,
+      id: formatSalesExportSlipReference(order),
       type: "export",
       date: order.date,
       warehouse: selectedWarehouse && selectedWarehouse !== "__all__" ? selectedWarehouse : user?.warehouse || "Kho bán hàng",
@@ -641,7 +657,7 @@ export default function EmployeeSales() {
 
   const printExportSlip = (slip: ExportSlip) => {
     printWarehouseSlip({
-      id: slip.id,
+      id: formatExportSlipReference(slip),
       type: "export",
       date: slip.date,
       warehouse: selectedWarehouse && selectedWarehouse !== "__all__" ? selectedWarehouse : user?.warehouse || "Kho bán hàng",
@@ -1430,7 +1446,7 @@ export default function EmployeeSales() {
                     {selectedOrderDetail.exportSlipId && (
                       <div className="flex items-center gap-2 p-2 bg-green-50 rounded-lg border border-green-200 text-sm">
                         <FileText className="h-4 w-4 text-green-600" />
-                        <span>Phiếu xuất kho: <strong className="text-green-700 font-mono">{selectedOrderDetail.exportSlipId}</strong></span>
+                        <span>Phiếu xuất kho: <strong className="text-green-700 font-mono">{formatPXKReference(selectedOrderDetail.exportSlipId, selectedOrderDetail.date)}</strong></span>
                       </div>
                     )}
                     {selectedOrderDetail.rejectReason && (
@@ -1548,7 +1564,7 @@ export default function EmployeeSales() {
                           size="sm"
                           className="gap-1 text-xs h-7"
                           onClick={() => printWarrantyCard({
-                            orderCode: selectedOnlineOrder.id,
+                            orderCode: selectedOnlineOrder.warrantyCode || `BH-${selectedOnlineOrder.invoiceCode || selectedOnlineOrder.id}`,
                             date: selectedOnlineOrder.createdAt,
                             customerName: selectedOnlineOrder.customer.name,
                             customerPhone: selectedOnlineOrder.customer.phone,
@@ -1640,7 +1656,7 @@ export default function EmployeeSales() {
                             "hover:bg-muted/50",
                             slip.status === "pending" && "bg-orange-50/30"
                           )}>
-                            <TableCell className="font-mono text-xs text-orange-600 font-bold">{slip.id}</TableCell>
+                            <TableCell className="font-mono text-xs text-orange-600 font-bold">{formatExportSlipReference(slip)}</TableCell>
                             <TableCell className="font-mono text-xs text-blue-600">{slip.orderId}</TableCell>
                             <TableCell className="text-sm">{slip.date}</TableCell>
                             <TableCell className="text-sm">{slip.customer}</TableCell>

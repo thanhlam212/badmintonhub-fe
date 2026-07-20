@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo } from "react"
+import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -10,14 +11,23 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationPrevious, PaginationNext, PaginationEllipsis } from "@/components/ui/pagination"
-import { formatVND, formatSalesOrderReference, formatHDReference } from "@/lib/utils"
+import {
+  formatVND,
+  formatSalesOrderReference,
+  formatHDReference,
+  formatTransferReference,
+  formatPOReference,
+  formatPNKReference,
+  formatPXKReference,
+} from "@/lib/utils"
 import { useInventory } from "@/lib/inventory-context"
 import { orderApi, purchaseOrderApi, salesOrderApi } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { printOrderInvoice, printTransferSlip, printWarehouseSlip } from "@/lib/print-utils"
 import {
   Search, Eye, ArrowDownToLine, ArrowUpFromLine, ArrowLeftRight,
   ShoppingCart, FileText, Package, Truck, CheckCircle2, Clock,
-  XCircle, Filter,
+  XCircle, Filter, Printer
 } from "lucide-react"
 
 // ── Types ──
@@ -47,6 +57,20 @@ interface UnifiedOrder {
   status: string
   raw: any
 }
+
+function formatAdminSlipPOReference(raw: any) {
+  const poValue = raw?.poCode || raw?.po_code || raw?.poId || raw?.poRawId || raw?.po_id
+  if (!poValue) return ""
+  return formatPOReference(poValue, raw?.poCreatedAt || raw?.po_created_at || raw?.createdAt || raw?.created_at || raw?.date)
+}
+
+function describeAdminSlip(raw: any) {
+  const poCode = formatAdminSlipPOReference(raw)
+  if (poCode && raw?.type === "import") return `Phiếu admin: Nhập kho theo PO ${poCode}`
+  return `Phiếu admin: ${raw?.note || ""}`
+}
+
+
 
 // ── Status badge ──
 function OrderStatusBadge({ status }: { status: string }) {
@@ -83,6 +107,7 @@ function OrderTypeBadge({ type }: { type: string }) {
 const PAGE_SIZE = 20
 
 export default function AdminAllOrdersPage() {
+  const searchParams = useSearchParams()
   const { transactions, transferRequests, adminSlips } = useInventory()
   const [activeTab, setActiveTab] = useState("all")
   const [search, setSearch] = useState("")
@@ -99,11 +124,19 @@ export default function AdminAllOrdersPage() {
         const poRes = await purchaseOrderApi.getAll()
         if (poRes.success && poRes.data) {
           setPurchaseOrders(poRes.data.map((p: any) => ({
-            id: String(p.id), supplier: p.supplier_name || p.supplier || "",
+            id: String(p.id),
+            supplier: p.supplierName || p.supplier_name || p.supplier || "",
             status: p.status || "draft",
-            createdDate: p.created_at ? new Date(p.created_at).toISOString().split("T")[0] : "",
-            totalValue: p.total_value ?? 0, items: (p.po_items || []).map((i: any) => ({ sku: i.sku, name: i.name || i.product_name || "", qty: i.qty || i.quantity || 0, unitCost: i.unit_cost || i.unitCost || i.price || 0 })),
-            warehouse: p.warehouse_name || "Kho Hub", note: p.note || "",
+            createdDate: (p.createdAt || p.created_at) ? new Date(p.createdAt || p.created_at).toISOString().split("T")[0] : "",
+            totalValue: p.totalValue ?? p.total_value ?? 0,
+            items: (p.items || p.po_items || []).map((i: any) => ({
+              sku: i.sku,
+              name: i.name || i.productName || i.product_name || "",
+              qty: i.qty || i.quantity || 0,
+              unitCost: i.unitCost || i.unit_cost || i.price || 0
+            })),
+            warehouse: p.warehouseName || p.warehouse_name || "Kho Hub",
+            note: p.note || "",
           })))
         }
       } catch {}
@@ -111,17 +144,34 @@ export default function AdminAllOrdersPage() {
         const soRes = await salesOrderApi.getAll()
         if (soRes.success && soRes.data) {
           setSalesOrders(soRes.data.map((o: any) => ({
-            id: formatSalesOrderReference(o.sales_code || o.orderCode || o.order_code || o.code || o.id, o.created_at),
+            id: formatSalesOrderReference(o.sales_code || o.orderCode || o.order_code || o.code || o.id, o.created_at || o.createdAt),
             rawId: String(o.id),
-            items: (o.items || []).map((i: any) => ({ productId: i.product_id, name: i.product_name || i.name || "", price: i.price || 0, qty: i.qty || i.quantity || 0 })),
-            customer: { name: o.customer_name || "", phone: o.customer_phone || "", email: o.customer_email || "", address: o.shipping_address || "" },
-            note: o.note || "", subtotal: o.amount || 0, shippingFee: 0, total: o.amount || 0,
-            paymentMethod: o.payment_method || "", status: o.status || "", createdAt: o.created_at || "",
-            userId: o.user_id || "", type: "sale", fulfillingWarehouse: o.warehouse_name || "", approvedBy: o.approved_by || "",
+            items: (o.items || []).map((i: any) => ({
+              productId: i.product_id || i.productId,
+              name: i.product_name || i.productName || i.name || "",
+              price: i.price || 0,
+              qty: i.qty || i.quantity || 0
+            })),
+            customer: {
+              name: o.customer_name || o.customerName || "",
+              phone: o.customer_phone || o.customerPhone || "",
+              email: o.customer_email || o.customerEmail || "",
+              address: o.shipping_address || o.shippingAddress || ""
+            },
+            note: o.note || "",
+            subtotal: Number(o.final_total ?? o.finalTotal ?? o.total ?? o.amount ?? 0),
+            shippingFee: 0,
+            total: Number(o.final_total ?? o.finalTotal ?? o.total ?? o.amount ?? 0),
+            paymentMethod: o.payment_method || o.paymentMethod || "",
+            status: o.status || "",
+            createdAt: o.created_at || o.createdAt || "",
+            userId: o.user_id || o.userId || "",
+            type: "sale",
+            fulfillingWarehouse: o.warehouse_name || o.warehouseName || "",
+            approvedBy: o.approved_by || o.approvedBy || "",
           })))
         }
       } catch {}
-      // Also load customer orders
       try {
         const orRes = await orderApi.getAll()
         if (orRes.orders && orRes.orders.length > 0) {
@@ -151,9 +201,10 @@ export default function AdminAllOrdersPage() {
     // Transactions (GRN imports & exports)
     for (const tx of transactions) {
       if (tx.type === "transfer-out" || tx.type === "transfer-in") continue // handled by transferRequests
+      const type = tx.type === "import" ? "import" : "export"
       rows.push({
-        id: tx.id,
-        type: tx.type === "import" ? "import" : "export",
+        id: type === "import" ? formatPNKReference(tx.id, tx.date) : formatPXKReference(tx.id, tx.date),
+        type,
         date: tx.date,
         description: `${tx.productName} (${tx.sku}) x${tx.qty}`,
         warehouse: tx.warehouse || "",
@@ -168,7 +219,7 @@ export default function AdminAllOrdersPage() {
     for (const tr of transferRequests) {
       const totalQty = tr.items.reduce((s, i) => s + i.qty, 0)
       rows.push({
-        id: tr.id,
+        id: formatTransferReference(tr.id, tr.date),
         type: "transfer",
         date: tr.date,
         description: `${tr.fromWarehouse} → ${tr.toWarehouse} (${tr.items.length} SP)`,
@@ -184,11 +235,12 @@ export default function AdminAllOrdersPage() {
     for (const slip of adminSlips) {
       const totalQty = slip.items.reduce((s, i) => s + i.qty, 0)
       const totalVal = slip.items.reduce((s, i) => s + i.qty * i.unitCost, 0)
+      const type = slip.type === "import" ? "import" : "export"
       rows.push({
-        id: slip.id,
-        type: slip.type === "import" ? "import" : "export",
+        id: type === "import" ? formatPNKReference(slip.id, slip.date) : formatPXKReference(slip.id, slip.date),
+        type,
         date: slip.date,
-        description: `Phiếu admin: ${slip.note}`,
+        description: describeAdminSlip(slip),
         warehouse: slip.warehouse,
         qty: totalQty,
         value: totalVal,
@@ -202,7 +254,7 @@ export default function AdminAllOrdersPage() {
       const items = Array.isArray(po.items) ? po.items : []
       const totalQty = items.reduce((s, i) => s + i.qty, 0)
       rows.push({
-        id: po.id,
+        id: formatPOReference(po.id, po.createdDate),
         type: "po",
         date: po.createdDate,
         description: `${po.supplier} (${items.length} SP)`,
@@ -235,6 +287,19 @@ export default function AdminAllOrdersPage() {
     return rows
   }, [transactions, transferRequests, adminSlips, purchaseOrders, salesOrders])
 
+  useEffect(() => {
+    const type = searchParams.get("type")
+    if (type && ["all", "import", "export", "transfer", "sale", "po"].includes(type)) {
+      setActiveTab(type)
+    }
+
+    const orderId = searchParams.get("orderId")
+    if (orderId) {
+      setSearch(orderId)
+      setPage(1)
+    }
+  }, [searchParams])
+
   // Filter
   const filtered = useMemo(() => {
     return allOrders.filter(o => {
@@ -242,7 +307,8 @@ export default function AdminAllOrdersPage() {
       if (warehouseFilter !== "all" && !o.warehouse.includes(warehouseFilter)) return false
       if (search) {
         const q = search.toLowerCase()
-        if (!o.id.toLowerCase().includes(q) && !o.description.toLowerCase().includes(q)) return false
+        const rawId = String(o.raw?.rawId || o.raw?.id || "").toLowerCase()
+        if (!o.id.toLowerCase().includes(q) && !rawId.includes(q) && !o.description.toLowerCase().includes(q)) return false
       }
       return true
     })
@@ -437,10 +503,106 @@ export default function AdminAllOrdersPage() {
 
 // ── Detail Sheet ──
 function OrderDetailSheet({ row }: { row: UnifiedOrder }) {
+  const handlePrint = (row: UnifiedOrder) => {
+    const raw = row.raw || {}
+    if (row.type === "transfer") {
+      printTransferSlip({
+        code: row.id,
+        date: row.date,
+        fromWarehouse: String(raw.fromWarehouse || raw.from_warehouse_name || ""),
+        toWarehouse: String(raw.toWarehouse || raw.to_warehouse_name || ""),
+        reason: String(raw.reason || ""),
+        note: String(raw.note || ""),
+        status: String(raw.status || ""),
+        createdBy: String(raw.createdBy || ""),
+        pickupMethod: String(raw.pickupMethod || raw.pickup_method || "employee"),
+        items: (raw.items || []).map((item: any) => ({
+          sku: item.sku || "",
+          name: item.name || "",
+          qty: item.qty || item.quantity || 0,
+        })),
+      })
+      return
+    }
+
+    if (row.type === "import" || row.type === "export") {
+      printWarehouseSlip({
+        id: row.id,
+        type: row.type,
+        date: row.date,
+        warehouse: String(raw.warehouse || raw.warehouseName || raw.warehouse_name || row.warehouse || "Kho"),
+        supplier: raw.supplier || raw.supplierName || raw.supplier_name,
+        poId: raw.poId || raw.poRawId || raw.po_id,
+        note: String(raw.note || ""),
+        createdBy: String(raw.createdBy || raw.creator || "Admin"),
+        assignedTo: String(raw.assignedTo || raw.assignee || ""),
+        processedBy: raw.processedBy || raw.processed_by || raw.processor,
+        items: (raw.items || []).map((line: any) => ({
+          sku: line.sku || "",
+          name: line.name || "",
+          qty: line.qty || line.quantity || 0,
+          unitCost: line.unitCost || line.unit_cost || 0,
+        })),
+      })
+      return
+    }
+
+    if (row.type === "po") {
+      printWarehouseSlip({
+        id: row.id,
+        type: "import",
+        date: row.date,
+        warehouse: String(raw.warehouse || "Kho"),
+        supplier: raw.supplier || "",
+        poId: row.id,
+        note: String(raw.note || ""),
+        createdBy: String(raw.createdBy || ""),
+        assignedTo: "",
+        processedBy: raw.processedBy || "",
+        items: (raw.poItems || raw.items || []).map((line: any) => ({
+          sku: line.sku || "",
+          name: line.name || "",
+          qty: line.qty || line.quantity || 0,
+          unitCost: line.unitCost || line.unit_cost || 0,
+        })),
+      })
+      return
+    }
+
+    if (row.type === "sale") {
+      const items = (raw.items || []).map((line: any) => ({
+        name: line.name || line.productName || line.product_name || "",
+        sku: line.sku || "",
+        qty: line.qty || line.quantity || 0,
+        price: line.price || 0,
+      }))
+      const subtotal = Number(raw.subtotal || raw.total || items.reduce((sum: number, line: any) => sum + line.qty * line.price, 0))
+      const total = Number(raw.total || subtotal)
+
+      printOrderInvoice({
+        code: row.id,
+        date: String(raw.createdAt || raw.created_at || row.date),
+        customerName: String(raw.customer?.name || raw.customer_name || "Khách lẻ"),
+        customerPhone: raw.customer?.phone || raw.customer_phone,
+        customerEmail: raw.customer?.email || raw.customer_email,
+        address: raw.customer?.address || raw.shipping_address,
+        paymentMethod: raw.paymentMethod || raw.payment_method,
+        note: raw.note,
+        items,
+        subtotal,
+        total,
+      })
+      return
+    }
+  }
+
   return (
     <SheetContent className="w-full sm:max-w-[500px] overflow-y-auto">
-      <SheetHeader>
+      <SheetHeader className="flex flex-row items-center justify-between space-y-0 pb-4 border-b">
         <SheetTitle className="font-serif">Chi tiết đơn</SheetTitle>
+        <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => handlePrint(row)}>
+          <Printer className="h-3.5 w-3.5" /> In đơn
+        </Button>
       </SheetHeader>
       <div className="mt-6 space-y-4">
         {/* Header */}
@@ -654,10 +816,10 @@ function OrderDetailSheet({ row }: { row: UnifiedOrder }) {
                   <span>{row.raw.supplier}</span>
                 </div>
               )}
-              {row.raw.poId && (
+              {formatAdminSlipPOReference(row.raw) && (
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">PO tham chiếu</span>
-                  <span className="font-mono">{row.raw.poId}</span>
+                  <span className="font-mono">{formatAdminSlipPOReference(row.raw)}</span>
                 </div>
               )}
               {row.raw.processedBy && (

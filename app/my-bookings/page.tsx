@@ -23,8 +23,8 @@ import {
   RefreshCw, SkipForward, XCircle, ChevronRight, Loader2,
 } from "lucide-react"
 import QRCode from "react-qr-code"
-import { useState, useEffect } from "react"
-import { formatVND, formatBookingReference } from "@/lib/utils"
+import { Fragment, useState, useEffect } from "react"
+import { formatVND, formatBookingReference, formatHDReference } from "@/lib/utils"
 import { bookingApi, courtApi, orderApi, fixedScheduleApi, type ApiBooking, type ApiOrder } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
@@ -371,7 +371,7 @@ function BookingCard({ booking, onCancel }: { booking: ApiBooking; onCancel?: (i
 interface FixedScheduleSummary {
   id: string
   status: string
-  cycle: "weekly" | "monthly"
+  cycle: "weekly" | "monthly" | "daily"
   startDate: string
   endDate: string
   timeStart: string
@@ -397,6 +397,12 @@ interface FixedScheduleSummary {
       dayLabel: string
       timeStart: string
       timeEnd: string
+      status?: string
+      bookingId?: string | null
+      bookingStatus?: string | null
+      checkinQrValue?: string | null
+      checkedIn?: boolean
+      canShowCheckinQr?: boolean
     }[]
   }
   invoice: { id: string; code: string; status: string } | null
@@ -413,6 +419,11 @@ interface FixedScheduleDetail extends FixedScheduleSummary {
     courtName: string
     courtId: number
     amountSnapshot: number
+    bookingId?: string | null
+    bookingStatus?: string | null
+    checkinQrValue?: string | null
+    checkedIn?: boolean
+    canShowCheckinQr?: boolean
   }[]
 }
 
@@ -433,6 +444,271 @@ const OCC_STATUS_CONFIG: Record<string, { label: string; icon: React.ReactNode; 
 }
 
 // ─── Fixed Schedule Card ──────────────────────────────────────
+function formatFixedCycle(cycle: FixedScheduleSummary["cycle"]) {
+  if (cycle === "daily") return "Lặp theo ngày"
+  if (cycle === "monthly") return "Hàng tháng"
+  return "Hàng tuần"
+}
+
+function canRequestFixedAdjustment(occurrence: { date: string; timeStart: string; status: string }) {
+  if (!["scheduled", "rescheduled"].includes(occurrence.status)) return false
+  const startAt = new Date(`${occurrence.date}T${occurrence.timeStart}:00+07:00`)
+  return startAt.getTime() - Date.now() >= 3 * 24 * 60 * 60 * 1000
+}
+
+function isFixedOccurrenceCheckedIn(occurrence: {
+  status: string
+  bookingStatus?: string | null
+  checkedIn?: boolean
+}) {
+  return Boolean(
+    occurrence.checkedIn ||
+    occurrence.status === "completed" ||
+    occurrence.bookingStatus === "playing" ||
+    occurrence.bookingStatus === "completed"
+  )
+}
+
+function FixedOccurrenceQrPanel({
+  occurrence,
+  compact = false,
+}: {
+  occurrence: {
+    date: string
+    dayLabel: string
+    timeStart: string
+    timeEnd: string
+    checkinQrValue?: string | null
+    checkedIn?: boolean
+    bookingStatus?: string | null
+    status?: string
+  }
+  compact?: boolean
+}) {
+  if (!occurrence.checkinQrValue) return null
+  const checkedIn = isFixedOccurrenceCheckedIn({
+    status: occurrence.status || "scheduled",
+    bookingStatus: occurrence.bookingStatus,
+    checkedIn: occurrence.checkedIn,
+  })
+
+  return (
+    <div
+      className={cn(
+        "rounded-lg border border-green-200 bg-green-50/80 p-3",
+        compact ? "flex items-center gap-3" : "flex flex-col sm:flex-row sm:items-center gap-3"
+      )}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className="rounded-md bg-white p-2 shadow-sm shrink-0">
+        <QRCode value={occurrence.checkinQrValue} size={compact ? 72 : 96} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 text-green-800">
+          {checkedIn ? <CheckCircle2 className="h-4 w-4" /> : <QrCode className="h-4 w-4" />}
+          <p className="text-sm font-semibold">
+            {checkedIn ? "Da check-in buoi hom nay" : "QR lich co dinh cua ban hom nay"}
+          </p>
+        </div>
+        <p className="mt-1 text-xs text-green-700">
+          {occurrence.dayLabel} {occurrence.date}, {occurrence.timeStart} - {occurrence.timeEnd}
+        </p>
+        <p className="mt-1 truncate font-mono text-[11px] text-green-700/70">
+          {occurrence.checkinQrValue}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function getMondayDate(dateStr: string): Date {
+  const parts = dateStr.split("-")
+  const y = parseInt(parts[0], 10)
+  const m = parseInt(parts[1], 10) - 1
+  const d = parseInt(parts[2], 10)
+  const dateObj = new Date(y, m, d)
+  const day = dateObj.getDay()
+  const diffToMonday = day === 0 ? -6 : 1 - day
+  const monday = new Date(dateObj)
+  monday.setDate(dateObj.getDate() + diffToMonday)
+  return monday
+}
+
+function formatDateISO(d: Date): string {
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, "0")
+  const dd = String(d.getDate()).padStart(2, "0")
+  return `${yyyy}-${mm}-${dd}`
+}
+
+function formatDateDMY(d: Date): string {
+  const dd = String(d.getDate()).padStart(2, "0")
+  const mm = String(d.getMonth() + 1).padStart(2, "0")
+  const yyyy = d.getFullYear()
+  return `${dd}/${mm}/${yyyy}`
+}
+
+function FixedScheduleCalendarView({
+  occurrences,
+}: {
+  occurrences: FixedScheduleDetail["occurrences"]
+}) {
+  if (!occurrences.length) return null
+
+  // Group occurrences by their week's Monday (represented as ISO date string)
+  const weeksMap = new Map<string, typeof occurrences>()
+  occurrences.forEach((occ) => {
+    const mondayKey = formatDateISO(getMondayDate(occ.date))
+    if (!weeksMap.has(mondayKey)) {
+      weeksMap.set(mondayKey, [])
+    }
+    weeksMap.get(mondayKey)!.push(occ)
+  })
+
+  const sortedWeeks = Array.from(weeksMap.keys()).sort()
+
+  const WEEKDAYS = [
+    { dayNum: 1, label: "Thứ Hai" },
+    { dayNum: 2, label: "Thứ Ba" },
+    { dayNum: 3, label: "Thứ Tư" },
+    { dayNum: 4, label: "Thứ Năm" },
+    { dayNum: 5, label: "Thứ Sáu" },
+    { dayNum: 6, label: "Thứ Bảy" },
+    { dayNum: 0, label: "Chủ Nhật" },
+  ]
+
+  return (
+    <div className="rounded-xl border bg-card p-4 shadow-sm">
+      <div className="mb-4 flex items-center gap-2">
+        <Calendar className="h-4.5 w-4.5 text-primary" />
+        <div>
+          <p className="text-sm font-semibold">Lịch cố định dạng tuần</p>
+          <p className="text-xs text-muted-foreground">Theo dõi danh sách các buổi đặt theo từng tuần dễ dàng hơn.</p>
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <div
+          className="grid min-w-[900px] gap-2 text-xs"
+          style={{ gridTemplateColumns: "140px repeat(7, minmax(100px, 1fr))" }}
+        >
+          {/* Header Row */}
+          <div className="rounded-lg bg-muted/70 p-2.5 font-bold text-muted-foreground flex flex-col justify-center">
+            Khoảng thời gian
+          </div>
+          {WEEKDAYS.map((wd) => (
+            <div key={wd.dayNum} className="rounded-lg bg-muted/70 p-2 text-center font-bold flex flex-col justify-center">
+              {wd.label}
+            </div>
+          ))}
+
+          {/* Rows */}
+          {sortedWeeks.map((mondayKey, idx) => {
+            const mondayParts = mondayKey.split("-")
+            const mondayYear = parseInt(mondayParts[0], 10)
+            const mondayMonth = parseInt(mondayParts[1], 10) - 1
+            const mondayDay = parseInt(mondayParts[2], 10)
+            const mondayDate = new Date(mondayYear, mondayMonth, mondayDay)
+
+            const sundayDate = new Date(mondayDate)
+            sundayDate.setDate(mondayDate.getDate() + 6)
+
+            const startStr = formatDateDMY(mondayDate)
+            const endStr = formatDateDMY(sundayDate)
+            
+            const weekOccs = weeksMap.get(mondayKey) || []
+
+            return (
+              <Fragment key={mondayKey}>
+                {/* Week Column */}
+                <div className="rounded-lg bg-muted/30 p-2.5 flex flex-col justify-center border border-muted/40 bg-muted/20">
+                  <p className="font-bold text-foreground text-sm">Tuần {idx + 1}</p>
+                  <div className="text-[10.5px] text-muted-foreground mt-1 space-y-0.5 leading-tight">
+                    <p className="whitespace-nowrap font-medium">{startStr}</p>
+                    <p className="text-gray-400">đến</p>
+                    <p className="whitespace-nowrap font-medium">{endStr}</p>
+                  </div>
+                </div>
+
+                {/* Day Columns */}
+                {WEEKDAYS.map((wd) => {
+                  const dayOccs = weekOccs.filter((occ) => {
+                    const parts = occ.date.split("-")
+                    const y = parseInt(parts[0], 10)
+                    const m = parseInt(parts[1], 10) - 1
+                    const d = parseInt(parts[2], 10)
+                    const dateObj = new Date(y, m, d)
+                    return dateObj.getDay() === wd.dayNum
+                  })
+
+                  // Sort day occurrences by start time
+                  dayOccs.sort((a, b) => a.timeStart.localeCompare(b.timeStart))
+
+                  return (
+                    <div
+                      key={wd.dayNum}
+                      className={cn(
+                        "min-h-[72px] rounded-lg border p-2 flex flex-col justify-center gap-1.5",
+                        dayOccs.length > 0
+                          ? "border-solid border-border/80 bg-background"
+                          : "border-dashed border-border/40 bg-muted/5 text-muted-foreground/30 text-center flex items-center justify-center font-medium"
+                      )}
+                    >
+                      {dayOccs.length > 0 ? (
+                        dayOccs.map((occ) => {
+                          const checkedIn = isFixedOccurrenceCheckedIn(occ)
+                          const isCompleted = occ.status === "completed" || checkedIn
+                          const isSkipped = occ.status === "skipped" || occ.status === "cancelled"
+                          const isRescheduled = occ.status === "rescheduled"
+                          const statusLabel = checkedIn && occ.status !== "completed"
+                            ? "Da check-in"
+                            : OCC_STATUS_CONFIG[occ.status]?.label || occ.status
+                          return (
+                            <div
+                              key={occ.id}
+                              className={cn(
+                                "rounded-lg p-2 text-left border text-[11px] leading-snug shadow-[0_1px_2px_rgba(0,0,0,0.02)] transition-all hover:scale-[1.01]",
+                                isCompleted
+                                  ? "border-blue-200 bg-blue-50/70 text-blue-800"
+                                  : isSkipped
+                                    ? "border-gray-200 bg-gray-50 text-gray-400 line-through opacity-75"
+                                    : isRescheduled
+                                      ? "border-amber-200 bg-amber-50/70 text-amber-800"
+                                      : "border-green-200 bg-green-50/70 text-green-800"
+                              )}
+                            >
+                              <div className="font-bold flex items-center justify-between gap-1">
+                                <span className="truncate">{occ.courtName}</span>
+                                <span className={cn(
+                                  "text-[9px] px-1 py-0.2 rounded font-semibold shrink-0 uppercase tracking-wider scale-90 origin-right",
+                                  isCompleted ? "bg-blue-100 text-blue-700" :
+                                  isSkipped ? "bg-gray-200 text-gray-500" :
+                                  isRescheduled ? "bg-amber-100 text-amber-700" : "bg-green-100 text-green-700"
+                                )}>
+                                  {statusLabel}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-muted-foreground font-medium mt-0.5">
+                                {occ.timeStart}–{occ.timeEnd}
+                              </p>
+                            </div>
+                          )
+                        })
+                      ) : (
+                        <span className="text-[11px]">—</span>
+                      )}
+                    </div>
+                  )
+                })}
+              </Fragment>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
 function FixedScheduleCard({
   schedule,
   onViewDetail,
@@ -442,6 +718,9 @@ function FixedScheduleCard({
 }) {
   const statusCfg = FIXED_STATUS_CONFIG[schedule.status] || FIXED_STATUS_CONFIG.pending
   const adjustmentLeft = schedule.adjustmentLimit - schedule.adjustmentUsed
+  const todayOccurrence = schedule.occurrenceSummary.upcoming.find(
+    (occ) => occ.canShowCheckinQr && occ.checkinQrValue
+  )
 
   return (
     <Card
@@ -476,7 +755,7 @@ function FixedScheduleCard({
           <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
             <span className="flex items-center gap-1">
               <RefreshCw className="h-3 w-3" />
-              {schedule.cycle === "weekly" ? "Hàng tuần" : "Hàng tháng"}
+              {formatFixedCycle(schedule.cycle)}
             </span>
             <span className="flex items-center gap-1">
               <Clock className="h-3 w-3" />
@@ -504,6 +783,10 @@ function FixedScheduleCard({
           </div>
 
           {/* Row 4: Buổi sắp tới */}
+          {todayOccurrence && (
+            <FixedOccurrenceQrPanel occurrence={todayOccurrence} compact />
+          )}
+
           {schedule.occurrenceSummary.upcoming.length > 0 && (
             <div>
               <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">
@@ -568,13 +851,14 @@ function FixedScheduleDetailDialog({
 
   if (!schedule) return null
 
+  const adjustmentLeft = Math.max(0, schedule.adjustmentLimit - schedule.adjustmentUsed)
   const filtered = filter === "all"
     ? schedule.occurrences
     : schedule.occurrences.filter(o => o.status === filter)
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="w-[96vw] sm:max-w-7xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-serif text-lg flex items-center gap-2">
             <Calendar className="h-5 w-5 text-primary" />
@@ -595,7 +879,7 @@ function FixedScheduleDetailDialog({
             </div>
             <div>
               <p className="text-xs text-muted-foreground mb-0.5">Chu kỳ</p>
-              <p className="font-medium">{schedule.cycle === "weekly" ? "Hàng tuần" : "Hàng tháng"}</p>
+              <p className="font-medium">{formatFixedCycle(schedule.cycle)}</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground mb-0.5">Khung giờ</p>
@@ -625,6 +909,8 @@ function FixedScheduleDetailDialog({
             )}
           </div>
 
+          <FixedScheduleCalendarView occurrences={schedule.occurrences} />
+
           {/* Filter tabs */}
           <div>
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
@@ -652,13 +938,17 @@ function FixedScheduleDetailDialog({
           </div>
 
           {/* Occurrences list */}
-          <div className="border rounded-xl overflow-hidden divide-y divide-border max-h-64 overflow-y-auto">
+          <div className="border rounded-xl overflow-hidden divide-y divide-border max-h-[500px] overflow-y-auto">
             {filtered.length === 0 ? (
               <div className="py-8 text-center text-sm text-muted-foreground">Không có buổi nào</div>
             ) : (
               filtered.map((occ, idx) => {
                 const cfg = OCC_STATUS_CONFIG[occ.status] || OCC_STATUS_CONFIG.scheduled
                 const isOriginalCourt = occ.courtId === schedule.court.id
+                const noticeOk = canRequestFixedAdjustment(occ)
+                const canAdjust = noticeOk && adjustmentLeft > 0
+                const checkedIn = isFixedOccurrenceCheckedIn(occ)
+                const statusLabel = checkedIn && occ.status !== "completed" ? "Da check-in" : cfg.label
                 return (
                   <div key={occ.id} className={cn("flex items-center gap-3 px-4 py-3", cfg.rowClass)}>
                     <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-xs font-bold text-muted-foreground shrink-0">
@@ -679,12 +969,34 @@ function FixedScheduleDetailDialog({
                         {occ.amountSnapshot > 0 && (
                           <span className="ml-2">{formatVND(occ.amountSnapshot)}</span>
                         )}
+                        {["scheduled", "rescheduled"].includes(occ.status) && !noticeOk && (
+                          <span className="ml-2 text-amber-600">Quá hạn 3 ngày để điều chỉnh</span>
+                        )}
                       </p>
+                      {occ.canShowCheckinQr && occ.checkinQrValue && (
+                        <div className="mt-2 max-w-xl">
+                          <FixedOccurrenceQrPanel occurrence={occ} compact />
+                        </div>
+                      )}
                     </div>
                     <span className={cn("inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium border shrink-0", cfg.badgeClass)}>
-                      {cfg.icon}
-                      {cfg.label}
+                      {checkedIn ? <CheckCircle2 className="h-3 w-3" /> : cfg.icon}
+                      {statusLabel}
                     </span>
+                    {canAdjust && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-8 shrink-0 text-xs"
+                        onClick={() => {
+                          window.location.href = `/my-bookings/adjust?scheduleId=${schedule.id}&occurrenceId=${occ.id}`
+                        }}
+                      >
+                        <RefreshCw className="mr-1 h-3.5 w-3.5" />
+                        Điều chỉnh
+                      </Button>
+                    )}
                   </div>
                 )
               })
@@ -945,10 +1257,12 @@ function ProfileSettingsForm() {
 const paymentLabels: Record<string, string> = { cod: "COD", momo: "MoMo", vnpay: "VNPay", bank: "Chuyển khoản" }
 const orderStatusConfig: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
   pending: { label: "Chờ xử lý", color: "bg-amber-100 text-amber-800 border-amber-200", icon: <Clock className="h-3.5 w-3.5" /> },
+  confirmed: { label: "Đã xác nhận", color: "bg-emerald-100 text-emerald-800 border-emerald-200", icon: <CheckCircle2 className="h-3.5 w-3.5" /> },
   processing: { label: "Đang xử lý", color: "bg-blue-100 text-blue-800 border-blue-200", icon: <Package className="h-3.5 w-3.5" /> },
   shipping: { label: "Đang giao", color: "bg-purple-100 text-purple-800 border-purple-200", icon: <Truck className="h-3.5 w-3.5" /> },
   delivered: { label: "Đã giao", color: "bg-green-100 text-green-800 border-green-200", icon: <CheckCircle2 className="h-3.5 w-3.5" /> },
   cancelled: { label: "Đã hủy", color: "bg-red-100 text-red-800 border-red-200", icon: <AlertCircle className="h-3.5 w-3.5" /> },
+  refunded: { label: "Đã hoàn tiền", color: "bg-teal-100 text-teal-800 border-teal-200", icon: <CheckCircle2 className="h-3.5 w-3.5" /> },
 }
 
 function OrderStatusBadge({ status }: { status: string }) {
@@ -1004,7 +1318,7 @@ function OrderHistoryView() {
                   <div className="flex flex-col sm:flex-row sm:items-center gap-4">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-mono font-bold text-primary">{order.orderCode || order.id.slice(0, 8)}</span>
+                        <span className="font-mono font-bold text-primary">{formatHDReference(order.orderCode || order.id, order.createdAt)}</span>
                         <OrderStatusBadge status={order.status} />
                       </div>
                       <p className="text-sm text-muted-foreground mt-1">{new Date(order.createdAt).toLocaleString("vi-VN")}</p>
@@ -1030,13 +1344,13 @@ function OrderHistoryView() {
                             {/* Order code & status */}
                             <div className="flex items-center justify-between">
                               <span className="font-mono text-sm text-primary font-semibold bg-primary/5 px-2 py-1 rounded">
-                                {order.orderCode || order.id.slice(0, 8)}
+                                {formatHDReference(order.orderCode || order.id, order.createdAt)}
                               </span>
                               <OrderStatusBadge status={order.status} />
                             </div>
 
                             {/* Status steps */}
-                            {order.status !== "cancelled" && (
+                            {order.status !== "cancelled" && order.status !== "refunded" && (
                               <>
                                 <div className="flex items-center gap-1 mt-2">
                                   {orderStatusSteps.map((step, i) => (
@@ -1070,6 +1384,13 @@ function OrderHistoryView() {
                               <div className="flex items-center gap-2 p-3 bg-red-50 rounded-lg border border-red-200">
                                 <AlertCircle className="h-5 w-5 text-red-500" />
                                 <p className="text-sm text-red-700 font-medium">Đơn hàng đã bị hủy</p>
+                              </div>
+                            )}
+
+                            {order.status === "refunded" && (
+                              <div className="flex items-center gap-2 p-3 bg-teal-50 rounded-lg border border-teal-200">
+                                <CheckCircle2 className="h-5 w-5 text-teal-600" />
+                                <p className="text-sm text-teal-700 font-medium">Đơn hàng đã hoàn tiền</p>
                               </div>
                             )}
 
