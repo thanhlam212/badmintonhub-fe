@@ -245,6 +245,7 @@ const statusFlow: Record<string, string> = {
 
 const MISSED_CHECKIN_STATUS = "missed_checkin"
 const statusTabValues = ["all", "hold", "pending", "confirmed", MISSED_CHECKIN_STATUS, "playing", "completed", "cancelled"]
+const actionStatusTabs = new Set(["hold", "pending"])
 const activeTabAfterReloadKey = "employeeBookings.activeTabAfterReload"
 
 function consumeActiveTabAfterReload() {
@@ -1714,10 +1715,27 @@ export default function EmployeeBookings() {
     return { total: bookings.length, totalRevenue, todayCount: todayBookings.length, pendingCount, playingCount }
   }, [bookings, now])
 
-  // Base filtered: áp dụng lọc ngày, search, dateFilter — KHÔNG lọc theo tab status
-  // Dùng chung cho cả tab counts và danh sách hiển thị
-  const baseFiltered = useMemo(() => {
+  const searchFiltered = useMemo(() => {
     let result = [...bookings]
+
+    if (search) {
+      const q = search.toLowerCase()
+      result = result.filter(b =>
+        b.id.toLowerCase().includes(q) ||
+        b.bookingCode.toLowerCase().includes(q) ||
+        b.customer.name.toLowerCase().includes(q) ||
+        b.customer.phone.includes(q) ||
+        b.court.toLowerCase().includes(q)
+      )
+    }
+
+    return result
+  }, [bookings, search])
+
+  // Base filtered: áp dụng lọc ngày — KHÔNG lọc theo tab status
+  // Dùng chung cho các tab vận hành theo ngày đang xem.
+  const baseFiltered = useMemo(() => {
+    let result = [...searchFiltered]
     const focusedDate = dateFilter ? formatDateKey(dateFilter) : formatDateKey(now)
     const todayDate = formatDateKey(now)
     const selectedMonth = formatMonthKey(monthFilter)
@@ -1736,30 +1754,24 @@ export default function EmployeeBookings() {
       result = result.filter(b => b.date.startsWith(`${selectedMonth}-`))
     }
 
-    if (search) {
-      const q = search.toLowerCase()
-      result = result.filter(b =>
-        b.id.toLowerCase().includes(q) ||
-        b.bookingCode.toLowerCase().includes(q) ||
-        b.customer.name.toLowerCase().includes(q) ||
-        b.customer.phone.includes(q) ||
-        b.court.toLowerCase().includes(q)
-      )
-    }
-
     return result
-  }, [bookings, search, dateFilter, dateFilterMode, monthFilter, now])
+  }, [searchFiltered, dateFilter, dateFilterMode, monthFilter, now])
+
+  const actionFiltered = useMemo(() => {
+    const todayDate = formatDateKey(now)
+    return searchFiltered.filter(b => b.date >= todayDate)
+  }, [searchFiltered, now])
 
   const statusTabs = useMemo(() => [
     { value: "all", label: "Tất cả", count: baseFiltered.length },
-    { value: "hold", label: "Giữ chỗ", count: baseFiltered.filter(b => b.status === "hold").length },
-    { value: "pending", label: "Chờ xác nhận", count: baseFiltered.filter(b => b.status === "pending").length },
+    { value: "hold", label: "Giữ chỗ", count: actionFiltered.filter(b => b.status === "hold").length },
+    { value: "pending", label: "Chờ xác nhận", count: actionFiltered.filter(b => b.status === "pending").length },
     { value: "confirmed", label: "Đã xác nhận", count: baseFiltered.filter(b => getBookingDisplayStatus(b, now) === "confirmed").length },
     { value: MISSED_CHECKIN_STATUS, label: "Chưa check-in", count: baseFiltered.filter(b => getBookingDisplayStatus(b, now) === MISSED_CHECKIN_STATUS).length },
     { value: "playing", label: "Đang chơi", count: baseFiltered.filter(b => b.status === "playing").length },
     { value: "completed", label: "Hoàn thành", count: baseFiltered.filter(b => b.status === "completed").length },
     { value: "cancelled", label: "Đã huỷ", count: baseFiltered.filter(b => b.status === "cancelled").length },
-  ], [baseFiltered, now])
+  ], [baseFiltered, actionFiltered, now])
 
   useEffect(() => {
     const bookingId = searchParams.get("bookingId")
@@ -1770,7 +1782,9 @@ export default function EmployeeBookings() {
   }, [searchParams])
 
   const filtered = useMemo(() => {
-    let result = [...baseFiltered]
+    let result = actionStatusTabs.has(activeTab) && dateFilterMode === "today"
+      ? [...actionFiltered]
+      : [...baseFiltered]
 
     if (activeTab !== "all") {
       result = result.filter(b => getBookingDisplayStatus(b, now) === activeTab)
@@ -1787,7 +1801,7 @@ export default function EmployeeBookings() {
     })
 
     return result
-  }, [baseFiltered, activeTab, sortField, sortDir, now])
+  }, [baseFiltered, actionFiltered, activeTab, dateFilterMode, sortField, sortDir, now])
 
   useEffect(() => {
     setPage(1)
@@ -1839,8 +1853,11 @@ export default function EmployeeBookings() {
   }, [paginatedBookings, sortDir, sortField])
 
   const bookingListDate = dateFilter ?? now
+  const showingActionQueue = actionStatusTabs.has(activeTab) && dateFilterMode === "today"
   const dateFilterButtonLabel =
-    dateFilterMode === "all"
+    showingActionQueue
+      ? "Cần xử lý sắp tới"
+      : dateFilterMode === "all"
       ? "Tất cả"
       : dateFilterMode === "week"
         ? "Tuần này"

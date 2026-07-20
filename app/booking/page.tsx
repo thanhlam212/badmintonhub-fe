@@ -10,9 +10,9 @@ import {
   Users, FileText, Bell, BadgePercent, QrCode, Copy,
 } from "lucide-react"
 import { useRouter } from "next/navigation"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { formatVND, isSlotPast } from "@/lib/utils"
-import { bookingApi, paymentApi } from "@/lib/api"
+import { bookingApi, getToken, paymentApi } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
 import { AddressInput } from "@/components/address-input"
@@ -67,6 +67,8 @@ interface PendingPaymentSession {
   bookingId: string
   invoiceId: string
   paymentId?: string
+  bookingKey?: string
+  restorePaymentStep?: boolean
   completedData: RegularBookingData
 }
 
@@ -89,6 +91,17 @@ interface BookingFormDraft {
 
 function getBookingDraftKey(booking: PendingBooking) {
   return `${booking.courtId}|${booking.date}|${booking.timeRange}|${booking.slots.join(',')}`
+}
+
+function paymentSessionMatchesBooking(session: PendingPaymentSession, booking: PendingBooking) {
+  if (session.bookingKey) return session.bookingKey === getBookingDraftKey(booking)
+
+  const data = session.completedData
+  return (
+    data.courtName === booking.courtName &&
+    data.date === booking.date &&
+    data.timeRange === booking.timeRange
+  )
 }
 
 // ─── Stepper ──────────────────────────────────────────────────────────────────
@@ -134,13 +147,26 @@ function Stepper({ step }: { step: number }) {
 // ─── Countdown (5 phút) ──────────────────────────────────────────────────────
 function Countdown({ onExpire }: { onExpire?: () => void }) {
   const [seconds, setSeconds] = useState(300) // 5 phút
+  const expiredRef = useRef(false)
+  const onExpireRef = useRef(onExpire)
+
   useEffect(() => {
-    const t = setInterval(() => setSeconds(s => {
-      if (s <= 1) { clearInterval(t); onExpire?.(); return 0 }
-      return s - 1
-    }), 1000)
-    return () => clearInterval(t)
+    onExpireRef.current = onExpire
   }, [onExpire])
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      setSeconds(s => (s <= 1 ? 0 : s - 1))
+    }, 1000)
+    return () => clearInterval(t)
+  }, [])
+
+  useEffect(() => {
+    if (seconds !== 0 || expiredRef.current) return
+    expiredRef.current = true
+    onExpireRef.current?.()
+  }, [seconds])
+
   const m = Math.floor(seconds / 60).toString().padStart(2, '0')
   const s = (seconds % 60).toString().padStart(2, '0')
   const urgent = seconds <= 60
@@ -260,6 +286,9 @@ export default function BookingPage() {
   const [existingBookingId, setExistingBookingId] = useState<string | null>(null)
   const [pendingPaymentData, setPendingPaymentData] = useState<RegularBookingData | null>(null)
   const [holdingSlot, setHoldingSlot]             = useState(false)
+  const existingBookingIdRef = useRef<string | null>(null)
+  const paymentRedirectingRef = useRef(false)
+  const paymentCompletedRef = useRef(false)
 
   // Contact info
   const [contactName, setContactName]       = useState(user?.fullName === "Khách" ? "" : (user?.fullName || ""))
@@ -270,6 +299,10 @@ export default function BookingPage() {
   const [otherPhone, setOtherPhone]         = useState("")
   const [errors, setErrors]                 = useState<Record<string, string>>({})
 
+  useEffect(() => {
+    existingBookingIdRef.current = existingBookingId
+  }, [existingBookingId])
+
   // Redirect unauthenticated users to login with message
   useEffect(() => {
     if (!authLoading && !user) {
@@ -279,15 +312,25 @@ export default function BookingPage() {
 
   useEffect(() => {
     const stored = localStorage.getItem('pendingBooking')
+    let parsedBooking: PendingBooking | null = null
     if (stored) {
-      try { setBooking(JSON.parse(stored)) }
+      try {
+        parsedBooking = JSON.parse(stored)
+        setBooking(parsedBooking)
+      }
       catch { router.push('/courts') }
     } else { router.push('/courts') }
+
+    if (!parsedBooking) return
 
     const savedPaymentSession = localStorage.getItem(PENDING_PAYMENT_SESSION_KEY)
     if (savedPaymentSession) {
       try {
         const session = JSON.parse(savedPaymentSession) as PendingPaymentSession
+        if (!paymentSessionMatchesBooking(session, parsedBooking)) {
+          localStorage.removeItem(PENDING_PAYMENT_SESSION_KEY)
+          return
+        }
         const data = session.completedData
         setExistingBookingId(session.bookingId)
         setExistingInvoiceId(session.invoiceId)
@@ -300,7 +343,7 @@ export default function BookingPage() {
         setContactPhone(data.contact.phone || '')
         setContactEmail(data.contact.email || '')
         setContactAddress(data.contact.address || '')
-        setStep(2)
+        setStep(session.restorePaymentStep === false ? 0 : 2)
         setErrors({})
       } catch {
         localStorage.removeItem(PENDING_PAYMENT_SESSION_KEY)
@@ -319,7 +362,7 @@ export default function BookingPage() {
       const draft = JSON.parse(savedDraft) as BookingFormDraft
       if (draft.bookingKey !== getBookingDraftKey(booking)) return
 
-      setStep(draft.step)
+      setStep(draft.step >= 2 ? 1 : draft.step)
       setPeople(draft.people)
       setRacketRental(draft.racketRental)
       setNote(draft.note)
@@ -416,6 +459,7 @@ export default function BookingPage() {
         const paymentStatus = status.data?.status
         const invoiceStatus = status.data?.invoiceStatus
         if (status.success && (paymentStatus === 'success' || invoiceStatus === 'paid')) {
+          paymentCompletedRef.current = true
           if (pendingPaymentData) {
             localStorage.setItem('completedBooking', JSON.stringify({
               ...pendingPaymentData,
@@ -455,6 +499,48 @@ export default function BookingPage() {
     return () => window.clearInterval(timer)
   }, [sepayPayment, sepayStatus])
 
+  useEffect(() => {
+    if (!sessionExpired) return
+
+    fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/bookings/release-expired`, { method: 'POST' }).catch(() => {})
+    localStorage.removeItem('pendingBooking')
+    localStorage.removeItem(BOOKING_FORM_DRAFT_KEY)
+    localStorage.removeItem(PENDING_PAYMENT_SESSION_KEY)
+  }, [sessionExpired])
+
+  useEffect(() => {
+    const cancelPendingHoldOnExit = () => {
+      if (paymentRedirectingRef.current || paymentCompletedRef.current) return
+
+      const bookingId = existingBookingIdRef.current
+      if (!bookingId) return
+
+      const token = getToken()
+      if (!token) return
+
+      fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/bookings/${bookingId}/cancel`, {
+        method: 'PATCH',
+        keepalive: true,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ reason: 'Customer left checkout before payment' }),
+      }).catch(() => {})
+
+      localStorage.removeItem('pendingBooking')
+      localStorage.removeItem(BOOKING_FORM_DRAFT_KEY)
+      localStorage.removeItem(PENDING_PAYMENT_SESSION_KEY)
+    }
+
+    window.addEventListener('pagehide', cancelPendingHoldOnExit)
+    window.addEventListener('beforeunload', cancelPendingHoldOnExit)
+    return () => {
+      window.removeEventListener('pagehide', cancelPendingHoldOnExit)
+      window.removeEventListener('beforeunload', cancelPendingHoldOnExit)
+    }
+  }, [])
+
   // Show loading while auth initialises or redirecting unauthenticated user
   if (authLoading || !user) {
     return (
@@ -486,12 +572,6 @@ export default function BookingPage() {
 
   // ── Màn hình hết hạn phiên ────────────────────────────────────────────────
   if (sessionExpired) {
-    // Gọi API để giải phóng chỗ đã hold (fire-and-forget)
-    fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api'}/bookings/release-expired`, { method: 'POST' }).catch(() => {})
-    // Xóa pending booking khỏi localStorage
-    localStorage.removeItem('pendingBooking')
-    localStorage.removeItem(BOOKING_FORM_DRAFT_KEY)
-
     return (
       <div className="min-h-screen flex flex-col bg-[#F7F8FA]">
         <Navbar />
@@ -759,6 +839,18 @@ export default function BookingPage() {
     note,
   })
 
+  const holdDataMatchesCurrentForm = (data: RegularBookingData) => (
+    data.people === people &&
+    data.amount === total &&
+    data.paymentMethod === paymentMethod &&
+    data.racketRental === racketRental &&
+    (data.note || '') === (note || '') &&
+    data.contact.name === contactName &&
+    data.contact.phone === contactPhone &&
+    data.contact.email === contactEmail &&
+    data.contact.address === contactAddress
+  )
+
   const ensureSlotHold = async () => {
     if (existingBookingId && existingInvoiceId && pendingPaymentData) {
       const completedData = {
@@ -770,22 +862,41 @@ export default function BookingPage() {
         racketRental,
         note,
       }
-      setPendingPaymentData(completedData)
-      localStorage.setItem(
-        PENDING_PAYMENT_SESSION_KEY,
-        JSON.stringify({
+
+      if (holdDataMatchesCurrentForm(pendingPaymentData)) {
+        setPendingPaymentData(completedData)
+        localStorage.setItem(
+          PENDING_PAYMENT_SESSION_KEY,
+          JSON.stringify({
+            bookingId: existingBookingId,
+            invoiceId: existingInvoiceId,
+            bookingKey: getBookingDraftKey(booking),
+            completedData,
+          } satisfies PendingPaymentSession),
+        )
+
+        return {
+          success: true as const,
           bookingId: existingBookingId,
           invoiceId: existingInvoiceId,
           completedData,
-        } satisfies PendingPaymentSession),
-      )
-
-      return {
-        success: true as const,
-        bookingId: existingBookingId,
-        invoiceId: existingInvoiceId,
-        completedData,
+        }
       }
+
+      const cancelResult = await bookingApi.cancel(existingBookingId, {
+        reason: 'Customer edited hold details before payment',
+      })
+      if (!cancelResult.success) {
+        return {
+          success: false as const,
+          error: cancelResult.error || 'Khong the cap nhat thong tin giu cho. Vui long chon lai lich trong.',
+        }
+      }
+
+      setExistingBookingId(null)
+      setExistingInvoiceId(null)
+      setPendingPaymentData(null)
+      localStorage.removeItem(PENDING_PAYMENT_SESSION_KEY)
     }
 
     const { bookingDate, timeStart, timeEnd, slotDate } = getBookingDateParts()
@@ -840,6 +951,7 @@ export default function BookingPage() {
       JSON.stringify({
         bookingId: result.booking.id,
         invoiceId,
+        bookingKey: getBookingDraftKey(booking),
         completedData,
       } satisfies PendingPaymentSession),
     )
@@ -903,6 +1015,7 @@ export default function BookingPage() {
         return
       }
       if (payResult.checkoutUrl && payResult.formFields) {
+        paymentRedirectingRef.current = true
         const form = document.createElement("form")
         form.method = "POST"
         form.action = payResult.checkoutUrl
@@ -921,6 +1034,7 @@ export default function BookingPage() {
       setSubmitting(false)
       return
     } else if (payResult.success && payResult.payUrl) {
+      paymentRedirectingRef.current = true
       window.location.href = payResult.payUrl
       return
     } else {

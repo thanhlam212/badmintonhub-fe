@@ -89,6 +89,8 @@ interface ExportSlip {
 interface OnlineOrder {
   id: string
   rawId?: string
+  invoiceCode?: string
+  warrantyCode?: string
   items: { productId: number; name: string; price: number; qty: number }[]
   customer: { name: string; phone: string; email: string; address: string }
   note: string
@@ -206,19 +208,25 @@ export default function EmployeeSales() {
       try {
         const orRes = await orderApi.getAll()
         if (orRes.orders) {
-          setOnlineOrders(orRes.orders.map((o: any) => ({
-            id: formatHDReference(o.orderCode || o.order_code || o.invoiceCode || o.invoice_code || o.sales_code || o.id, o.createdAt),
-            rawId: String(o.id),
-            items: (o.items || []).map((i: any) => ({ productId: i.productId || i.product_id, name: i.productName || i.name || "", price: i.price || 0, qty: i.quantity || i.qty || 0 })),
-            customer: { name: o.customerName || "", phone: o.customerPhone || "", email: o.customerEmail || "", address: o.shippingAddress || "" },
-            note: o.note || "",
-            subtotal: o.subtotal || o.amount || o.totalAmount || o.total || 0,
-            shippingFee: o.shippingFee || 0,
-            total: o.amount || o.totalAmount || o.total || 0,
-            paymentMethod: o.paymentMethod || "", status: o.status || "", createdAt: o.createdAt || "",
-            userId: o.userId || "", type: "online" as const, deliveryMethod: "delivery" as const,
-            fulfillingWarehouseId: o.fulfillingWarehouseId || null,
-          })))
+          setOnlineOrders(orRes.orders.map((o: any) => {
+            const invoiceCode = formatHDReference(o.orderCode || o.order_code || o.invoiceCode || o.invoice_code || o.sales_code || o.id, o.createdAt)
+            const warrantyCode = String(o.warrantyCode || o.warranty_code || `BH-${invoiceCode}`)
+            return {
+              id: invoiceCode,
+              rawId: String(o.id),
+              invoiceCode,
+              warrantyCode,
+              items: (o.items || []).map((i: any) => ({ productId: i.productId || i.product_id, name: i.productName || i.name || "", price: i.price || 0, qty: i.quantity || i.qty || 0 })),
+              customer: { name: o.customerName || "", phone: o.customerPhone || "", email: o.customerEmail || "", address: o.shippingAddress || "" },
+              note: o.note || "",
+              subtotal: o.subtotal || o.amount || o.totalAmount || o.total || 0,
+              shippingFee: o.shippingFee || 0,
+              total: o.amount || o.totalAmount || o.total || 0,
+              paymentMethod: o.paymentMethod || "", status: o.status || "", createdAt: o.createdAt || "",
+              userId: o.userId || "", type: "online" as const, deliveryMethod: "delivery" as const,
+              fulfillingWarehouseId: o.fulfillingWarehouseId || null,
+            }
+          }))
         }
       } catch {}
       // Export slips from localStorage for now (no backend endpoint)
@@ -1556,7 +1564,7 @@ export default function EmployeeSales() {
                           size="sm"
                           className="gap-1 text-xs h-7"
                           onClick={() => printWarrantyCard({
-                            orderCode: selectedOnlineOrder.id,
+                            orderCode: selectedOnlineOrder.warrantyCode || `BH-${selectedOnlineOrder.invoiceCode || selectedOnlineOrder.id}`,
                             date: selectedOnlineOrder.createdAt,
                             customerName: selectedOnlineOrder.customer.name,
                             customerPhone: selectedOnlineOrder.customer.phone,

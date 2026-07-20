@@ -30,7 +30,7 @@ export function getToken(): string | null {
 export async function apiFetch<T = any>(
   endpoint: string,
   options: RequestInit = {},
-): Promise<{ success: boolean; data?: T; message?: string; pagination?: any }> {
+): Promise<{ success: boolean; data?: T; message?: string; pagination?: any; status?: number }> {
   const token = getToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -47,7 +47,7 @@ export async function apiFetch<T = any>(
       const message = Array.isArray(json.message)
         ? json.message[0] // validation error trả về mảng
         : json.message || `Lỗi ${res.status}`;
-      return { success: false, message };
+      return { success: false, message, status: res.status };
     }
 
     // TransformInterceptor bọc mọi response thành { success: true, data: ... }
@@ -642,7 +642,7 @@ export const courtApi = {
   getSlots: async (courtId: number, date: string) => {
     const res = await apiFetch<any[]>(`/courts/${courtId}/slots?date=${date}`);
     if (res.success && res.data) return res.data;
-    return [];
+    throw new Error(res.message || "Không thể tải lịch trống");
   },
 
   // ← ĐÃ THÊM LẠI getReviews

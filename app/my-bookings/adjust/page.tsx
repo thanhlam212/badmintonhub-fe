@@ -5,11 +5,11 @@ import { useRouter, useParams, useSearchParams } from 'next/navigation';
 import {
   ArrowLeft, Calendar, Clock, MapPin, CheckCircle2,
   XCircle, SkipForward, RefreshCw, AlertTriangle,
-  Loader2, ChevronLeft, ChevronRight, Info, Shield,
+  Loader2, ChevronLeft, ChevronRight, Info, Shield, Lock,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
-import { fixedScheduleApi } from '@/lib/api';
+import { cn, formatSlotRange, generateTimeSlots } from '@/lib/utils';
+import { courtApi, fixedScheduleApi } from '@/lib/api';
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -27,6 +27,16 @@ interface OccurrenceDetail {
   courtId: number;
   courtName: string;
   amountSnapshot: number;
+  latestAdjustment?: {
+    type: string;
+    oldDate?: string | null;
+    newDate?: string | null;
+    oldTimeStart?: string | null;
+    oldTimeEnd?: string | null;
+    newTimeStart?: string | null;
+    newTimeEnd?: string | null;
+    createdAt?: string;
+  } | null;
 }
 
 interface ScheduleDetail {
@@ -151,6 +161,300 @@ function canAdjustOccurrence(occurrence: OccurrenceDetail, adjustmentLeft: numbe
   );
 }
 
+type SlotStatus = 'available' | 'booked' | 'hold';
+
+function timeToHour(value: string) {
+  return Number(value.split(':')[0]) || 0;
+}
+
+function addHours(value: string, hours: number) {
+  const nextHour = timeToHour(value) + hours;
+  return `${String(nextHour).padStart(2, '0')}:00`;
+}
+
+function isTimeInRange(time: string, start: string, end: string) {
+  const hour = timeToHour(time);
+  return hour >= timeToHour(start) && hour < timeToHour(end);
+}
+
+function getMonday(date: Date) {
+  const next = new Date(date);
+  const mondayOffset = (next.getDay() + 6) % 7;
+  next.setHours(0, 0, 0, 0);
+  next.setDate(next.getDate() - mondayOffset);
+  return next;
+}
+
+function shortDate(date: Date) {
+  return `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function AvailabilityWeekGrid({
+  courtId,
+  selectedOcc,
+  lockedOccurrences = [],
+  newDate,
+  newTimeStart,
+  newTimeEnd,
+  minDate,
+  onSelectSlot,
+}: {
+  courtId: number;
+  selectedOcc: OccurrenceDetail;
+  lockedOccurrences?: OccurrenceDetail[];
+  newDate: string;
+  newTimeStart: string;
+  newTimeEnd: string;
+  minDate: string;
+  onSelectSlot: (date: string, start: string, end: string) => void;
+}) {
+  const originalDuration = Math.max(1, timeToHour(selectedOcc.timeEnd) - timeToHour(selectedOcc.timeStart));
+  const [weekStart, setWeekStart] = useState(() => getMonday(parseDateKey(newDate || selectedOcc.date)));
+  const [slotsByDate, setSlotsByDate] = useState<Record<string, Record<string, SlotStatus>>>({});
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
+
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(weekStart);
+    date.setDate(weekStart.getDate() + index);
+    return date;
+  });
+  const weekEnd = days[6];
+  const timeSlots = generateTimeSlots();
+
+  useEffect(() => {
+    if (!newDate) return;
+    const selected = parseDateKey(newDate);
+    const currentEnd = new Date(weekStart);
+    currentEnd.setDate(weekStart.getDate() + 6);
+    if (selected < weekStart || selected > currentEnd) {
+      setWeekStart(getMonday(selected));
+    }
+  }, [newDate, weekStart]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadSlots = async () => {
+      setLoading(true);
+      setLoadError('');
+      const next: Record<string, Record<string, SlotStatus>> = {};
+      let hadLoadError = false;
+
+      for (const day of days) {
+        const dateKey = formatDateKey(day);
+        const dayMap: Record<string, SlotStatus> = {};
+        timeSlots.forEach((time) => { dayMap[time] = 'available'; });
+
+        try {
+          const slots = await courtApi.getSlots(courtId, dateKey);
+          slots.forEach((slot: { time: string; status: SlotStatus }) => {
+            if (dayMap[slot.time]) dayMap[slot.time] = slot.status;
+          });
+        } catch {
+          hadLoadError = true;
+        }
+
+        next[dateKey] = dayMap;
+      }
+
+      lockedOccurrences.forEach((occurrence) => {
+        if (
+          occurrence.id === selectedOcc.id ||
+          occurrence.courtId !== courtId ||
+          !next[occurrence.date]
+        ) {
+          return;
+        }
+
+        for (
+          let hour = timeToHour(occurrence.timeStart);
+          hour < timeToHour(occurrence.timeEnd);
+          hour += 1
+        ) {
+          const time = `${String(hour).padStart(2, '0')}:00`;
+          if (next[occurrence.date]?.[time]) {
+            next[occurrence.date][time] = 'booked';
+          }
+        }
+      });
+
+      if (!cancelled) {
+        setSlotsByDate(next);
+        setLoadError(
+          hadLoadError
+            ? 'Một số ngày chưa tải được từ server; các slot đã có lịch vẫn được khóa đỏ.'
+            : '',
+        );
+        setLoading(false);
+      }
+    };
+
+    loadSlots();
+    return () => { cancelled = true; };
+  }, [courtId, weekStart, lockedOccurrences, selectedOcc.id]);
+
+  const isOriginalSlot = (dateKey: string, time: string) => (
+    dateKey === selectedOcc.date &&
+    isTimeInRange(time, selectedOcc.timeStart, selectedOcc.timeEnd)
+  );
+
+  const isSelectedSlot = (dateKey: string, time: string) => (
+    dateKey === newDate &&
+    Boolean(newTimeStart && newTimeEnd) &&
+    isTimeInRange(time, newTimeStart, newTimeEnd)
+  );
+
+  const canSelectStart = (dateKey: string, start: string) => {
+    const end = addHours(start, originalDuration);
+    if (dateKey < minDate || timeToHour(end) > 22) return false;
+
+    for (let hour = timeToHour(start); hour < timeToHour(end); hour += 1) {
+      const time = `${String(hour).padStart(2, '0')}:00`;
+      const status = slotsByDate[dateKey]?.[time] || 'available';
+      if (!isOriginalSlot(dateKey, time) && status !== 'available') return false;
+    }
+    return true;
+  };
+
+  const handleSelect = (dateKey: string, start: string) => {
+    if (!canSelectStart(dateKey, start)) return;
+    onSelectSlot(dateKey, start, addHours(start, originalDuration));
+  };
+
+  return (
+    <div className="rounded-2xl border border-green-100 bg-green-50/40 p-3">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Lịch trống theo tuần</p>
+          <p className="text-[11px] text-gray-400">{shortDate(weekStart)} - {shortDate(weekEnd)}</p>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setWeekStart((current) => {
+              const next = new Date(current);
+              next.setDate(current.getDate() - 7);
+              return next;
+            })}
+            className="h-8 w-8 rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-50"
+            aria-label="Tuần trước"
+          >
+            <ChevronLeft className="mx-auto h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setWeekStart((current) => {
+              const next = new Date(current);
+              next.setDate(current.getDate() + 7);
+              return next;
+            })}
+            className="h-8 w-8 rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-50"
+            aria-label="Tuần sau"
+          >
+            <ChevronRight className="mx-auto h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      <div className="mb-3 flex flex-wrap gap-3 text-[11px] text-gray-500">
+        <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-green-100 ring-1 ring-green-200" /> Trống</span>
+        <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-red-100 ring-1 ring-red-200" /> Đã đặt</span>
+        <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-amber-100 ring-1 ring-amber-200" /> Giữ chỗ</span>
+        <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-orange-500" /> Đã chọn</span>
+      </div>
+
+      {loadError && (
+        <div className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-xs font-medium text-red-600">
+          {loadError}
+        </div>
+      )}
+
+      <div className="overflow-x-auto">
+        <div className="min-w-[680px]">
+          <div className="mb-1 grid grid-cols-[92px_repeat(7,1fr)] gap-1">
+            <div />
+            {days.map((day) => {
+              const dateKey = formatDateKey(day);
+              return (
+                <div key={dateKey} className="rounded-lg py-1 text-center text-xs font-semibold text-gray-600">
+                  <div>{WEEKDAY_LABELS[(day.getDay() + 6) % 7]}</div>
+                  <div className={cn(dateKey === newDate ? 'text-green-700' : 'text-gray-900')}>{shortDate(day)}</div>
+                </div>
+              );
+            })}
+          </div>
+
+          {timeSlots.map((time) => (
+            <div key={time} className="mb-1 grid grid-cols-[92px_repeat(7,1fr)] gap-1">
+              <div className="flex items-center justify-end pr-2 font-mono text-[10px] text-gray-500">
+                {formatSlotRange(time)}
+              </div>
+              {days.map((day) => {
+                const dateKey = formatDateKey(day);
+                const status = slotsByDate[dateKey]?.[time] || 'available';
+                const original = isOriginalSlot(dateKey, time);
+                const selected = isSelectedSlot(dateKey, time);
+                const selectable = canSelectStart(dateKey, time);
+                const disabled = loading || !selectable;
+
+                return (
+                  <button
+                    key={`${dateKey}-${time}`}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => handleSelect(dateKey, time)}
+                    className={cn(
+                      'h-8 rounded-md text-[10px] font-semibold transition-colors',
+                      selected
+                        ? 'bg-orange-500 text-white shadow-sm'
+                        : original
+                        ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-200'
+                        : status === 'available' && selectable
+                        ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                        : status === 'hold'
+                        ? 'bg-amber-100 text-amber-700'
+                        : 'bg-red-50 text-red-400',
+                      disabled && !selected && !original && 'cursor-not-allowed opacity-60',
+                    )}
+                  >
+                    {selected ? (
+                      'Chọn'
+                    ) : original ? (
+                      'Gốc'
+                    ) : status === 'hold' ? (
+                      'Giữ'
+                    ) : status === 'booked' ? (
+                      <span className="inline-flex items-center justify-center gap-0.5">
+                        <Lock className="h-2.5 w-2.5" />
+                        Khóa
+                      </span>
+                    ) : ''}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {loading && (
+        <div className="mt-3 flex items-center gap-2 text-xs font-medium text-green-700">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Đang tải lịch trống...
+        </div>
+      )}
+
+      {newDate && newTimeStart && newTimeEnd && (
+        <div className="mt-3 rounded-xl border border-green-200 bg-white px-3 py-2 text-xs text-gray-600">
+          <span className="font-semibold uppercase text-gray-500">Đang chọn</span>
+          <span className="ml-2 font-bold text-green-700">{newDate} · {newTimeStart} - {newTimeEnd}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════
 // PAGE
 // ═══════════════════════════════════════════════════════════════
@@ -200,7 +504,7 @@ export default function AdjustSchedulePage() {
       return;
     }
     setSelectedOcc(occ);
-    setAdjustType(null);
+    setAdjustType('reschedule');
     setNewDate(occ.date);
     setCalendarMonth(getMonthStartKey(occ.date));
     setNewTimeStart(occ.timeStart);
@@ -260,7 +564,7 @@ export default function AdjustSchedulePage() {
       return;
     }
     setSelectedOcc(occ);
-    setAdjustType(null);
+    setAdjustType('reschedule');
     setNewDate(occ.date);
     setCalendarMonth(getMonthStartKey(occ.date));
     setNewTimeStart(occ.timeStart);
@@ -493,6 +797,7 @@ export default function AdjustSchedulePage() {
   const minRescheduleDate = formatDateKey(new Date());
   const activeCalendarMonth = calendarMonth || getMonthStartKey(newDate || selectedOcc?.date || schedule.startDate);
   const calendarDays = buildCalendarDays(activeCalendarMonth);
+  const directRescheduleMode = Boolean(initialOccurrenceId && selectedOcc);
   const occurrencesByDate = schedule.occurrences.reduce((map, occurrence) => {
     const current = map.get(occurrence.date) || [];
     current.push(occurrence);
@@ -504,7 +809,7 @@ export default function AdjustSchedulePage() {
     <div className="min-h-screen bg-gray-50/50">
       {/* ── Header ── */}
       <div className="bg-white border-b border-gray-100 sticky top-0 z-20">
-        <div className="max-w-3xl mx-auto px-4 h-14 flex items-center gap-3">
+        <div className="max-w-7xl mx-auto px-4 h-14 flex items-center gap-3">
           <button
             onClick={() => router.push('/my-bookings')}
             className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors"
@@ -538,7 +843,7 @@ export default function AdjustSchedulePage() {
         </div>
       </div>
 
-      <div className="max-w-3xl mx-auto px-4 py-5 space-y-4">
+      <div className="max-w-7xl mx-auto px-4 py-5 space-y-4">
         {/* ── Quota info ── */}
         <div className={cn(
           'flex items-start gap-3 p-4 rounded-2xl border text-sm',
@@ -606,9 +911,10 @@ export default function AdjustSchedulePage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+        <div className={cn("grid grid-cols-1 gap-4", directRescheduleMode ? "lg:grid-cols-1" : "lg:grid-cols-12")}>
           {/* ── LEFT: Danh sách buổi ── */}
-          <div className="lg:col-span-3">
+          {!directRescheduleMode && (
+          <div className="lg:col-span-4">
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
               <div className="px-5 py-4 border-b border-gray-50">
                 <h2 className="font-semibold text-gray-800 text-sm flex items-center gap-2">
@@ -680,9 +986,10 @@ export default function AdjustSchedulePage() {
               </div>
             </div>
           </div>
+          )}
 
           {/* ── RIGHT: Form điều chỉnh ── */}
-          <div className="lg:col-span-2">
+          <div className={cn(directRescheduleMode ? "lg:col-span-1" : "lg:col-span-8")}>
             {!selectedOcc ? (
               <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8 text-center">
                 <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
@@ -703,6 +1010,32 @@ export default function AdjustSchedulePage() {
                   <p className="text-xs text-gray-500 mt-0.5">
                     {selectedOcc.courtName} · {selectedOcc.timeStart}–{selectedOcc.timeEnd}
                   </p>
+                  {selectedOcc.latestAdjustment && (
+                    <div className="mt-3 grid gap-2 rounded-xl border border-blue-100 bg-white/80 p-3 text-xs sm:grid-cols-2">
+                      <div>
+                        <p className="font-semibold uppercase text-gray-400">Lịch gốc</p>
+                        <p className="mt-1 font-bold text-gray-800">
+                          {selectedOcc.latestAdjustment.oldDate || selectedOcc.date}
+                        </p>
+                        <p className="text-gray-500">
+                          {selectedOcc.latestAdjustment.oldTimeStart || selectedOcc.timeStart}
+                          {' - '}
+                          {selectedOcc.latestAdjustment.oldTimeEnd || selectedOcc.timeEnd}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="font-semibold uppercase text-blue-500">Đã đổi sang</p>
+                        <p className="mt-1 font-bold text-blue-700">
+                          {selectedOcc.latestAdjustment.newDate || selectedOcc.date}
+                        </p>
+                        <p className="text-blue-600">
+                          {selectedOcc.latestAdjustment.newTimeStart || selectedOcc.timeStart}
+                          {' - '}
+                          {selectedOcc.latestAdjustment.newTimeEnd || selectedOcc.timeEnd}
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="p-5 space-y-4">
@@ -718,6 +1051,7 @@ export default function AdjustSchedulePage() {
                     </div>
                   )}
                   {/* Chọn loại điều chỉnh */}
+                  {!directRescheduleMode && (
                   <div className="space-y-2">
                     <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
                       Loại điều chỉnh
@@ -783,6 +1117,7 @@ export default function AdjustSchedulePage() {
                       ))}
                     </div>
                   </div>
+                  )}
 
                   {/* Form theo loại */}
                   {adjustType === 'reschedule' && (
@@ -791,6 +1126,7 @@ export default function AdjustSchedulePage() {
                         Ngày & giờ mới
                       </p>
                       <div className="space-y-3">
+                        {!directRescheduleMode && (
                         <div className="rounded-2xl border border-gray-200 bg-white p-3">
                           <div className="flex items-center justify-between gap-2">
                             <button
@@ -888,6 +1224,7 @@ export default function AdjustSchedulePage() {
                             </span>
                           </div>
                         </div>
+                        )}
 
                         <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
                           <label className="space-y-1">
@@ -909,6 +1246,25 @@ export default function AdjustSchedulePage() {
                             </div>
                           )}
                         </div>
+
+                        {selectedOcc && (
+                          <AvailabilityWeekGrid
+                            courtId={selectedOcc.courtId}
+                            selectedOcc={selectedOcc}
+                            lockedOccurrences={schedule.occurrences}
+                            newDate={newDate}
+                            newTimeStart={newTimeStart}
+                            newTimeEnd={newTimeEnd}
+                            minDate={minRescheduleDate}
+                            onSelectSlot={(date, start, end) => {
+                              handleNewDateChange(date);
+                              setNewTimeStart(start);
+                              setNewTimeEnd(end);
+                              setSlotAvailable(null);
+                            }}
+                          />
+                        )}
+
                         <div className="flex gap-2">
                           <input
                             type="time"

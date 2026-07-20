@@ -10,8 +10,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose, DialogTrigger } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
-import { formatVND, formatSalesOrderReference, formatPXKReference } from "@/lib/utils"
-import { salesOrderApi } from "@/lib/api"
+import { formatVND, formatHDReference, formatSalesOrderReference, formatPXKReference } from "@/lib/utils"
+import { orderApi, salesOrderApi } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { printOrderInvoice, printWarehouseSlip } from "@/lib/print-utils"
 import {
@@ -24,6 +24,10 @@ import {
 interface SalesOrder {
   id: string
   rawId?: string
+  source: "offline" | "online"
+  rawStatus?: string
+  invoiceCode?: string
+  warehouseName?: string
   createdAt?: string
   date: string
   time: string
@@ -62,8 +66,14 @@ function StatusBadge({ status }: { status: string }) {
 
 function mapOrder(o: any): SalesOrder {
   const createdAt = o.created_at || o.createdAt || ""
+  const invoiceCode = o.invoice_code || o.invoiceCode || o.order_code || o.orderCode || o.sales_code || ""
   return {
-    id:            String(o.id),
+    id:            invoiceCode || String(o.id),
+    rawId:         String(o.id),
+    source:        "offline",
+    rawStatus:     o.status || "pending",
+    invoiceCode,
+    warehouseName: o.warehouse_name || o.warehouseName || "",
     createdAt,
     date:          createdAt ? new Date(createdAt).toLocaleDateString("vi-VN")  : "",
     time:          createdAt ? new Date(createdAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "",
@@ -89,7 +99,53 @@ function mapOrder(o: any): SalesOrder {
   }
 }
 
+function mapOnlineOrder(o: any): SalesOrder {
+  const createdAt = o.createdAt || o.created_at || ""
+  const rawStatus = o.status || "pending"
+  const invoiceCode = o.invoiceCode || o.invoice_code || o.orderCode || o.order_code || o.id
+  const exportedStatuses = new Set(["processing", "shipping", "delivered"])
+  const mappedStatus =
+    exportedStatuses.has(rawStatus)
+      ? "exported"
+      : rawStatus === "confirmed"
+        ? "approved"
+        : rawStatus === "cancelled" || rawStatus === "refunded"
+          ? "rejected"
+          : "pending"
+
+  return {
+    id: formatHDReference(invoiceCode, createdAt),
+    rawId: String(o.rawId || o.id),
+    source: "online",
+    rawStatus,
+    invoiceCode: formatHDReference(invoiceCode, createdAt),
+    warehouseName: o.fulfillingWarehouse || o.fulfillingWarehouseName || "",
+    createdAt,
+    date: createdAt ? new Date(createdAt).toLocaleDateString("vi-VN") : "",
+    time: createdAt ? new Date(createdAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "",
+    customer: o.customerName || o.customer?.name || "Khách lẻ",
+    phone: o.customerPhone || o.customer?.phone || "",
+    items: (o.items || []).map((i: any) => ({
+      productId: i.productId || i.product_id,
+      name: i.productName || i.product_name || i.name || "",
+      price: Number(i.price) || 0,
+      qty: i.quantity || i.qty || 0,
+    })),
+    total: Number(o.subtotal || o.totalAmount || o.amount || o.total) || 0,
+    discount: 0,
+    finalTotal: Number(o.totalAmount || o.amount || o.total) || 0,
+    paymentMethod: o.paymentMethod || o.payment_method || "",
+    note: o.note || "",
+    status: mappedStatus as SalesOrder["status"],
+    createdBy: o.userId || "",
+    creatorName: "Online",
+  }
+}
+
 function getApprovalOrderCode(order: SalesOrder) {
+  if (order.source === "online") {
+    return formatHDReference(order.invoiceCode || order.id, order.createdAt || order.date)
+  }
   return formatSalesOrderReference(order.rawId || order.id, order.createdAt || order.date)
 }
 
@@ -123,7 +179,7 @@ function printApprovalWarehouseSlip(order: SalesOrder) {
     id: getApprovalExportSlipCode(order),
     type: "export",
     date: order.date,
-    warehouse: "Kho bán hàng",
+    warehouse: order.warehouseName || "Kho bán hàng",
     note: order.note || "",
     createdBy: order.creatorName || order.createdBy || "Nhân viên",
     assignedTo: order.customer,
@@ -215,10 +271,19 @@ export default function ApprovalPage() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const res = await salesOrderApi.getAll()
-      if ((res as any).success && (res as any).data) {
-        setOrders((res as any).data.map(mapOrder))
-      }
+      const [salesRes, onlineRes] = await Promise.all([
+        salesOrderApi.getAll(),
+        orderApi.getAll(),
+      ])
+      const offlineOrders = (salesRes as any).success && (salesRes as any).data
+        ? (salesRes as any).data.map(mapOrder)
+        : []
+      const onlineOrders = Array.isArray((onlineRes as any).orders)
+        ? (onlineRes as any).orders.map(mapOnlineOrder)
+        : []
+      setOrders([...offlineOrders, ...onlineOrders].sort((a, b) =>
+        String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
+      ))
     } catch {}
     setLoading(false)
   }
@@ -253,13 +318,15 @@ export default function ApprovalPage() {
     })
   }, [orders, statusFilter, search])
 
-  const pendingExport = orders.filter(o => o.status === "approved")
+  const pendingExport = orders.filter(o => o.source === "offline" && o.status === "approved")
   const doneExport    = orders.filter(o => o.status === "exported")
 
   // ── Actions ─────────────────────────────────────────────────────────────
 
   // Duyệt đơn hàng
   const handleApprove = async (orderId: string) => {
+    const order = orders.find(o => o.id === orderId || o.rawId === orderId)
+    if (order?.source === "online") return
     setActionLoading(orderId + "_approve")
     try {
       const res = await salesOrderApi.approve(orderId)
@@ -271,6 +338,8 @@ export default function ApprovalPage() {
   // Từ chối đơn hàng
   const handleReject = async (orderId: string, reason: string) => {
     if (!reason.trim()) return
+    const order = orders.find(o => o.id === orderId || o.rawId === orderId)
+    if (order?.source === "online") return
     setActionLoading(orderId + "_reject")
     try {
       await salesOrderApi.reject(orderId, reason)
@@ -282,6 +351,8 @@ export default function ApprovalPage() {
 
   // Xuất kho (complete) – backend sẽ tự động trừ kho + gửi email
   const handleExport = async (orderId: string) => {
+    const order = orders.find(o => o.id === orderId || o.rawId === orderId)
+    if (order?.source === "online") return
     setActionLoading(orderId + "_export")
     try {
       const res = await salesOrderApi.complete(orderId)
@@ -394,7 +465,14 @@ export default function ApprovalPage() {
                   <TableBody>
                     {filteredOrders.map(order => (
                       <TableRow key={order.id} className={cn("hover:bg-muted/50", order.status === "pending" && "bg-amber-50/30")}>
-                        <TableCell className="font-mono text-xs text-blue-600 font-semibold">{getApprovalOrderCode(order)}</TableCell>
+                        <TableCell className="font-mono text-xs text-blue-600 font-semibold">
+                          <div>{getApprovalOrderCode(order)}</div>
+                          {order.source === "online" && (
+                            <Badge variant="outline" className="mt-1 text-[10px] font-sans">
+                              Online{order.rawStatus ? ` · ${order.rawStatus}` : ""}
+                            </Badge>
+                          )}
+                        </TableCell>
                         <TableCell className="text-xs">{order.date}<br /><span className="text-muted-foreground">{order.time}</span></TableCell>
                         <TableCell>
                           <p className="text-sm font-medium">{order.customer}</p>
@@ -422,7 +500,7 @@ export default function ApprovalPage() {
                             </Dialog>
 
                             {/* Approve */}
-                            {order.status === "pending" && (
+                            {order.source === "offline" && order.status === "pending" && (
                               <>
                                 <Dialog>
                                   <DialogTrigger asChild>
@@ -515,7 +593,7 @@ export default function ApprovalPage() {
                             )}
 
                             {/* Export (approved → exported) */}
-                            {order.status === "approved" && (
+                            {order.source === "offline" && order.status === "approved" && (
                               <Dialog>
                                 <DialogTrigger asChild>
                                   <Button variant="ghost" size="icon" className="h-7 w-7 text-orange-600 hover:bg-orange-50">

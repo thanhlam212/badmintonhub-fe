@@ -35,6 +35,8 @@ interface OrderItem {
 interface Order {
   id: string
   rawId?: string
+  invoiceCode?: string
+  warrantyCode?: string
   items: OrderItem[]
   customer: { name: string; phone: string; email: string; address: string }
   note: string
@@ -529,7 +531,7 @@ function OrderDetailDialog({ order, onApprove, onStartDelivery, onDeliver, onCan
             size="sm"
             className="gap-1 text-xs h-7"
             onClick={() => printWarrantyCard({
-              orderCode: order.id,
+              orderCode: order.warrantyCode || `BH-${order.invoiceCode || order.id}`,
               date: order.createdAt,
               customerName: order.customer.name,
               customerPhone: order.customer.phone,
@@ -603,9 +605,13 @@ export default function HubOrdersPage() {
             const wh = inventory.find(inv => inv.warehouseId === o.fulfillingWarehouseId)
             if (wh) fulfillingWarehouse = wh.warehouse
           }
+          const invoiceCode = formatHDReference(o.orderCode || o.order_code || o.invoiceCode || o.invoice_code || o.sales_code || o.id, o.createdAt || o.created_at)
+          const warrantyCode = String(o.warrantyCode || o.warranty_code || `BH-${invoiceCode}`)
           return {
-            id: formatHDReference(o.orderCode || o.order_code || o.invoiceCode || o.invoice_code || o.sales_code || o.id, o.createdAt || o.created_at),
+            id: invoiceCode,
             rawId: String(o.id),
+            invoiceCode,
+            warrantyCode,
             items: (o.items || []).map((i: any) => ({ productId: i.productId || i.product_id, name: i.productName || i.name || "", price: i.price || 0, qty: i.quantity || i.qty || 0 })),
             customer: { name: o.customerName || "", phone: o.customerPhone || "", email: o.customerEmail || "", address: o.shippingAddress || "" },
             note: o.note || "", subtotal: o.totalAmount || 0, shippingFee: 0, total: o.totalAmount || 0,
