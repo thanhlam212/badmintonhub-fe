@@ -406,6 +406,7 @@ export default function EmployeeSales() {
     onHand: number
     available: number
     unitCost: number
+    price?: number
     retailPrice: number
     warehouse: string
     otherWarehouses: { name: string; available: number }[]
@@ -429,7 +430,8 @@ export default function EmployeeSales() {
         onHand: item.onHand,
         available: item.available,
         unitCost: item.unitCost,
-        retailPrice: retail?.price ?? Math.round(item.unitCost * 1.4),
+        price: item.price,
+        retailPrice: item.price ?? retail?.price ?? Math.round(item.unitCost * 1.4),
         warehouse: item.warehouse,
         otherWarehouses,
       }

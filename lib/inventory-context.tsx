@@ -8,7 +8,7 @@ import { formatTransferReference } from "@/lib/utils"
 export interface InventoryItem {
   id: number; sku: string; name: string; category: string; warehouse: string
   warehouseId?: number; productId?: number; onHand: number; reserved: number; available: number
-  reorderPoint: number; unitCost: number; image: string
+  reorderPoint: number; unitCost: number; price?: number; image: string
 }
 export interface InventoryTransaction {
   id: string; type: "import" | "export" | "transfer-out" | "transfer-in"
@@ -85,6 +85,7 @@ function txItem(r: any): InventoryItem {
     available: r.available ?? 0,
     reorderPoint: r.reorderPoint ?? r.reorder_point ?? 10,
     unitCost: Number(r.unitCost ?? r.unit_cost ?? 0),
+    price: Number(r.price ?? r.productPrice ?? r.product_price ?? 0) || undefined,
     image: r.productImage || r.product_image || r.image || "",
   }
 }
