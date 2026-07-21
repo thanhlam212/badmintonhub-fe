@@ -161,7 +161,7 @@ function canAdjustOccurrence(occurrence: OccurrenceDetail, adjustmentLeft: numbe
   );
 }
 
-type SlotStatus = 'available' | 'booked' | 'hold';
+type SlotStatus = 'available' | 'booked' | 'hold' | 'past';
 
 function timeToHour(value: string) {
   return Number(value.split(':')[0]) || 0;
@@ -414,6 +414,8 @@ function AvailabilityWeekGrid({
                         ? 'bg-green-100 text-green-700 hover:bg-green-200'
                         : status === 'hold'
                         ? 'bg-amber-100 text-amber-700'
+                        : status === 'past'
+                        ? 'bg-gray-100 text-gray-400'
                         : 'bg-red-50 text-red-400',
                       disabled && !selected && !original && 'cursor-not-allowed opacity-60',
                     )}
@@ -424,6 +426,8 @@ function AvailabilityWeekGrid({
                       'Gốc'
                     ) : status === 'hold' ? (
                       'Giữ'
+                    ) : status === 'past' ? (
+                      'Qua'
                     ) : status === 'booked' ? (
                       <span className="inline-flex items-center justify-center gap-0.5">
                         <Lock className="h-2.5 w-2.5" />

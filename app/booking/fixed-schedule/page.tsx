@@ -3390,7 +3390,7 @@ function ConflictCalendarMap({
   );
 }
 
-type FixedWeekSlotStatus = "available" | "booked" | "hold";
+type FixedWeekSlotStatus = "available" | "booked" | "hold" | "past";
 
 function addHoursToTime(time: string, hours: number) {
   const next = toMinutes(time) + hours * 60;
@@ -3582,6 +3582,8 @@ function FixedWeekSlotGrid({
                             ? "bg-green-100 text-green-700 hover:bg-green-200"
                             : status === "hold"
                               ? "bg-amber-100 text-amber-700"
+                              : status === "past"
+                                ? "bg-gray-100 text-gray-400"
                               : "bg-red-50 text-red-400",
                       (loading || !selectable) && !selected && !original && "cursor-not-allowed opacity-60",
                     )}

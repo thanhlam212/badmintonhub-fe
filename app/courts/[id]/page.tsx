@@ -48,6 +48,8 @@ const amenityIcons: Record<string, React.ReactNode> = {
   "Sàn bê tông": <TreePine className="h-5 w-5" />,
 }
 
+type CourtSlotStatus = 'available' | 'booked' | 'hold' | 'past'
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function WeatherWidget({ weatherData }: { weatherData: any }) {
   if (!weatherData) return null
@@ -222,14 +224,14 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
   const weekKey = weekDays.map(d => d.label).join(',')
 
   // Build availability from API slots data
-  const [availability, setAvailability] = useState<Record<string, Record<string, 'available' | 'booked' | 'hold'>>>({})
+  const [availability, setAvailability] = useState<Record<string, Record<string, CourtSlotStatus>>>({})
   useEffect(() => {
     if (!court) return
     let cancelled = false
 
     const wait = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms))
 
-    const applyPendingHold = (map: Record<string, Record<string, 'available' | 'booked' | 'hold'>>) => {
+    const applyPendingHold = (map: Record<string, Record<string, CourtSlotStatus>>) => {
       try {
         const pendingBooking = JSON.parse(localStorage.getItem('pendingBooking') || 'null') as { courtId?: number; slots?: string[] } | null
         const pendingSession = JSON.parse(localStorage.getItem('pendingPaymentSession') || 'null') as { bookingId?: string } | null
@@ -239,7 +241,7 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
           const lastDash = slot.lastIndexOf('-')
           const dayLabel = slot.substring(0, lastDash)
           const time = slot.substring(lastDash + 1)
-          if (map[dayLabel]?.[time] && map[dayLabel][time] !== 'booked') {
+          if (map[dayLabel]?.[time] === 'available') {
             map[dayLabel][time] = 'hold'
           }
         })
@@ -250,14 +252,14 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
 
     const fetchSlots = async () => {
       const timeSlotsList = generateTimeSlots()
-      const map: Record<string, Record<string, 'available' | 'booked' | 'hold'>> = {}
+      const map: Record<string, Record<string, CourtSlotStatus>> = {}
       weekDays.forEach(d => {
-        const dayMap: Record<string, 'available' | 'booked' | 'hold'> = {}
+        const dayMap: Record<string, CourtSlotStatus> = {}
         timeSlotsList.forEach(t => { dayMap[t] = 'available' })
         map[d.label] = dayMap
       })
 
-      const results: { dayLabel: string; slots: { time: string; status: 'booked' | 'hold' }[] }[] = []
+      const results: { dayLabel: string; slots: { time: string; status: CourtSlotStatus }[] }[] = []
       try {
         for (const d of weekDays) {
           if (cancelled) return
@@ -271,7 +273,7 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
           setAvailability(prev => {
             const next = Object.fromEntries(
               Object.entries(prev).map(([dayLabel, dayMap]) => [dayLabel, { ...dayMap }]),
-            ) as Record<string, Record<string, 'available' | 'booked' | 'hold'>>
+            ) as Record<string, Record<string, CourtSlotStatus>>
             applyPendingHold(next)
             return next
           })
@@ -280,7 +282,7 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
       }
 
       results.forEach(({ dayLabel, slots }) => {
-        slots.forEach((s: { time: string; status: 'booked' | 'hold' }) => {
+        slots.forEach((s: { time: string; status: CourtSlotStatus }) => {
           if (map[dayLabel] && map[dayLabel][s.time]) {
             map[dayLabel][s.time] = s.status
           }
@@ -490,7 +492,7 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
       setAvailability(prev => {
         const next = Object.fromEntries(
           Object.entries(prev).map(([dayLabel, dayMap]) => [dayLabel, { ...dayMap }]),
-        ) as Record<string, Record<string, 'available' | 'booked' | 'hold'>>
+        ) as Record<string, Record<string, CourtSlotStatus>>
 
         slots.forEach(slot => {
           const lastDash = slot.lastIndexOf('-')
@@ -871,7 +873,7 @@ export default function CourtDetailPage({ params }: { params: Promise<{ id: stri
                             const status = availability[d.label]?.[time] || 'available'
                             const slotKey = `${d.label}-${time}`
                             const isSelected = selectedSlots.includes(slotKey)
-                            const isPastSlot = nowTick > 0 && isSlotPast(d.date, time)
+                            const isPastSlot = nowTick > 0 && (status === 'past' || isSlotPast(d.date, time))
                             const isDisabled = status !== 'available' || isPastSlot
                             const isOtherDay = selectedDay !== null && selectedDay !== d.label
 

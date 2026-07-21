@@ -51,15 +51,53 @@ export function formatDateLabel(date: Date): string {
   return `${date.getDate()}/${date.getMonth() + 1}`
 }
 
+const BUSINESS_TIME_ZONE = 'Asia/Ho_Chi_Minh'
+
+function getBusinessNowParts(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: BUSINESS_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(now)
+
+  const get = (type: string) => parts.find(part => part.type === type)?.value || '0'
+  const hour = Number(get('hour')) % 24
+  const minute = Number(get('minute'))
+
+  return {
+    dateToken: `${get('year')}-${get('month')}-${get('day')}`,
+    year: Number(get('year')),
+    minutes: hour * 60 + minute,
+  }
+}
+
+function slotDateToken(year: number, month: number, day: number) {
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
 export function isSlotPast(dateLabel: string | Date, time: string): boolean {
   // Do not disable a slot when data is incomplete.
   if (!dateLabel || !time) return false
 
+  const [hour, minute = 0] = time.split(':').map(Number)
+  if (Number.isNaN(hour) || Number.isNaN(minute)) return false
+
+  const now = getBusinessNowParts()
+  const slotMinutes = hour * 60 + minute
+
   if (dateLabel instanceof Date) {
-    const slotDate = new Date(dateLabel)
-    const [hour] = time.split(':').map(Number)
-    slotDate.setHours(hour, 0, 0, 0)
-    return slotDate < new Date()
+    const token = slotDateToken(
+      dateLabel.getFullYear(),
+      dateLabel.getMonth() + 1,
+      dateLabel.getDate(),
+    )
+    if (token < now.dateToken) return true
+    if (token > now.dateToken) return false
+    return slotMinutes <= now.minutes
   }
 
   const parts = dateLabel.split('/')
@@ -69,11 +107,11 @@ export function isSlotPast(dateLabel: string | Date, time: string): boolean {
   const month = Number(parts[1])
   if (isNaN(day) || isNaN(month)) return false
 
-  const year = new Date().getFullYear()
-  const slotDate = new Date(year, month - 1, day)
-  const [hour] = time.split(':').map(Number)
-  slotDate.setHours(hour, 0, 0, 0)
-  return slotDate < new Date()
+  const year = parts[2] ? Number(parts[2]) : now.year
+  const token = slotDateToken(year, month, day)
+  if (token < now.dateToken) return true
+  if (token > now.dateToken) return false
+  return slotMinutes <= now.minutes
 }
 
 // Document reference formatters
